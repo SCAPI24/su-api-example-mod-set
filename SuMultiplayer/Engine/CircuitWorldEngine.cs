@@ -48,6 +48,8 @@ namespace SuMultiplayer.Engine
                 throw new ArgumentNullException(nameof(interactionPresentation));
             m_mainThreadId = Thread.CurrentThread.ManagedThreadId;
             m_terrainBridge.ReplicaCellApplied += HandleReplicaCellApplied;
+            m_terrainBridge.ReplicaElectricCellChanged += HandleReplicaElectricCellChanged;
+            m_terrainBridge.ReplicaElectricTopologyChanged += HandleReplicaElectricTopologyChanged;
         }
 
         public bool IsClientReplica
@@ -143,6 +145,48 @@ namespace SuMultiplayer.Engine
             {
                 EnsureMainThread(nameof(ReplicaCellApplied));
                 m_replicaCellApplied -= value;
+            }
+        }
+
+        public event Action<ChunkKey, CellEdit> ReplicaElectricTopologyChanged
+        {
+            add
+            {
+                EnsureMainThread(nameof(ReplicaElectricTopologyChanged));
+                m_terrainBridge.ReplicaElectricTopologyChanged += value;
+            }
+            remove
+            {
+                EnsureMainThread(nameof(ReplicaElectricTopologyChanged));
+                m_terrainBridge.ReplicaElectricTopologyChanged -= value;
+            }
+        }
+
+        public event Action<ChunkKey, CellEdit> ReplicaElectricCellChanged
+        {
+            add
+            {
+                EnsureMainThread(nameof(ReplicaElectricCellChanged));
+                m_terrainBridge.ReplicaElectricCellChanged += value;
+            }
+            remove
+            {
+                EnsureMainThread(nameof(ReplicaElectricCellChanged));
+                m_terrainBridge.ReplicaElectricCellChanged -= value;
+            }
+        }
+
+        public event Action<ChunkKey, CellEdit> HostCellPublished
+        {
+            add
+            {
+                EnsureMainThread(nameof(HostCellPublished));
+                m_terrainBridge.HostCellPublished += value;
+            }
+            remove
+            {
+                EnsureMainThread(nameof(HostCellPublished));
+                m_terrainBridge.HostCellPublished -= value;
             }
         }
 
@@ -555,7 +599,6 @@ namespace SuMultiplayer.Engine
         private void HandleReplicaCellApplied(ChunkKey key, CellEdit edit)
         {
             EnsureMainThread(nameof(HandleReplicaCellApplied));
-            m_topologyDirty = true;
             int x = key.X * 16 + edit.X;
             int y = edit.Y;
             int z = key.Z * 16 + edit.Z;
@@ -572,6 +615,109 @@ namespace SuMultiplayer.Engine
                 m_interactionPresentation.ApplyAuthoritativeCell(x, y, z, face,
                     value);
             m_replicaCellApplied?.Invoke(key, edit);
+        }
+
+        private void HandleReplicaElectricTopologyChanged(ChunkKey key, CellEdit edit)
+        {
+            EnsureMainThread(nameof(HandleReplicaElectricTopologyChanged));
+            m_topologyDirty = true;
+        }
+
+        private void HandleReplicaElectricCellChanged(ChunkKey key, CellEdit edit)
+        {
+            EnsureMainThread(nameof(HandleReplicaElectricCellChanged));
+            int x = key.X * 16 + edit.X;
+            int z = key.Z * 16 + edit.Z;
+            Project project = GameManager.Project;
+            SubsystemElectricity electricity = project?.FindSubsystem<SubsystemElectricity>(false);
+            if (electricity == null) return;
+            bool elementReady = false;
+            for (int face = 0; face < 6; face++)
+            {
+                if (electricity.GetElectricElement(x, edit.Y, z, face) != null)
+                {
+                    elementReady = true;
+                    break;
+                }
+            }
+            if (!elementReady)
+                m_topologyDirty = true;
+        }
+
+
+        public bool IsElectricTopologyCell(ChunkKey key, CellEdit edit)
+        {
+            EnsureMainThread(nameof(IsElectricTopologyCell));
+            int x = key.X * 16 + edit.X;
+            int z = key.Z * 16 + edit.Z;
+            if (!TryGetCellValue(x, edit.Y, z, out int value))
+                throw new InvalidOperationException("Cannot inspect circuit topology at unavailable cell (" +
+                    x + "," + edit.Y + "," + z + ").");
+            int contents = Game.Terrain.ExtractContents(value);
+            Block[] blocks = BlocksManager.Blocks;
+            if (blocks == null || contents < 0 || contents >= blocks.Length)
+                throw new InvalidOperationException("Block database is unavailable while classifying a circuit topology edit.");
+            return blocks[contents] is IElectricElementBlock;
+        }
+
+        public bool IsElectricTopologyChange(int oldValue, int newValue, int x, int y, int z)
+        {
+            EnsureMainThread(nameof(IsElectricTopologyChange));
+            return m_terrainBridge.IsElectricTopologyChange(oldValue, newValue, x, y, z);
+        }
+
+        public int GetCellValue(int x, int y, int z)
+        {
+            EnsureMainThread(nameof(GetCellValue));
+            if (!TryGetCellValue(x, y, z, out int value))
+                throw new InvalidOperationException("Cell is unavailable at " + x + "," + y + "," + z + ".");
+            return value;
+        }
+
+        public bool IsElectricTopologyElementAt(int x, int y, int z)
+        {
+            EnsureMainThread(nameof(IsElectricTopologyElementAt));
+            int value = GetCellValue(x, y, z);
+            int contents = Game.Terrain.ExtractContents(value);
+            Block[] blocks = BlocksManager.Blocks;
+            if (blocks == null || contents < 0 || contents >= blocks.Length)
+                throw new InvalidOperationException("Block database is unavailable while reading circuit cell.");
+            return blocks[contents] is IElectricElementBlock;
+        }
+
+        public bool TryCaptureChunkTopologyValues(ChunkKey key,
+            IDictionary<string, int> target, out string error)
+        {
+            EnsureMainThread(nameof(TryCaptureChunkTopologyValues));
+            if (target == null) throw new ArgumentNullException(nameof(target));
+            target.Clear();
+            error = null;
+            Project project = GameManager.Project;
+            SubsystemTerrain terrain = project?.FindSubsystem<SubsystemTerrain>(false);
+            TerrainChunk chunk = terrain?.Terrain?.GetChunkAtCoords(key.X, key.Z);
+            if (chunk == null || !ChunkContentStages.IsContentValid((int)chunk.State))
+            {
+                error = "Circuit chunk " + key + " is not loaded with valid contents.";
+                return false;
+            }
+            SubsystemElectricity electricity = project.FindSubsystem<SubsystemElectricity>(false);
+            if (electricity == null)
+            {
+                error = "SubsystemElectricity is unavailable.";
+                return false;
+            }
+            return m_codec.CaptureChunkTopologyValues(electricity, key.X, key.Z,
+                target, out error);
+        }
+
+        public void ClearAuthoritativeStatesForChunk(ChunkKey key)
+        {
+            EnsureMainThread(nameof(ClearAuthoritativeStatesForChunk));
+            foreach (KeyValuePair<string, AuthoritativeState> pair in
+                m_authoritativeStates.Where(item =>
+                    (item.Value.State.X >> 4) == key.X &&
+                    (item.Value.State.Z >> 4) == key.Z).ToArray())
+                m_authoritativeStates.Remove(pair.Key);
         }
 
         public void Pump()
@@ -602,7 +748,8 @@ namespace SuMultiplayer.Engine
             {
                 m_parentMethod.InvokeParentMethod(electricity, "UpdateElectricElements",
                     Type.EmptyTypes);
-                ClearClientSimulationSchedule(electricity);
+                // The engine rebuild schedules newly added elements and their neighbors.
+                // Keep those kicks while replaying cached authoritative voltages.
                 ReapplyAuthoritativeStates(electricity);
                 m_topologyDirty = false;
                 RefreshCachedSevenSegmentPresentations(project);
@@ -624,8 +771,8 @@ namespace SuMultiplayer.Engine
             {
                 if (authoritative?.State == null || authoritative.State.ElementType != sevenSegmentType)
                     continue;
-                if (!m_codec.RefreshSevenSegmentPresentation(electricity, authoritative.State,
-                        out string error))
+                if (!m_codec.RefreshSevenSegmentPresentationFromLiveVoltage(electricity,
+                        authoritative.State, out string error))
                     throw new InvalidOperationException(error);
             }
         }

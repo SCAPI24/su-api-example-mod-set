@@ -276,7 +276,12 @@ namespace SuMultiplayer.Modules
             public bool IsClientCircuitAttached => m_owner.m_circuitClient?.IsCircuitAttached == true;
             public int LocalClientId => m_owner.m_clientSync?.LocalClientId ?? -1;
             public string SessionId => m_owner.CurrentSessionId;
-            public long TerrainSequence => m_owner.CurrentCircuitTerrainSequence;
+            public long TerrainSequence => m_owner.m_host?.CurrentChangeSequence ??
+                m_owner.m_clientSync?.LastAppliedChangeSequence ?? 0L;
+            public long TerrainSequenceForChunk(ChunkKey key) =>
+                m_owner.m_host != null
+                    ? m_owner.m_host.CurrentChangeSequenceForChunk(key)
+                    : m_owner.m_clientSync?.LastAppliedChangeSequenceForChunk(key) ?? 0L;
             public event Action<int, ReceivedFrame> FrameArrived
             {
                 add { m_owner.m_circuitFrameArrived += value; }
@@ -320,6 +325,17 @@ namespace SuMultiplayer.Modules
                 m_owner.m_host != null
                     ? m_owner.m_host.CaptureClientMemoryChunks(clientId, target)
                     : ClearCircuitScope(target);
+            public void CopyClientChunkScope(int clientId, HashSet<ChunkKey> target)
+            {
+                target.Clear();
+                if (m_owner.m_host == null) return;
+                var chunks = new List<ChunkKey>();
+                if (clientId > 0)
+                    m_owner.m_host.CaptureClientMemoryChunks(clientId, chunks);
+                else if (m_owner.m_clientSync != null)
+                    m_owner.m_clientSync.CopyLoadedChunks(chunks);
+                target.UnionWith(chunks);
+            }
             public void CopyAttachedPeerIds(List<int> target)
             {
                 target.Clear();
@@ -3178,10 +3194,12 @@ namespace SuMultiplayer.Modules
             ? (m_sessionId ?? string.Empty)
             : (m_clientSync?.HostSessionId ?? m_lastHostSessionId ?? string.Empty);
 
+        internal long CurrentCircuitTerrainSequenceForChunk(ChunkKey key) => m_host != null
+            ? m_host.CurrentChangeSequenceForChunk(key)
+            : m_clientSync?.LastAppliedChangeSequenceForChunk(key) ?? 0L;
+
         /// <summary>主机当前改动水位（不是主机 = 0）。世界清单的导出基线取这里。</summary>
         internal long CurrentChangeSequence => m_host?.CurrentChangeSequence ?? 0L;
-        internal long CurrentCircuitTerrainSequence => m_host?.CurrentChangeSequence ??
-            m_clientSync?.LastAppliedChangeSequence ?? 0L;
 
         /// <summary>
         /// 客户端：下载世界已导入完成（WorldTransferModule.Install → IWorldSessionPort）。

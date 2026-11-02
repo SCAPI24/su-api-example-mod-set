@@ -63,6 +63,7 @@ namespace SuMultiplayer.Modules
         int LocalClientId { get; }
         string SessionId { get; }
         long TerrainSequence { get; }
+        long TerrainSequenceForChunk(ChunkKey key);
         event Action<int, ReceivedFrame> FrameArrived;
         event Action<int> PeerAttached;
         event Action<int, string> PeerDetached;
@@ -71,6 +72,7 @@ namespace SuMultiplayer.Modules
         bool TryCreateHostTicket(int clientId, out byte[] ticket);
         bool IsHostCircuitAttached(int clientId);
         int CopyClientChunkScope(int clientId, List<ChunkKey> target);
+        void CopyClientChunkScope(int clientId, HashSet<ChunkKey> target);
         void CopyAttachedPeerIds(List<int> target);
     }
 
@@ -94,7 +96,6 @@ namespace SuMultiplayer.Modules
         bool IsReady { get; }
         bool TryGetClock(out int circuitStep, out double totalElapsedGameTime,
             out double timeOfDayOffset, out bool paused, out string error);
-        int CopyLoadedChunks(List<ChunkKey> target);
         // Source: Survivalcraft/Game/TerrainChunk.cs:TerrainChunk.State
         bool IsChunkReady(ChunkKey key);
         // Source: Survivalcraft/Game/SubsystemElectricity.cs:SubsystemElectricity.GetElectricElement
@@ -115,10 +116,23 @@ namespace SuMultiplayer.Modules
         uint ComputeHash(IEnumerable<CircuitElementState> states);
         uint ComputeCapturedHash(IList<CircuitElementState> states);
         bool TryGetCellValue(int x, int y, int z, out int value);
+        int GetCellValue(int x, int y, int z);
+        bool TryCaptureChunkTopologyValues(ChunkKey key,
+            IDictionary<string, int> target, out string error);
+        bool IsElectricTopologyElementAt(int x, int y, int z);
+        bool TryCaptureChunkTopology(ChunkKey key, List<CircuitElementState> target,
+            out string error);
+        bool IsElectricTopologyChange(int oldValue, int newValue, int x, int y, int z);
+        bool IsElectricTopologyCell(ChunkKey key, CellEdit edit);
+        void ClearAuthoritativeStatesForChunk(ChunkKey key);
+        int CopyLoadedChunks(List<ChunkKey> target);
         string DescribeDiagnostics();
         void Pump();
         event Action<ChunkKey, CellEdit> HostCellChanged;
+        event Action<ChunkKey, CellEdit> HostCellPublished;
         event Action<ChunkKey, CellEdit> ReplicaCellApplied;
+        event Action<ChunkKey, CellEdit> ReplicaElectricCellChanged;
+        event Action<ChunkKey, CellEdit> ReplicaElectricTopologyChanged;
     }
 
     public interface ICircuitPresentationPort : ICircuitInteractionHostPort

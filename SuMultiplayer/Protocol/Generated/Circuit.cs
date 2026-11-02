@@ -40,87 +40,101 @@ namespace SuMultiplayer.Protocol.Circuit {
             "eV95GAogASgCEg0KBXJheV96GAsgASgCEhMKC2RpcmVjdGlvbl94GAwgASgC",
             "EhMKC2RpcmVjdGlvbl95GA0gASgCEhMKC2RpcmVjdGlvbl96GA4gASgCEg0K",
             "BXJlYWNoGA8gASgCEgsKA2V4dBhkIAEoDBIkCgZjdXN0b20YZSABKAsyFC5n",
-            "b29nbGUucHJvdG9idWYuQW55ItgBCgxDaXJjdWl0RXZlbnQSEAoIc2VxdWVu",
+            "b29nbGUucHJvdG9idWYuQW55Iv4BCgxDaXJjdWl0RXZlbnQSEAoIc2VxdWVu",
             "Y2UYASABKA0SGQoRaG9zdF9jaXJjdWl0X3N0ZXAYAiABKAUSCQoBeBgDIAEo",
             "BRIJCgF5GAQgASgFEgkKAXoYBSABKAUSFQoNbW91bnRpbmdfZmFjZRgGIAEo",
             "DRIxCglvcGVyYXRpb24YByABKA4yHi5zdW1wLmNpcmN1aXQuQ2lyY3VpdE9w",
             "ZXJhdGlvbhINCgV2YWx1ZRgIIAEoDRIhChlyZXF1aXJlZF90ZXJyYWluX3Nl",
-            "cXVlbmNlGAkgASgDIrQBChFDaXJjdWl0RXZlbnRCYXRjaBINCgVlcG9jaBgB",
-            "IAEoDRIZChFob3N0X2NpcmN1aXRfc3RlcBgCIAEoBRIWCg5maXJzdF9zZXF1",
-            "ZW5jZRgDIAEoDRIqCgZldmVudHMYBCADKAsyGi5zdW1wLmNpcmN1aXQuQ2ly",
-            "Y3VpdEV2ZW50EgsKA2V4dBhkIAEoDBIkCgZjdXN0b20YZSABKAsyFC5nb29n",
-            "bGUucHJvdG9idWYuQW55IkkKF0NpcmN1aXRTY2hlZHVsZWRWb2x0YWdlEhcK",
-            "D3JlbWFpbmluZ19zdGVwcxgBIAEoDRIVCg12b2x0YWdlX2xldmVsGAIgASgR",
-            "IqsDChNDaXJjdWl0RWxlbWVudFN0YXRlEgkKAXgYASABKAUSCQoBeRgCIAEo",
-            "BRIJCgF6GAMgASgFEhUKDW1vdW50aW5nX2ZhY2UYBCABKA0SFAoMZWxlbWVu",
-            "dF90eXBlGAUgASgNEhUKDXZvbHRhZ2VfbGV2ZWwYBiABKBESDQoFZmxhZ3MY",
-            "ByABKA0SHwoXYXV4aWxpYXJ5X3ZvbHRhZ2VfbGV2ZWwYCCABKBESFQoNcnVu",
-            "dGltZV9zdGF0ZRgJIAEoEhIXCg9hdXhpbGlhcnlfc3RhdGUYCiABKBISHQoV",
-            "bmV4dF9zaW11bGF0aW9uX3N0ZXBzGAsgASgNEkEKEnNjaGVkdWxlZF92b2x0",
-            "YWdlcxgMIAMoCzIlLnN1bXAuY2lyY3VpdC5DaXJjdWl0U2NoZWR1bGVkVm9s",
-            "dGFnZRIdChVvdXRwdXRfdm9sdGFnZV9sZXZlbHMYDSADKBESFAoMYnV0dG9u",
-            "X3BoYXNlGA4gASgNEh4KFmJ1dHRvbl9yZW1haW5pbmdfc3RlcHMYDyABKA0S",
-            "GAoQcmVsYXRlZF9zZXF1ZW5jZRgQIAEoDSK0AQoWQ2lyY3VpdFNuYXBzaG90",
-            "UmVxdWVzdBINCgVlcG9jaBgBIAEoDRISCgpyZXF1ZXN0X2lkGAIgASgEEi0K",
-            "BmNodW5rcxgDIAMoCzIdLnN1bXAuY2lyY3VpdC5DaXJjdWl0Q2h1bmtLZXkS",
-            "FQoNcmVwbGFjZV9zY29wZRgEIAEoCBILCgNleHQYZCABKAwSJAoGY3VzdG9t",
-            "GGUgASgLMhQuZ29vZ2xlLnByb3RvYnVmLkFueSLxAgoTQ2lyY3VpdFNuYXBz",
-            "aG90UGFydBINCgVlcG9jaBgBIAEoDRITCgtzbmFwc2hvdF9pZBgCIAEoBBIZ",
-            "ChFob3N0X2NpcmN1aXRfc3RlcBgDIAEoBRIPCgdjaHVua194GAQgASgFEg8K",
-            "B2NodW5rX3oYBSABKAUSEgoKcGFydF9pbmRleBgGIAEoDRISCgpwYXJ0X2Nv",
-            "dW50GAcgASgNEgwKBGZ1bGwYCCABKAgSMwoIZWxlbWVudHMYCSADKAsyIS5z",
-            "dW1wLmNpcmN1aXQuQ2lyY3VpdEVsZW1lbnRTdGF0ZRIhChlyZXF1aXJlZF90",
-            "ZXJyYWluX3NlcXVlbmNlGAogASgDEhsKE2xhc3RfZXZlbnRfc2VxdWVuY2UY",
-            "CyABKAUSGwoTdGltZWxpbmVfZ2VuZXJhdGlvbhgMIAEoBRILCgNleHQYZCAB",
-            "KAwSJAoGY3VzdG9tGGUgASgLMhQuZ29vZ2xlLnByb3RvYnVmLkFueSJCChBD",
-            "aXJjdWl0Q2h1bmtIYXNoEg8KB2NodW5rX3gYASABKAUSDwoHY2h1bmtfehgC",
-            "IAEoBRIMCgRoYXNoGAMgASgNIvQBChFDaXJjdWl0SGFzaFJlcG9ydBINCgVl",
-            "cG9jaBgBIAEoDRIZChFob3N0X2NpcmN1aXRfc3RlcBgCIAEoBRIYChB0ZXJy",
-            "YWluX3NlcXVlbmNlGAMgASgDEi4KBmNodW5rcxgEIAMoCzIeLnN1bXAuY2ly",
-            "Y3VpdC5DaXJjdWl0Q2h1bmtIYXNoEhsKE2xhc3RfZXZlbnRfc2VxdWVuY2UY",
-            "BSABKAUSGwoTdGltZWxpbmVfZ2VuZXJhdGlvbhgGIAEoBRILCgNleHQYZCAB",
-            "KAwSJAoGY3VzdG9tGGUgASgLMhQuZ29vZ2xlLnByb3RvYnVmLkFueSKbAQoU",
-            "Q2lyY3VpdFJlcGFpckJhcnJpZXISDQoFZXBvY2gYASABKA0SEwoLc25hcHNo",
-            "b3RfaWQYAiABKAQSGQoRaG9zdF9jaXJjdWl0X3N0ZXAYAyABKAUSDwoHY2h1",
-            "bmtfeBgEIAEoBRIPCgdjaHVua196GAUgASgFEhIKCnBhcnRfY291bnQYBiAB",
-            "KA0SDgoGcmVhc29uGAcgASgJIsQBChRDaXJjdWl0UmVwYWlyQXBwbGllZBIN",
-            "CgVlcG9jaBgBIAEoDRITCgtzbmFwc2hvdF9pZBgCIAEoBBIPCgdjaHVua194",
-            "GAMgASgFEg8KB2NodW5rX3oYBCABKAUSEgoKc3RhdGVfaGFzaBgFIAEoDRIY",
-            "ChB0ZXJyYWluX3NlcXVlbmNlGAYgASgDEhsKE2xhc3RfZXZlbnRfc2VxdWVu",
-            "Y2UYByABKAUSGwoTdGltZWxpbmVfZ2VuZXJhdGlvbhgIIAEoBSKXAgoWQ2ly",
-            "Y3VpdE9wZXJhdGlvblJlc3VsdBISCgpyZXF1ZXN0X2lkGAEgASgEEhAKCGFj",
-            "Y2VwdGVkGAIgASgIEg4KBnJlYXNvbhgDIAEoCRIQCghzZXF1ZW5jZRgEIAEo",
-            "DRIZChFob3N0X2NpcmN1aXRfc3RlcBgFIAEoBRIJCgF4GAYgASgFEgkKAXkY",
-            "ByABKAUSCQoBehgIIAEoBRISCgpjZWxsX3ZhbHVlGAkgASgNEg0KBWVwb2No",
-            "GAogASgNEiEKGXJlcXVpcmVkX3RlcnJhaW5fc2VxdWVuY2UYCyABKAMSGwoT",
-            "dGltZWxpbmVfZ2VuZXJhdGlvbhgMIAEoBRIWCg5oYXNfY2VsbF92YWx1ZRgN",
-            "IAEoCCInCg9DaXJjdWl0Q2h1bmtLZXkSCQoBeBgBIAEoBRIJCgF6GAIgASgF",
-            "IjcKDkNpcmN1aXRQYXlsb2FkEhQKDG1lc3NhZ2VfdHlwZRgBIAEoDRIPCgdw",
-            "YXlsb2FkGAIgASgMImwKEENpcmN1aXRTeW5jQmF0Y2gSDQoFZXBvY2gYASAB",
-            "KA0SGQoRaG9zdF9jaXJjdWl0X3N0ZXAYAiABKAUSLgoIcGF5bG9hZHMYAyAD",
-            "KAsyHC5zdW1wLmNpcmN1aXQuQ2lyY3VpdFBheWxvYWQqvQEKEENpcmN1aXRP",
-            "cGVyYXRpb24SIQodQ0lSQ1VJVF9PUEVSQVRJT05fVU5TUEVDSUZJRUQQABIi",
-            "Ch5DSVJDVUlUX09QRVJBVElPTl9CVVRUT05fUFJFU1MQARIcChhDSVJDVUlU",
-            "X09QRVJBVElPTl9TV0lUQ0gQAhIcChhDSVJDVUlUX09QRVJBVElPTl9ST1RB",
-            "VEUQAxImCiJDSVJDVUlUX09QRVJBVElPTl9GVVJOSVRVUkVfU1dJVENIEARC",
-            "I0gBqgIeU3VNdWx0aXBsYXllci5Qcm90b2NvbC5DaXJjdWl0YgZwcm90bzM="));
+            "cXVlbmNlGAkgASgDEiQKHHJlcXVpcmVkX3RvcG9sb2d5X2dlbmVyYXRpb24Y",
+            "CiABKAMitAEKEUNpcmN1aXRFdmVudEJhdGNoEg0KBWVwb2NoGAEgASgNEhkK",
+            "EWhvc3RfY2lyY3VpdF9zdGVwGAIgASgFEhYKDmZpcnN0X3NlcXVlbmNlGAMg",
+            "ASgNEioKBmV2ZW50cxgEIAMoCzIaLnN1bXAuY2lyY3VpdC5DaXJjdWl0RXZl",
+            "bnQSCwoDZXh0GGQgASgMEiQKBmN1c3RvbRhlIAEoCzIULmdvb2dsZS5wcm90",
+            "b2J1Zi5BbnkiSQoXQ2lyY3VpdFNjaGVkdWxlZFZvbHRhZ2USFwoPcmVtYWlu",
+            "aW5nX3N0ZXBzGAEgASgNEhUKDXZvbHRhZ2VfbGV2ZWwYAiABKBEiqwMKE0Np",
+            "cmN1aXRFbGVtZW50U3RhdGUSCQoBeBgBIAEoBRIJCgF5GAIgASgFEgkKAXoY",
+            "AyABKAUSFQoNbW91bnRpbmdfZmFjZRgEIAEoDRIUCgxlbGVtZW50X3R5cGUY",
+            "BSABKA0SFQoNdm9sdGFnZV9sZXZlbBgGIAEoERINCgVmbGFncxgHIAEoDRIf",
+            "ChdhdXhpbGlhcnlfdm9sdGFnZV9sZXZlbBgIIAEoERIVCg1ydW50aW1lX3N0",
+            "YXRlGAkgASgSEhcKD2F1eGlsaWFyeV9zdGF0ZRgKIAEoEhIdChVuZXh0X3Np",
+            "bXVsYXRpb25fc3RlcHMYCyABKA0SQQoSc2NoZWR1bGVkX3ZvbHRhZ2VzGAwg",
+            "AygLMiUuc3VtcC5jaXJjdWl0LkNpcmN1aXRTY2hlZHVsZWRWb2x0YWdlEh0K",
+            "FW91dHB1dF92b2x0YWdlX2xldmVscxgNIAMoERIUCgxidXR0b25fcGhhc2UY",
+            "DiABKA0SHgoWYnV0dG9uX3JlbWFpbmluZ19zdGVwcxgPIAEoDRIYChByZWxh",
+            "dGVkX3NlcXVlbmNlGBAgASgNIskBChZDaXJjdWl0U25hcHNob3RSZXF1ZXN0",
+            "Eg0KBWVwb2NoGAEgASgNEhIKCnJlcXVlc3RfaWQYAiABKAQSLQoGY2h1bmtz",
+            "GAMgAygLMh0uc3VtcC5jaXJjdWl0LkNpcmN1aXRDaHVua0tleRIVCg1yZXBs",
+            "YWNlX3Njb3BlGAQgASgIEhMKC3Njb3BlX3F1ZXJ5GAUgASgIEgsKA2V4dBhk",
+            "IAEoDBIkCgZjdXN0b20YZSABKAsyFC5nb29nbGUucHJvdG9idWYuQW55IpcD",
+            "ChNDaXJjdWl0U25hcHNob3RQYXJ0Eg0KBWVwb2NoGAEgASgNEhMKC3NuYXBz",
+            "aG90X2lkGAIgASgEEhkKEWhvc3RfY2lyY3VpdF9zdGVwGAMgASgFEg8KB2No",
+            "dW5rX3gYBCABKAUSDwoHY2h1bmtfehgFIAEoBRISCgpwYXJ0X2luZGV4GAYg",
+            "ASgNEhIKCnBhcnRfY291bnQYByABKA0SDAoEZnVsbBgIIAEoCBIzCghlbGVt",
+            "ZW50cxgJIAMoCzIhLnN1bXAuY2lyY3VpdC5DaXJjdWl0RWxlbWVudFN0YXRl",
+            "EiEKGXJlcXVpcmVkX3RlcnJhaW5fc2VxdWVuY2UYCiABKAMSGwoTbGFzdF9l",
+            "dmVudF9zZXF1ZW5jZRgLIAEoBRIbChN0aW1lbGluZV9nZW5lcmF0aW9uGAwg",
+            "ASgFEiQKHHJlcXVpcmVkX3RvcG9sb2d5X2dlbmVyYXRpb24YDSABKAMSCwoD",
+            "ZXh0GGQgASgMEiQKBmN1c3RvbRhlIAEoCzIULmdvb2dsZS5wcm90b2J1Zi5B",
+            "bnkiXwoQQ2lyY3VpdENodW5rSGFzaBIPCgdjaHVua194GAEgASgFEg8KB2No",
+            "dW5rX3oYAiABKAUSDAoEaGFzaBgDIAEoDRIbChN0b3BvbG9neV9nZW5lcmF0",
+            "aW9uGAQgASgDIvQBChFDaXJjdWl0SGFzaFJlcG9ydBINCgVlcG9jaBgBIAEo",
+            "DRIZChFob3N0X2NpcmN1aXRfc3RlcBgCIAEoBRIYChB0ZXJyYWluX3NlcXVl",
+            "bmNlGAMgASgDEi4KBmNodW5rcxgEIAMoCzIeLnN1bXAuY2lyY3VpdC5DaXJj",
+            "dWl0Q2h1bmtIYXNoEhsKE2xhc3RfZXZlbnRfc2VxdWVuY2UYBSABKAUSGwoT",
+            "dGltZWxpbmVfZ2VuZXJhdGlvbhgGIAEoBRILCgNleHQYZCABKAwSJAoGY3Vz",
+            "dG9tGGUgASgLMhQuZ29vZ2xlLnByb3RvYnVmLkFueSKbAQoUQ2lyY3VpdFJl",
+            "cGFpckJhcnJpZXISDQoFZXBvY2gYASABKA0SEwoLc25hcHNob3RfaWQYAiAB",
+            "KAQSGQoRaG9zdF9jaXJjdWl0X3N0ZXAYAyABKAUSDwoHY2h1bmtfeBgEIAEo",
+            "BRIPCgdjaHVua196GAUgASgFEhIKCnBhcnRfY291bnQYBiABKA0SDgoGcmVh",
+            "c29uGAcgASgJIuEBChRDaXJjdWl0UmVwYWlyQXBwbGllZBINCgVlcG9jaBgB",
+            "IAEoDRITCgtzbmFwc2hvdF9pZBgCIAEoBBIPCgdjaHVua194GAMgASgFEg8K",
+            "B2NodW5rX3oYBCABKAUSEgoKc3RhdGVfaGFzaBgFIAEoDRIYChB0ZXJyYWlu",
+            "X3NlcXVlbmNlGAYgASgDEhsKE2xhc3RfZXZlbnRfc2VxdWVuY2UYByABKAUS",
+            "GwoTdGltZWxpbmVfZ2VuZXJhdGlvbhgIIAEoBRIbChN0b3BvbG9neV9nZW5l",
+            "cmF0aW9uGAkgASgDIr0CChZDaXJjdWl0T3BlcmF0aW9uUmVzdWx0EhIKCnJl",
+            "cXVlc3RfaWQYASABKAQSEAoIYWNjZXB0ZWQYAiABKAgSDgoGcmVhc29uGAMg",
+            "ASgJEhAKCHNlcXVlbmNlGAQgASgNEhkKEWhvc3RfY2lyY3VpdF9zdGVwGAUg",
+            "ASgFEgkKAXgYBiABKAUSCQoBeRgHIAEoBRIJCgF6GAggASgFEhIKCmNlbGxf",
+            "dmFsdWUYCSABKA0SDQoFZXBvY2gYCiABKA0SIQoZcmVxdWlyZWRfdGVycmFp",
+            "bl9zZXF1ZW5jZRgLIAEoAxIbChN0aW1lbGluZV9nZW5lcmF0aW9uGAwgASgF",
+            "EhYKDmhhc19jZWxsX3ZhbHVlGA0gASgIEiQKHHJlcXVpcmVkX3RvcG9sb2d5",
+            "X2dlbmVyYXRpb24YDiABKAMiJwoPQ2lyY3VpdENodW5rS2V5EgkKAXgYASAB",
+            "KAUSCQoBehgCIAEoBSLDAQoUQ2lyY3VpdFNjb3BlU25hcHNob3QSDQoFZXBv",
+            "Y2gYASABKA0SEgoKcmVxdWVzdF9pZBgCIAEoBBItCgZjaHVua3MYAyADKAsy",
+            "HS5zdW1wLmNpcmN1aXQuQ2lyY3VpdENodW5rS2V5EjYKCnRvcG9sb2dpZXMY",
+            "BCADKAsyIi5zdW1wLmNpcmN1aXQuQ2lyY3VpdENodW5rVG9wb2xvZ3kSIQoZ",
+            "cmVxdWlyZWRfdGVycmFpbl9zZXF1ZW5jZRgFIAEoAyKFAQoUQ2lyY3VpdENo",
+            "dW5rVG9wb2xvZ3kSKgoDa2V5GAEgASgLMh0uc3VtcC5jaXJjdWl0LkNpcmN1",
+            "aXRDaHVua0tleRISCgpnZW5lcmF0aW9uGAIgASgDEhgKEHRlcnJhaW5fc2Vx",
+            "dWVuY2UYAyABKAMSEwoLaGFzX2NpcmN1aXQYBCABKAgiNwoOQ2lyY3VpdFBh",
+            "eWxvYWQSFAoMbWVzc2FnZV90eXBlGAEgASgNEg8KB3BheWxvYWQYAiABKAwi",
+            "bAoQQ2lyY3VpdFN5bmNCYXRjaBINCgVlcG9jaBgBIAEoDRIZChFob3N0X2Np",
+            "cmN1aXRfc3RlcBgCIAEoBRIuCghwYXlsb2FkcxgDIAMoCzIcLnN1bXAuY2ly",
+            "Y3VpdC5DaXJjdWl0UGF5bG9hZCq9AQoQQ2lyY3VpdE9wZXJhdGlvbhIhCh1D",
+            "SVJDVUlUX09QRVJBVElPTl9VTlNQRUNJRklFRBAAEiIKHkNJUkNVSVRfT1BF",
+            "UkFUSU9OX0JVVFRPTl9QUkVTUxABEhwKGENJUkNVSVRfT1BFUkFUSU9OX1NX",
+            "SVRDSBACEhwKGENJUkNVSVRfT1BFUkFUSU9OX1JPVEFURRADEiYKIkNJUkNV",
+            "SVRfT1BFUkFUSU9OX0ZVUk5JVFVSRV9TV0lUQ0gQBEIjSAGqAh5TdU11bHRp",
+            "cGxheWVyLlByb3RvY29sLkNpcmN1aXRiBnByb3RvMw=="));
       descriptor = pbr::FileDescriptor.FromGeneratedCode(descriptorData,
           new pbr::FileDescriptor[] { global::Google.Protobuf.WellKnownTypes.AnyReflection.Descriptor, },
           new pbr::GeneratedClrTypeInfo(new[] {typeof(global::SuMultiplayer.Protocol.Circuit.CircuitOperation), }, null, new pbr::GeneratedClrTypeInfo[] {
             new pbr::GeneratedClrTypeInfo(typeof(global::SuMultiplayer.Protocol.Circuit.CircuitClock), global::SuMultiplayer.Protocol.Circuit.CircuitClock.Parser, new[]{ "Epoch", "HostCircuitStep", "LastEventSequence", "TerrainSequence", "TotalElapsedGameTime", "TimeOfDayOffset", "TimelineGeneration", "Paused", "RandomSeed", "Accelerated", "Ext", "Custom" }, null, null, null, null),
             new pbr::GeneratedClrTypeInfo(typeof(global::SuMultiplayer.Protocol.Circuit.CircuitEventRequest), global::SuMultiplayer.Protocol.Circuit.CircuitEventRequest.Parser, new[]{ "RequestId", "ClientCircuitStep", "X", "Y", "Z", "MountingFace", "Operation", "Value", "RayX", "RayY", "RayZ", "DirectionX", "DirectionY", "DirectionZ", "Reach", "Ext", "Custom" }, null, null, null, null),
-            new pbr::GeneratedClrTypeInfo(typeof(global::SuMultiplayer.Protocol.Circuit.CircuitEvent), global::SuMultiplayer.Protocol.Circuit.CircuitEvent.Parser, new[]{ "Sequence", "HostCircuitStep", "X", "Y", "Z", "MountingFace", "Operation", "Value", "RequiredTerrainSequence" }, null, null, null, null),
+            new pbr::GeneratedClrTypeInfo(typeof(global::SuMultiplayer.Protocol.Circuit.CircuitEvent), global::SuMultiplayer.Protocol.Circuit.CircuitEvent.Parser, new[]{ "Sequence", "HostCircuitStep", "X", "Y", "Z", "MountingFace", "Operation", "Value", "RequiredTerrainSequence", "RequiredTopologyGeneration" }, null, null, null, null),
             new pbr::GeneratedClrTypeInfo(typeof(global::SuMultiplayer.Protocol.Circuit.CircuitEventBatch), global::SuMultiplayer.Protocol.Circuit.CircuitEventBatch.Parser, new[]{ "Epoch", "HostCircuitStep", "FirstSequence", "Events", "Ext", "Custom" }, null, null, null, null),
             new pbr::GeneratedClrTypeInfo(typeof(global::SuMultiplayer.Protocol.Circuit.CircuitScheduledVoltage), global::SuMultiplayer.Protocol.Circuit.CircuitScheduledVoltage.Parser, new[]{ "RemainingSteps", "VoltageLevel" }, null, null, null, null),
             new pbr::GeneratedClrTypeInfo(typeof(global::SuMultiplayer.Protocol.Circuit.CircuitElementState), global::SuMultiplayer.Protocol.Circuit.CircuitElementState.Parser, new[]{ "X", "Y", "Z", "MountingFace", "ElementType", "VoltageLevel", "Flags", "AuxiliaryVoltageLevel", "RuntimeState", "AuxiliaryState", "NextSimulationSteps", "ScheduledVoltages", "OutputVoltageLevels", "ButtonPhase", "ButtonRemainingSteps", "RelatedSequence" }, null, null, null, null),
-            new pbr::GeneratedClrTypeInfo(typeof(global::SuMultiplayer.Protocol.Circuit.CircuitSnapshotRequest), global::SuMultiplayer.Protocol.Circuit.CircuitSnapshotRequest.Parser, new[]{ "Epoch", "RequestId", "Chunks", "ReplaceScope", "Ext", "Custom" }, null, null, null, null),
-            new pbr::GeneratedClrTypeInfo(typeof(global::SuMultiplayer.Protocol.Circuit.CircuitSnapshotPart), global::SuMultiplayer.Protocol.Circuit.CircuitSnapshotPart.Parser, new[]{ "Epoch", "SnapshotId", "HostCircuitStep", "ChunkX", "ChunkZ", "PartIndex", "PartCount", "Full", "Elements", "RequiredTerrainSequence", "LastEventSequence", "TimelineGeneration", "Ext", "Custom" }, null, null, null, null),
-            new pbr::GeneratedClrTypeInfo(typeof(global::SuMultiplayer.Protocol.Circuit.CircuitChunkHash), global::SuMultiplayer.Protocol.Circuit.CircuitChunkHash.Parser, new[]{ "ChunkX", "ChunkZ", "Hash" }, null, null, null, null),
+            new pbr::GeneratedClrTypeInfo(typeof(global::SuMultiplayer.Protocol.Circuit.CircuitSnapshotRequest), global::SuMultiplayer.Protocol.Circuit.CircuitSnapshotRequest.Parser, new[]{ "Epoch", "RequestId", "Chunks", "ReplaceScope", "ScopeQuery", "Ext", "Custom" }, null, null, null, null),
+            new pbr::GeneratedClrTypeInfo(typeof(global::SuMultiplayer.Protocol.Circuit.CircuitSnapshotPart), global::SuMultiplayer.Protocol.Circuit.CircuitSnapshotPart.Parser, new[]{ "Epoch", "SnapshotId", "HostCircuitStep", "ChunkX", "ChunkZ", "PartIndex", "PartCount", "Full", "Elements", "RequiredTerrainSequence", "LastEventSequence", "TimelineGeneration", "RequiredTopologyGeneration", "Ext", "Custom" }, null, null, null, null),
+            new pbr::GeneratedClrTypeInfo(typeof(global::SuMultiplayer.Protocol.Circuit.CircuitChunkHash), global::SuMultiplayer.Protocol.Circuit.CircuitChunkHash.Parser, new[]{ "ChunkX", "ChunkZ", "Hash", "TopologyGeneration" }, null, null, null, null),
             new pbr::GeneratedClrTypeInfo(typeof(global::SuMultiplayer.Protocol.Circuit.CircuitHashReport), global::SuMultiplayer.Protocol.Circuit.CircuitHashReport.Parser, new[]{ "Epoch", "HostCircuitStep", "TerrainSequence", "Chunks", "LastEventSequence", "TimelineGeneration", "Ext", "Custom" }, null, null, null, null),
             new pbr::GeneratedClrTypeInfo(typeof(global::SuMultiplayer.Protocol.Circuit.CircuitRepairBarrier), global::SuMultiplayer.Protocol.Circuit.CircuitRepairBarrier.Parser, new[]{ "Epoch", "SnapshotId", "HostCircuitStep", "ChunkX", "ChunkZ", "PartCount", "Reason" }, null, null, null, null),
-            new pbr::GeneratedClrTypeInfo(typeof(global::SuMultiplayer.Protocol.Circuit.CircuitRepairApplied), global::SuMultiplayer.Protocol.Circuit.CircuitRepairApplied.Parser, new[]{ "Epoch", "SnapshotId", "ChunkX", "ChunkZ", "StateHash", "TerrainSequence", "LastEventSequence", "TimelineGeneration" }, null, null, null, null),
-            new pbr::GeneratedClrTypeInfo(typeof(global::SuMultiplayer.Protocol.Circuit.CircuitOperationResult), global::SuMultiplayer.Protocol.Circuit.CircuitOperationResult.Parser, new[]{ "RequestId", "Accepted", "Reason", "Sequence", "HostCircuitStep", "X", "Y", "Z", "CellValue", "Epoch", "RequiredTerrainSequence", "TimelineGeneration", "HasCellValue" }, null, null, null, null),
+            new pbr::GeneratedClrTypeInfo(typeof(global::SuMultiplayer.Protocol.Circuit.CircuitRepairApplied), global::SuMultiplayer.Protocol.Circuit.CircuitRepairApplied.Parser, new[]{ "Epoch", "SnapshotId", "ChunkX", "ChunkZ", "StateHash", "TerrainSequence", "LastEventSequence", "TimelineGeneration", "TopologyGeneration" }, null, null, null, null),
+            new pbr::GeneratedClrTypeInfo(typeof(global::SuMultiplayer.Protocol.Circuit.CircuitOperationResult), global::SuMultiplayer.Protocol.Circuit.CircuitOperationResult.Parser, new[]{ "RequestId", "Accepted", "Reason", "Sequence", "HostCircuitStep", "X", "Y", "Z", "CellValue", "Epoch", "RequiredTerrainSequence", "TimelineGeneration", "HasCellValue", "RequiredTopologyGeneration" }, null, null, null, null),
             new pbr::GeneratedClrTypeInfo(typeof(global::SuMultiplayer.Protocol.Circuit.CircuitChunkKey), global::SuMultiplayer.Protocol.Circuit.CircuitChunkKey.Parser, new[]{ "X", "Z" }, null, null, null, null),
+            new pbr::GeneratedClrTypeInfo(typeof(global::SuMultiplayer.Protocol.Circuit.CircuitScopeSnapshot), global::SuMultiplayer.Protocol.Circuit.CircuitScopeSnapshot.Parser, new[]{ "Epoch", "RequestId", "Chunks", "Topologies", "RequiredTerrainSequence" }, null, null, null, null),
+            new pbr::GeneratedClrTypeInfo(typeof(global::SuMultiplayer.Protocol.Circuit.CircuitChunkTopology), global::SuMultiplayer.Protocol.Circuit.CircuitChunkTopology.Parser, new[]{ "Key", "Generation", "TerrainSequence", "HasCircuit" }, null, null, null, null),
             new pbr::GeneratedClrTypeInfo(typeof(global::SuMultiplayer.Protocol.Circuit.CircuitPayload), global::SuMultiplayer.Protocol.Circuit.CircuitPayload.Parser, new[]{ "MessageType", "Payload" }, null, null, null, null),
             new pbr::GeneratedClrTypeInfo(typeof(global::SuMultiplayer.Protocol.Circuit.CircuitSyncBatch), global::SuMultiplayer.Protocol.Circuit.CircuitSyncBatch.Parser, new[]{ "Epoch", "HostCircuitStep", "Payloads" }, null, null, null, null)
           }));
@@ -1597,6 +1611,7 @@ namespace SuMultiplayer.Protocol.Circuit {
       operation_ = other.operation_;
       value_ = other.value_;
       requiredTerrainSequence_ = other.requiredTerrainSequence_;
+      requiredTopologyGeneration_ = other.requiredTopologyGeneration_;
       _unknownFields = pb::UnknownFieldSet.Clone(other._unknownFields);
     }
 
@@ -1714,6 +1729,18 @@ namespace SuMultiplayer.Protocol.Circuit {
       }
     }
 
+    /// <summary>Field number for the "required_topology_generation" field.</summary>
+    public const int RequiredTopologyGenerationFieldNumber = 10;
+    private long requiredTopologyGeneration_;
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public long RequiredTopologyGeneration {
+      get { return requiredTopologyGeneration_; }
+      set {
+        requiredTopologyGeneration_ = value;
+      }
+    }
+
     [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
     [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
     public override bool Equals(object other) {
@@ -1738,6 +1765,7 @@ namespace SuMultiplayer.Protocol.Circuit {
       if (Operation != other.Operation) return false;
       if (Value != other.Value) return false;
       if (RequiredTerrainSequence != other.RequiredTerrainSequence) return false;
+      if (RequiredTopologyGeneration != other.RequiredTopologyGeneration) return false;
       return Equals(_unknownFields, other._unknownFields);
     }
 
@@ -1754,6 +1782,7 @@ namespace SuMultiplayer.Protocol.Circuit {
       if (Operation != global::SuMultiplayer.Protocol.Circuit.CircuitOperation.Unspecified) hash ^= Operation.GetHashCode();
       if (Value != 0) hash ^= Value.GetHashCode();
       if (RequiredTerrainSequence != 0L) hash ^= RequiredTerrainSequence.GetHashCode();
+      if (RequiredTopologyGeneration != 0L) hash ^= RequiredTopologyGeneration.GetHashCode();
       if (_unknownFields != null) {
         hash ^= _unknownFields.GetHashCode();
       }
@@ -1808,6 +1837,10 @@ namespace SuMultiplayer.Protocol.Circuit {
         output.WriteRawTag(72);
         output.WriteInt64(RequiredTerrainSequence);
       }
+      if (RequiredTopologyGeneration != 0L) {
+        output.WriteRawTag(80);
+        output.WriteInt64(RequiredTopologyGeneration);
+      }
       if (_unknownFields != null) {
         _unknownFields.WriteTo(output);
       }
@@ -1854,6 +1887,10 @@ namespace SuMultiplayer.Protocol.Circuit {
         output.WriteRawTag(72);
         output.WriteInt64(RequiredTerrainSequence);
       }
+      if (RequiredTopologyGeneration != 0L) {
+        output.WriteRawTag(80);
+        output.WriteInt64(RequiredTopologyGeneration);
+      }
       if (_unknownFields != null) {
         _unknownFields.WriteTo(ref output);
       }
@@ -1890,6 +1927,9 @@ namespace SuMultiplayer.Protocol.Circuit {
       }
       if (RequiredTerrainSequence != 0L) {
         size += 1 + pb::CodedOutputStream.ComputeInt64Size(RequiredTerrainSequence);
+      }
+      if (RequiredTopologyGeneration != 0L) {
+        size += 1 + pb::CodedOutputStream.ComputeInt64Size(RequiredTopologyGeneration);
       }
       if (_unknownFields != null) {
         size += _unknownFields.CalculateSize();
@@ -1929,6 +1969,9 @@ namespace SuMultiplayer.Protocol.Circuit {
       }
       if (other.RequiredTerrainSequence != 0L) {
         RequiredTerrainSequence = other.RequiredTerrainSequence;
+      }
+      if (other.RequiredTopologyGeneration != 0L) {
+        RequiredTopologyGeneration = other.RequiredTopologyGeneration;
       }
       _unknownFields = pb::UnknownFieldSet.MergeFrom(_unknownFields, other._unknownFields);
     }
@@ -1985,6 +2028,10 @@ namespace SuMultiplayer.Protocol.Circuit {
             RequiredTerrainSequence = input.ReadInt64();
             break;
           }
+          case 80: {
+            RequiredTopologyGeneration = input.ReadInt64();
+            break;
+          }
         }
       }
     #endif
@@ -2038,6 +2085,10 @@ namespace SuMultiplayer.Protocol.Circuit {
           }
           case 72: {
             RequiredTerrainSequence = input.ReadInt64();
+            break;
+          }
+          case 80: {
+            RequiredTopologyGeneration = input.ReadInt64();
             break;
           }
         }
@@ -3435,6 +3486,7 @@ namespace SuMultiplayer.Protocol.Circuit {
       requestId_ = other.requestId_;
       chunks_ = other.chunks_.Clone();
       replaceScope_ = other.replaceScope_;
+      scopeQuery_ = other.scopeQuery_;
       ext_ = other.ext_;
       custom_ = other.custom_ != null ? other.custom_.Clone() : null;
       _unknownFields = pb::UnknownFieldSet.Clone(other._unknownFields);
@@ -3493,6 +3545,18 @@ namespace SuMultiplayer.Protocol.Circuit {
       }
     }
 
+    /// <summary>Field number for the "scope_query" field.</summary>
+    public const int ScopeQueryFieldNumber = 5;
+    private bool scopeQuery_;
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public bool ScopeQuery {
+      get { return scopeQuery_; }
+      set {
+        scopeQuery_ = value;
+      }
+    }
+
     /// <summary>Field number for the "ext" field.</summary>
     public const int ExtFieldNumber = 100;
     private pb::ByteString ext_ = pb::ByteString.Empty;
@@ -3536,6 +3600,7 @@ namespace SuMultiplayer.Protocol.Circuit {
       if (RequestId != other.RequestId) return false;
       if(!chunks_.Equals(other.chunks_)) return false;
       if (ReplaceScope != other.ReplaceScope) return false;
+      if (ScopeQuery != other.ScopeQuery) return false;
       if (Ext != other.Ext) return false;
       if (!object.Equals(Custom, other.Custom)) return false;
       return Equals(_unknownFields, other._unknownFields);
@@ -3549,6 +3614,7 @@ namespace SuMultiplayer.Protocol.Circuit {
       if (RequestId != 0UL) hash ^= RequestId.GetHashCode();
       hash ^= chunks_.GetHashCode();
       if (ReplaceScope != false) hash ^= ReplaceScope.GetHashCode();
+      if (ScopeQuery != false) hash ^= ScopeQuery.GetHashCode();
       if (Ext.Length != 0) hash ^= Ext.GetHashCode();
       if (custom_ != null) hash ^= Custom.GetHashCode();
       if (_unknownFields != null) {
@@ -3582,6 +3648,10 @@ namespace SuMultiplayer.Protocol.Circuit {
         output.WriteRawTag(32);
         output.WriteBool(ReplaceScope);
       }
+      if (ScopeQuery != false) {
+        output.WriteRawTag(40);
+        output.WriteBool(ScopeQuery);
+      }
       if (Ext.Length != 0) {
         output.WriteRawTag(162, 6);
         output.WriteBytes(Ext);
@@ -3613,6 +3683,10 @@ namespace SuMultiplayer.Protocol.Circuit {
         output.WriteRawTag(32);
         output.WriteBool(ReplaceScope);
       }
+      if (ScopeQuery != false) {
+        output.WriteRawTag(40);
+        output.WriteBool(ScopeQuery);
+      }
       if (Ext.Length != 0) {
         output.WriteRawTag(162, 6);
         output.WriteBytes(Ext);
@@ -3639,6 +3713,9 @@ namespace SuMultiplayer.Protocol.Circuit {
       }
       size += chunks_.CalculateSize(_repeated_chunks_codec);
       if (ReplaceScope != false) {
+        size += 1 + 1;
+      }
+      if (ScopeQuery != false) {
         size += 1 + 1;
       }
       if (Ext.Length != 0) {
@@ -3668,6 +3745,9 @@ namespace SuMultiplayer.Protocol.Circuit {
       chunks_.Add(other.chunks_);
       if (other.ReplaceScope != false) {
         ReplaceScope = other.ReplaceScope;
+      }
+      if (other.ScopeQuery != false) {
+        ScopeQuery = other.ScopeQuery;
       }
       if (other.Ext.Length != 0) {
         Ext = other.Ext;
@@ -3711,6 +3791,10 @@ namespace SuMultiplayer.Protocol.Circuit {
           }
           case 32: {
             ReplaceScope = input.ReadBool();
+            break;
+          }
+          case 40: {
+            ScopeQuery = input.ReadBool();
             break;
           }
           case 802: {
@@ -3757,6 +3841,10 @@ namespace SuMultiplayer.Protocol.Circuit {
           }
           case 32: {
             ReplaceScope = input.ReadBool();
+            break;
+          }
+          case 40: {
+            ScopeQuery = input.ReadBool();
             break;
           }
           case 802: {
@@ -3824,6 +3912,7 @@ namespace SuMultiplayer.Protocol.Circuit {
       requiredTerrainSequence_ = other.requiredTerrainSequence_;
       lastEventSequence_ = other.lastEventSequence_;
       timelineGeneration_ = other.timelineGeneration_;
+      requiredTopologyGeneration_ = other.requiredTopologyGeneration_;
       ext_ = other.ext_;
       custom_ = other.custom_ != null ? other.custom_.Clone() : null;
       _unknownFields = pb::UnknownFieldSet.Clone(other._unknownFields);
@@ -3978,6 +4067,18 @@ namespace SuMultiplayer.Protocol.Circuit {
       }
     }
 
+    /// <summary>Field number for the "required_topology_generation" field.</summary>
+    public const int RequiredTopologyGenerationFieldNumber = 13;
+    private long requiredTopologyGeneration_;
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public long RequiredTopologyGeneration {
+      get { return requiredTopologyGeneration_; }
+      set {
+        requiredTopologyGeneration_ = value;
+      }
+    }
+
     /// <summary>Field number for the "ext" field.</summary>
     public const int ExtFieldNumber = 100;
     private pb::ByteString ext_ = pb::ByteString.Empty;
@@ -4029,6 +4130,7 @@ namespace SuMultiplayer.Protocol.Circuit {
       if (RequiredTerrainSequence != other.RequiredTerrainSequence) return false;
       if (LastEventSequence != other.LastEventSequence) return false;
       if (TimelineGeneration != other.TimelineGeneration) return false;
+      if (RequiredTopologyGeneration != other.RequiredTopologyGeneration) return false;
       if (Ext != other.Ext) return false;
       if (!object.Equals(Custom, other.Custom)) return false;
       return Equals(_unknownFields, other._unknownFields);
@@ -4050,6 +4152,7 @@ namespace SuMultiplayer.Protocol.Circuit {
       if (RequiredTerrainSequence != 0L) hash ^= RequiredTerrainSequence.GetHashCode();
       if (LastEventSequence != 0) hash ^= LastEventSequence.GetHashCode();
       if (TimelineGeneration != 0) hash ^= TimelineGeneration.GetHashCode();
+      if (RequiredTopologyGeneration != 0L) hash ^= RequiredTopologyGeneration.GetHashCode();
       if (Ext.Length != 0) hash ^= Ext.GetHashCode();
       if (custom_ != null) hash ^= Custom.GetHashCode();
       if (_unknownFields != null) {
@@ -4115,6 +4218,10 @@ namespace SuMultiplayer.Protocol.Circuit {
         output.WriteRawTag(96);
         output.WriteInt32(TimelineGeneration);
       }
+      if (RequiredTopologyGeneration != 0L) {
+        output.WriteRawTag(104);
+        output.WriteInt64(RequiredTopologyGeneration);
+      }
       if (Ext.Length != 0) {
         output.WriteRawTag(162, 6);
         output.WriteBytes(Ext);
@@ -4178,6 +4285,10 @@ namespace SuMultiplayer.Protocol.Circuit {
         output.WriteRawTag(96);
         output.WriteInt32(TimelineGeneration);
       }
+      if (RequiredTopologyGeneration != 0L) {
+        output.WriteRawTag(104);
+        output.WriteInt64(RequiredTopologyGeneration);
+      }
       if (Ext.Length != 0) {
         output.WriteRawTag(162, 6);
         output.WriteBytes(Ext);
@@ -4230,6 +4341,9 @@ namespace SuMultiplayer.Protocol.Circuit {
       if (TimelineGeneration != 0) {
         size += 1 + pb::CodedOutputStream.ComputeInt32Size(TimelineGeneration);
       }
+      if (RequiredTopologyGeneration != 0L) {
+        size += 1 + pb::CodedOutputStream.ComputeInt64Size(RequiredTopologyGeneration);
+      }
       if (Ext.Length != 0) {
         size += 2 + pb::CodedOutputStream.ComputeBytesSize(Ext);
       }
@@ -4281,6 +4395,9 @@ namespace SuMultiplayer.Protocol.Circuit {
       }
       if (other.TimelineGeneration != 0) {
         TimelineGeneration = other.TimelineGeneration;
+      }
+      if (other.RequiredTopologyGeneration != 0L) {
+        RequiredTopologyGeneration = other.RequiredTopologyGeneration;
       }
       if (other.Ext.Length != 0) {
         Ext = other.Ext;
@@ -4356,6 +4473,10 @@ namespace SuMultiplayer.Protocol.Circuit {
           }
           case 96: {
             TimelineGeneration = input.ReadInt32();
+            break;
+          }
+          case 104: {
+            RequiredTopologyGeneration = input.ReadInt64();
             break;
           }
           case 802: {
@@ -4436,6 +4557,10 @@ namespace SuMultiplayer.Protocol.Circuit {
             TimelineGeneration = input.ReadInt32();
             break;
           }
+          case 104: {
+            RequiredTopologyGeneration = input.ReadInt64();
+            break;
+          }
           case 802: {
             Ext = input.ReadBytes();
             break;
@@ -4492,6 +4617,7 @@ namespace SuMultiplayer.Protocol.Circuit {
       chunkX_ = other.chunkX_;
       chunkZ_ = other.chunkZ_;
       hash_ = other.hash_;
+      topologyGeneration_ = other.topologyGeneration_;
       _unknownFields = pb::UnknownFieldSet.Clone(other._unknownFields);
     }
 
@@ -4537,6 +4663,18 @@ namespace SuMultiplayer.Protocol.Circuit {
       }
     }
 
+    /// <summary>Field number for the "topology_generation" field.</summary>
+    public const int TopologyGenerationFieldNumber = 4;
+    private long topologyGeneration_;
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public long TopologyGeneration {
+      get { return topologyGeneration_; }
+      set {
+        topologyGeneration_ = value;
+      }
+    }
+
     [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
     [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
     public override bool Equals(object other) {
@@ -4555,6 +4693,7 @@ namespace SuMultiplayer.Protocol.Circuit {
       if (ChunkX != other.ChunkX) return false;
       if (ChunkZ != other.ChunkZ) return false;
       if (Hash != other.Hash) return false;
+      if (TopologyGeneration != other.TopologyGeneration) return false;
       return Equals(_unknownFields, other._unknownFields);
     }
 
@@ -4565,6 +4704,7 @@ namespace SuMultiplayer.Protocol.Circuit {
       if (ChunkX != 0) hash ^= ChunkX.GetHashCode();
       if (ChunkZ != 0) hash ^= ChunkZ.GetHashCode();
       if (Hash != 0) hash ^= Hash.GetHashCode();
+      if (TopologyGeneration != 0L) hash ^= TopologyGeneration.GetHashCode();
       if (_unknownFields != null) {
         hash ^= _unknownFields.GetHashCode();
       }
@@ -4595,6 +4735,10 @@ namespace SuMultiplayer.Protocol.Circuit {
         output.WriteRawTag(24);
         output.WriteUInt32(Hash);
       }
+      if (TopologyGeneration != 0L) {
+        output.WriteRawTag(32);
+        output.WriteInt64(TopologyGeneration);
+      }
       if (_unknownFields != null) {
         _unknownFields.WriteTo(output);
       }
@@ -4617,6 +4761,10 @@ namespace SuMultiplayer.Protocol.Circuit {
         output.WriteRawTag(24);
         output.WriteUInt32(Hash);
       }
+      if (TopologyGeneration != 0L) {
+        output.WriteRawTag(32);
+        output.WriteInt64(TopologyGeneration);
+      }
       if (_unknownFields != null) {
         _unknownFields.WriteTo(ref output);
       }
@@ -4635,6 +4783,9 @@ namespace SuMultiplayer.Protocol.Circuit {
       }
       if (Hash != 0) {
         size += 1 + pb::CodedOutputStream.ComputeUInt32Size(Hash);
+      }
+      if (TopologyGeneration != 0L) {
+        size += 1 + pb::CodedOutputStream.ComputeInt64Size(TopologyGeneration);
       }
       if (_unknownFields != null) {
         size += _unknownFields.CalculateSize();
@@ -4656,6 +4807,9 @@ namespace SuMultiplayer.Protocol.Circuit {
       }
       if (other.Hash != 0) {
         Hash = other.Hash;
+      }
+      if (other.TopologyGeneration != 0L) {
+        TopologyGeneration = other.TopologyGeneration;
       }
       _unknownFields = pb::UnknownFieldSet.MergeFrom(_unknownFields, other._unknownFields);
     }
@@ -4688,6 +4842,10 @@ namespace SuMultiplayer.Protocol.Circuit {
             Hash = input.ReadUInt32();
             break;
           }
+          case 32: {
+            TopologyGeneration = input.ReadInt64();
+            break;
+          }
         }
       }
     #endif
@@ -4717,6 +4875,10 @@ namespace SuMultiplayer.Protocol.Circuit {
           }
           case 24: {
             Hash = input.ReadUInt32();
+            break;
+          }
+          case 32: {
+            TopologyGeneration = input.ReadInt64();
             break;
           }
         }
@@ -5644,6 +5806,7 @@ namespace SuMultiplayer.Protocol.Circuit {
       terrainSequence_ = other.terrainSequence_;
       lastEventSequence_ = other.lastEventSequence_;
       timelineGeneration_ = other.timelineGeneration_;
+      topologyGeneration_ = other.topologyGeneration_;
       _unknownFields = pb::UnknownFieldSet.Clone(other._unknownFields);
     }
 
@@ -5749,6 +5912,18 @@ namespace SuMultiplayer.Protocol.Circuit {
       }
     }
 
+    /// <summary>Field number for the "topology_generation" field.</summary>
+    public const int TopologyGenerationFieldNumber = 9;
+    private long topologyGeneration_;
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public long TopologyGeneration {
+      get { return topologyGeneration_; }
+      set {
+        topologyGeneration_ = value;
+      }
+    }
+
     [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
     [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
     public override bool Equals(object other) {
@@ -5772,6 +5947,7 @@ namespace SuMultiplayer.Protocol.Circuit {
       if (TerrainSequence != other.TerrainSequence) return false;
       if (LastEventSequence != other.LastEventSequence) return false;
       if (TimelineGeneration != other.TimelineGeneration) return false;
+      if (TopologyGeneration != other.TopologyGeneration) return false;
       return Equals(_unknownFields, other._unknownFields);
     }
 
@@ -5787,6 +5963,7 @@ namespace SuMultiplayer.Protocol.Circuit {
       if (TerrainSequence != 0L) hash ^= TerrainSequence.GetHashCode();
       if (LastEventSequence != 0) hash ^= LastEventSequence.GetHashCode();
       if (TimelineGeneration != 0) hash ^= TimelineGeneration.GetHashCode();
+      if (TopologyGeneration != 0L) hash ^= TopologyGeneration.GetHashCode();
       if (_unknownFields != null) {
         hash ^= _unknownFields.GetHashCode();
       }
@@ -5837,6 +6014,10 @@ namespace SuMultiplayer.Protocol.Circuit {
         output.WriteRawTag(64);
         output.WriteInt32(TimelineGeneration);
       }
+      if (TopologyGeneration != 0L) {
+        output.WriteRawTag(72);
+        output.WriteInt64(TopologyGeneration);
+      }
       if (_unknownFields != null) {
         _unknownFields.WriteTo(output);
       }
@@ -5879,6 +6060,10 @@ namespace SuMultiplayer.Protocol.Circuit {
         output.WriteRawTag(64);
         output.WriteInt32(TimelineGeneration);
       }
+      if (TopologyGeneration != 0L) {
+        output.WriteRawTag(72);
+        output.WriteInt64(TopologyGeneration);
+      }
       if (_unknownFields != null) {
         _unknownFields.WriteTo(ref output);
       }
@@ -5912,6 +6097,9 @@ namespace SuMultiplayer.Protocol.Circuit {
       }
       if (TimelineGeneration != 0) {
         size += 1 + pb::CodedOutputStream.ComputeInt32Size(TimelineGeneration);
+      }
+      if (TopologyGeneration != 0L) {
+        size += 1 + pb::CodedOutputStream.ComputeInt64Size(TopologyGeneration);
       }
       if (_unknownFields != null) {
         size += _unknownFields.CalculateSize();
@@ -5948,6 +6136,9 @@ namespace SuMultiplayer.Protocol.Circuit {
       }
       if (other.TimelineGeneration != 0) {
         TimelineGeneration = other.TimelineGeneration;
+      }
+      if (other.TopologyGeneration != 0L) {
+        TopologyGeneration = other.TopologyGeneration;
       }
       _unknownFields = pb::UnknownFieldSet.MergeFrom(_unknownFields, other._unknownFields);
     }
@@ -6000,6 +6191,10 @@ namespace SuMultiplayer.Protocol.Circuit {
             TimelineGeneration = input.ReadInt32();
             break;
           }
+          case 72: {
+            TopologyGeneration = input.ReadInt64();
+            break;
+          }
         }
       }
     #endif
@@ -6049,6 +6244,10 @@ namespace SuMultiplayer.Protocol.Circuit {
           }
           case 64: {
             TimelineGeneration = input.ReadInt32();
+            break;
+          }
+          case 72: {
+            TopologyGeneration = input.ReadInt64();
             break;
           }
         }
@@ -6106,6 +6305,7 @@ namespace SuMultiplayer.Protocol.Circuit {
       requiredTerrainSequence_ = other.requiredTerrainSequence_;
       timelineGeneration_ = other.timelineGeneration_;
       hasCellValue_ = other.hasCellValue_;
+      requiredTopologyGeneration_ = other.requiredTopologyGeneration_;
       _unknownFields = pb::UnknownFieldSet.Clone(other._unknownFields);
     }
 
@@ -6271,6 +6471,18 @@ namespace SuMultiplayer.Protocol.Circuit {
       }
     }
 
+    /// <summary>Field number for the "required_topology_generation" field.</summary>
+    public const int RequiredTopologyGenerationFieldNumber = 14;
+    private long requiredTopologyGeneration_;
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public long RequiredTopologyGeneration {
+      get { return requiredTopologyGeneration_; }
+      set {
+        requiredTopologyGeneration_ = value;
+      }
+    }
+
     [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
     [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
     public override bool Equals(object other) {
@@ -6299,6 +6511,7 @@ namespace SuMultiplayer.Protocol.Circuit {
       if (RequiredTerrainSequence != other.RequiredTerrainSequence) return false;
       if (TimelineGeneration != other.TimelineGeneration) return false;
       if (HasCellValue != other.HasCellValue) return false;
+      if (RequiredTopologyGeneration != other.RequiredTopologyGeneration) return false;
       return Equals(_unknownFields, other._unknownFields);
     }
 
@@ -6319,6 +6532,7 @@ namespace SuMultiplayer.Protocol.Circuit {
       if (RequiredTerrainSequence != 0L) hash ^= RequiredTerrainSequence.GetHashCode();
       if (TimelineGeneration != 0) hash ^= TimelineGeneration.GetHashCode();
       if (HasCellValue != false) hash ^= HasCellValue.GetHashCode();
+      if (RequiredTopologyGeneration != 0L) hash ^= RequiredTopologyGeneration.GetHashCode();
       if (_unknownFields != null) {
         hash ^= _unknownFields.GetHashCode();
       }
@@ -6389,6 +6603,10 @@ namespace SuMultiplayer.Protocol.Circuit {
         output.WriteRawTag(104);
         output.WriteBool(HasCellValue);
       }
+      if (RequiredTopologyGeneration != 0L) {
+        output.WriteRawTag(112);
+        output.WriteInt64(RequiredTopologyGeneration);
+      }
       if (_unknownFields != null) {
         _unknownFields.WriteTo(output);
       }
@@ -6451,6 +6669,10 @@ namespace SuMultiplayer.Protocol.Circuit {
         output.WriteRawTag(104);
         output.WriteBool(HasCellValue);
       }
+      if (RequiredTopologyGeneration != 0L) {
+        output.WriteRawTag(112);
+        output.WriteInt64(RequiredTopologyGeneration);
+      }
       if (_unknownFields != null) {
         _unknownFields.WriteTo(ref output);
       }
@@ -6499,6 +6721,9 @@ namespace SuMultiplayer.Protocol.Circuit {
       }
       if (HasCellValue != false) {
         size += 1 + 1;
+      }
+      if (RequiredTopologyGeneration != 0L) {
+        size += 1 + pb::CodedOutputStream.ComputeInt64Size(RequiredTopologyGeneration);
       }
       if (_unknownFields != null) {
         size += _unknownFields.CalculateSize();
@@ -6550,6 +6775,9 @@ namespace SuMultiplayer.Protocol.Circuit {
       }
       if (other.HasCellValue != false) {
         HasCellValue = other.HasCellValue;
+      }
+      if (other.RequiredTopologyGeneration != 0L) {
+        RequiredTopologyGeneration = other.RequiredTopologyGeneration;
       }
       _unknownFields = pb::UnknownFieldSet.MergeFrom(_unknownFields, other._unknownFields);
     }
@@ -6622,6 +6850,10 @@ namespace SuMultiplayer.Protocol.Circuit {
             HasCellValue = input.ReadBool();
             break;
           }
+          case 112: {
+            RequiredTopologyGeneration = input.ReadInt64();
+            break;
+          }
         }
       }
     #endif
@@ -6691,6 +6923,10 @@ namespace SuMultiplayer.Protocol.Circuit {
           }
           case 104: {
             HasCellValue = input.ReadBool();
+            break;
+          }
+          case 112: {
+            RequiredTopologyGeneration = input.ReadInt64();
             break;
           }
         }
@@ -6936,6 +7172,648 @@ namespace SuMultiplayer.Protocol.Circuit {
   }
 
   [global::System.Diagnostics.DebuggerDisplayAttribute("{ToString(),nq}")]
+  public sealed partial class CircuitScopeSnapshot : pb::IMessage<CircuitScopeSnapshot>
+  #if !GOOGLE_PROTOBUF_REFSTRUCT_COMPATIBILITY_MODE
+      , pb::IBufferMessage
+  #endif
+  {
+    private static readonly pb::MessageParser<CircuitScopeSnapshot> _parser = new pb::MessageParser<CircuitScopeSnapshot>(() => new CircuitScopeSnapshot());
+    private pb::UnknownFieldSet _unknownFields;
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public static pb::MessageParser<CircuitScopeSnapshot> Parser { get { return _parser; } }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public static pbr::MessageDescriptor Descriptor {
+      get { return global::SuMultiplayer.Protocol.Circuit.CircuitReflection.Descriptor.MessageTypes[14]; }
+    }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    pbr::MessageDescriptor pb::IMessage.Descriptor {
+      get { return Descriptor; }
+    }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public CircuitScopeSnapshot() {
+      OnConstruction();
+    }
+
+    partial void OnConstruction();
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public CircuitScopeSnapshot(CircuitScopeSnapshot other) : this() {
+      epoch_ = other.epoch_;
+      requestId_ = other.requestId_;
+      chunks_ = other.chunks_.Clone();
+      topologies_ = other.topologies_.Clone();
+      requiredTerrainSequence_ = other.requiredTerrainSequence_;
+      _unknownFields = pb::UnknownFieldSet.Clone(other._unknownFields);
+    }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public CircuitScopeSnapshot Clone() {
+      return new CircuitScopeSnapshot(this);
+    }
+
+    /// <summary>Field number for the "epoch" field.</summary>
+    public const int EpochFieldNumber = 1;
+    private uint epoch_;
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public uint Epoch {
+      get { return epoch_; }
+      set {
+        epoch_ = value;
+      }
+    }
+
+    /// <summary>Field number for the "request_id" field.</summary>
+    public const int RequestIdFieldNumber = 2;
+    private ulong requestId_;
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public ulong RequestId {
+      get { return requestId_; }
+      set {
+        requestId_ = value;
+      }
+    }
+
+    /// <summary>Field number for the "chunks" field.</summary>
+    public const int ChunksFieldNumber = 3;
+    private static readonly pb::FieldCodec<global::SuMultiplayer.Protocol.Circuit.CircuitChunkKey> _repeated_chunks_codec
+        = pb::FieldCodec.ForMessage(26, global::SuMultiplayer.Protocol.Circuit.CircuitChunkKey.Parser);
+    private readonly pbc::RepeatedField<global::SuMultiplayer.Protocol.Circuit.CircuitChunkKey> chunks_ = new pbc::RepeatedField<global::SuMultiplayer.Protocol.Circuit.CircuitChunkKey>();
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public pbc::RepeatedField<global::SuMultiplayer.Protocol.Circuit.CircuitChunkKey> Chunks {
+      get { return chunks_; }
+    }
+
+    /// <summary>Field number for the "topologies" field.</summary>
+    public const int TopologiesFieldNumber = 4;
+    private static readonly pb::FieldCodec<global::SuMultiplayer.Protocol.Circuit.CircuitChunkTopology> _repeated_topologies_codec
+        = pb::FieldCodec.ForMessage(34, global::SuMultiplayer.Protocol.Circuit.CircuitChunkTopology.Parser);
+    private readonly pbc::RepeatedField<global::SuMultiplayer.Protocol.Circuit.CircuitChunkTopology> topologies_ = new pbc::RepeatedField<global::SuMultiplayer.Protocol.Circuit.CircuitChunkTopology>();
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public pbc::RepeatedField<global::SuMultiplayer.Protocol.Circuit.CircuitChunkTopology> Topologies {
+      get { return topologies_; }
+    }
+
+    /// <summary>Field number for the "required_terrain_sequence" field.</summary>
+    public const int RequiredTerrainSequenceFieldNumber = 5;
+    private long requiredTerrainSequence_;
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public long RequiredTerrainSequence {
+      get { return requiredTerrainSequence_; }
+      set {
+        requiredTerrainSequence_ = value;
+      }
+    }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public override bool Equals(object other) {
+      return Equals(other as CircuitScopeSnapshot);
+    }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public bool Equals(CircuitScopeSnapshot other) {
+      if (ReferenceEquals(other, null)) {
+        return false;
+      }
+      if (ReferenceEquals(other, this)) {
+        return true;
+      }
+      if (Epoch != other.Epoch) return false;
+      if (RequestId != other.RequestId) return false;
+      if(!chunks_.Equals(other.chunks_)) return false;
+      if(!topologies_.Equals(other.topologies_)) return false;
+      if (RequiredTerrainSequence != other.RequiredTerrainSequence) return false;
+      return Equals(_unknownFields, other._unknownFields);
+    }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public override int GetHashCode() {
+      int hash = 1;
+      if (Epoch != 0) hash ^= Epoch.GetHashCode();
+      if (RequestId != 0UL) hash ^= RequestId.GetHashCode();
+      hash ^= chunks_.GetHashCode();
+      hash ^= topologies_.GetHashCode();
+      if (RequiredTerrainSequence != 0L) hash ^= RequiredTerrainSequence.GetHashCode();
+      if (_unknownFields != null) {
+        hash ^= _unknownFields.GetHashCode();
+      }
+      return hash;
+    }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public override string ToString() {
+      return pb::JsonFormatter.ToDiagnosticString(this);
+    }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public void WriteTo(pb::CodedOutputStream output) {
+    #if !GOOGLE_PROTOBUF_REFSTRUCT_COMPATIBILITY_MODE
+      output.WriteRawMessage(this);
+    #else
+      if (Epoch != 0) {
+        output.WriteRawTag(8);
+        output.WriteUInt32(Epoch);
+      }
+      if (RequestId != 0UL) {
+        output.WriteRawTag(16);
+        output.WriteUInt64(RequestId);
+      }
+      chunks_.WriteTo(output, _repeated_chunks_codec);
+      topologies_.WriteTo(output, _repeated_topologies_codec);
+      if (RequiredTerrainSequence != 0L) {
+        output.WriteRawTag(40);
+        output.WriteInt64(RequiredTerrainSequence);
+      }
+      if (_unknownFields != null) {
+        _unknownFields.WriteTo(output);
+      }
+    #endif
+    }
+
+    #if !GOOGLE_PROTOBUF_REFSTRUCT_COMPATIBILITY_MODE
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    void pb::IBufferMessage.InternalWriteTo(ref pb::WriteContext output) {
+      if (Epoch != 0) {
+        output.WriteRawTag(8);
+        output.WriteUInt32(Epoch);
+      }
+      if (RequestId != 0UL) {
+        output.WriteRawTag(16);
+        output.WriteUInt64(RequestId);
+      }
+      chunks_.WriteTo(ref output, _repeated_chunks_codec);
+      topologies_.WriteTo(ref output, _repeated_topologies_codec);
+      if (RequiredTerrainSequence != 0L) {
+        output.WriteRawTag(40);
+        output.WriteInt64(RequiredTerrainSequence);
+      }
+      if (_unknownFields != null) {
+        _unknownFields.WriteTo(ref output);
+      }
+    }
+    #endif
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public int CalculateSize() {
+      int size = 0;
+      if (Epoch != 0) {
+        size += 1 + pb::CodedOutputStream.ComputeUInt32Size(Epoch);
+      }
+      if (RequestId != 0UL) {
+        size += 1 + pb::CodedOutputStream.ComputeUInt64Size(RequestId);
+      }
+      size += chunks_.CalculateSize(_repeated_chunks_codec);
+      size += topologies_.CalculateSize(_repeated_topologies_codec);
+      if (RequiredTerrainSequence != 0L) {
+        size += 1 + pb::CodedOutputStream.ComputeInt64Size(RequiredTerrainSequence);
+      }
+      if (_unknownFields != null) {
+        size += _unknownFields.CalculateSize();
+      }
+      return size;
+    }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public void MergeFrom(CircuitScopeSnapshot other) {
+      if (other == null) {
+        return;
+      }
+      if (other.Epoch != 0) {
+        Epoch = other.Epoch;
+      }
+      if (other.RequestId != 0UL) {
+        RequestId = other.RequestId;
+      }
+      chunks_.Add(other.chunks_);
+      topologies_.Add(other.topologies_);
+      if (other.RequiredTerrainSequence != 0L) {
+        RequiredTerrainSequence = other.RequiredTerrainSequence;
+      }
+      _unknownFields = pb::UnknownFieldSet.MergeFrom(_unknownFields, other._unknownFields);
+    }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public void MergeFrom(pb::CodedInputStream input) {
+    #if !GOOGLE_PROTOBUF_REFSTRUCT_COMPATIBILITY_MODE
+      input.ReadRawMessage(this);
+    #else
+      uint tag;
+      while ((tag = input.ReadTag()) != 0) {
+      if ((tag & 7) == 4) {
+        // Abort on any end group tag.
+        return;
+      }
+      switch(tag) {
+          default:
+            _unknownFields = pb::UnknownFieldSet.MergeFieldFrom(_unknownFields, input);
+            break;
+          case 8: {
+            Epoch = input.ReadUInt32();
+            break;
+          }
+          case 16: {
+            RequestId = input.ReadUInt64();
+            break;
+          }
+          case 26: {
+            chunks_.AddEntriesFrom(input, _repeated_chunks_codec);
+            break;
+          }
+          case 34: {
+            topologies_.AddEntriesFrom(input, _repeated_topologies_codec);
+            break;
+          }
+          case 40: {
+            RequiredTerrainSequence = input.ReadInt64();
+            break;
+          }
+        }
+      }
+    #endif
+    }
+
+    #if !GOOGLE_PROTOBUF_REFSTRUCT_COMPATIBILITY_MODE
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    void pb::IBufferMessage.InternalMergeFrom(ref pb::ParseContext input) {
+      uint tag;
+      while ((tag = input.ReadTag()) != 0) {
+      if ((tag & 7) == 4) {
+        // Abort on any end group tag.
+        return;
+      }
+      switch(tag) {
+          default:
+            _unknownFields = pb::UnknownFieldSet.MergeFieldFrom(_unknownFields, ref input);
+            break;
+          case 8: {
+            Epoch = input.ReadUInt32();
+            break;
+          }
+          case 16: {
+            RequestId = input.ReadUInt64();
+            break;
+          }
+          case 26: {
+            chunks_.AddEntriesFrom(ref input, _repeated_chunks_codec);
+            break;
+          }
+          case 34: {
+            topologies_.AddEntriesFrom(ref input, _repeated_topologies_codec);
+            break;
+          }
+          case 40: {
+            RequiredTerrainSequence = input.ReadInt64();
+            break;
+          }
+        }
+      }
+    }
+    #endif
+
+  }
+
+  [global::System.Diagnostics.DebuggerDisplayAttribute("{ToString(),nq}")]
+  public sealed partial class CircuitChunkTopology : pb::IMessage<CircuitChunkTopology>
+  #if !GOOGLE_PROTOBUF_REFSTRUCT_COMPATIBILITY_MODE
+      , pb::IBufferMessage
+  #endif
+  {
+    private static readonly pb::MessageParser<CircuitChunkTopology> _parser = new pb::MessageParser<CircuitChunkTopology>(() => new CircuitChunkTopology());
+    private pb::UnknownFieldSet _unknownFields;
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public static pb::MessageParser<CircuitChunkTopology> Parser { get { return _parser; } }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public static pbr::MessageDescriptor Descriptor {
+      get { return global::SuMultiplayer.Protocol.Circuit.CircuitReflection.Descriptor.MessageTypes[15]; }
+    }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    pbr::MessageDescriptor pb::IMessage.Descriptor {
+      get { return Descriptor; }
+    }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public CircuitChunkTopology() {
+      OnConstruction();
+    }
+
+    partial void OnConstruction();
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public CircuitChunkTopology(CircuitChunkTopology other) : this() {
+      key_ = other.key_ != null ? other.key_.Clone() : null;
+      generation_ = other.generation_;
+      terrainSequence_ = other.terrainSequence_;
+      hasCircuit_ = other.hasCircuit_;
+      _unknownFields = pb::UnknownFieldSet.Clone(other._unknownFields);
+    }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public CircuitChunkTopology Clone() {
+      return new CircuitChunkTopology(this);
+    }
+
+    /// <summary>Field number for the "key" field.</summary>
+    public const int KeyFieldNumber = 1;
+    private global::SuMultiplayer.Protocol.Circuit.CircuitChunkKey key_;
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public global::SuMultiplayer.Protocol.Circuit.CircuitChunkKey Key {
+      get { return key_; }
+      set {
+        key_ = value;
+      }
+    }
+
+    /// <summary>Field number for the "generation" field.</summary>
+    public const int GenerationFieldNumber = 2;
+    private long generation_;
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public long Generation {
+      get { return generation_; }
+      set {
+        generation_ = value;
+      }
+    }
+
+    /// <summary>Field number for the "terrain_sequence" field.</summary>
+    public const int TerrainSequenceFieldNumber = 3;
+    private long terrainSequence_;
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public long TerrainSequence {
+      get { return terrainSequence_; }
+      set {
+        terrainSequence_ = value;
+      }
+    }
+
+    /// <summary>Field number for the "has_circuit" field.</summary>
+    public const int HasCircuitFieldNumber = 4;
+    private bool hasCircuit_;
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public bool HasCircuit {
+      get { return hasCircuit_; }
+      set {
+        hasCircuit_ = value;
+      }
+    }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public override bool Equals(object other) {
+      return Equals(other as CircuitChunkTopology);
+    }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public bool Equals(CircuitChunkTopology other) {
+      if (ReferenceEquals(other, null)) {
+        return false;
+      }
+      if (ReferenceEquals(other, this)) {
+        return true;
+      }
+      if (!object.Equals(Key, other.Key)) return false;
+      if (Generation != other.Generation) return false;
+      if (TerrainSequence != other.TerrainSequence) return false;
+      if (HasCircuit != other.HasCircuit) return false;
+      return Equals(_unknownFields, other._unknownFields);
+    }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public override int GetHashCode() {
+      int hash = 1;
+      if (key_ != null) hash ^= Key.GetHashCode();
+      if (Generation != 0L) hash ^= Generation.GetHashCode();
+      if (TerrainSequence != 0L) hash ^= TerrainSequence.GetHashCode();
+      if (HasCircuit != false) hash ^= HasCircuit.GetHashCode();
+      if (_unknownFields != null) {
+        hash ^= _unknownFields.GetHashCode();
+      }
+      return hash;
+    }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public override string ToString() {
+      return pb::JsonFormatter.ToDiagnosticString(this);
+    }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public void WriteTo(pb::CodedOutputStream output) {
+    #if !GOOGLE_PROTOBUF_REFSTRUCT_COMPATIBILITY_MODE
+      output.WriteRawMessage(this);
+    #else
+      if (key_ != null) {
+        output.WriteRawTag(10);
+        output.WriteMessage(Key);
+      }
+      if (Generation != 0L) {
+        output.WriteRawTag(16);
+        output.WriteInt64(Generation);
+      }
+      if (TerrainSequence != 0L) {
+        output.WriteRawTag(24);
+        output.WriteInt64(TerrainSequence);
+      }
+      if (HasCircuit != false) {
+        output.WriteRawTag(32);
+        output.WriteBool(HasCircuit);
+      }
+      if (_unknownFields != null) {
+        _unknownFields.WriteTo(output);
+      }
+    #endif
+    }
+
+    #if !GOOGLE_PROTOBUF_REFSTRUCT_COMPATIBILITY_MODE
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    void pb::IBufferMessage.InternalWriteTo(ref pb::WriteContext output) {
+      if (key_ != null) {
+        output.WriteRawTag(10);
+        output.WriteMessage(Key);
+      }
+      if (Generation != 0L) {
+        output.WriteRawTag(16);
+        output.WriteInt64(Generation);
+      }
+      if (TerrainSequence != 0L) {
+        output.WriteRawTag(24);
+        output.WriteInt64(TerrainSequence);
+      }
+      if (HasCircuit != false) {
+        output.WriteRawTag(32);
+        output.WriteBool(HasCircuit);
+      }
+      if (_unknownFields != null) {
+        _unknownFields.WriteTo(ref output);
+      }
+    }
+    #endif
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public int CalculateSize() {
+      int size = 0;
+      if (key_ != null) {
+        size += 1 + pb::CodedOutputStream.ComputeMessageSize(Key);
+      }
+      if (Generation != 0L) {
+        size += 1 + pb::CodedOutputStream.ComputeInt64Size(Generation);
+      }
+      if (TerrainSequence != 0L) {
+        size += 1 + pb::CodedOutputStream.ComputeInt64Size(TerrainSequence);
+      }
+      if (HasCircuit != false) {
+        size += 1 + 1;
+      }
+      if (_unknownFields != null) {
+        size += _unknownFields.CalculateSize();
+      }
+      return size;
+    }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public void MergeFrom(CircuitChunkTopology other) {
+      if (other == null) {
+        return;
+      }
+      if (other.key_ != null) {
+        if (key_ == null) {
+          Key = new global::SuMultiplayer.Protocol.Circuit.CircuitChunkKey();
+        }
+        Key.MergeFrom(other.Key);
+      }
+      if (other.Generation != 0L) {
+        Generation = other.Generation;
+      }
+      if (other.TerrainSequence != 0L) {
+        TerrainSequence = other.TerrainSequence;
+      }
+      if (other.HasCircuit != false) {
+        HasCircuit = other.HasCircuit;
+      }
+      _unknownFields = pb::UnknownFieldSet.MergeFrom(_unknownFields, other._unknownFields);
+    }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public void MergeFrom(pb::CodedInputStream input) {
+    #if !GOOGLE_PROTOBUF_REFSTRUCT_COMPATIBILITY_MODE
+      input.ReadRawMessage(this);
+    #else
+      uint tag;
+      while ((tag = input.ReadTag()) != 0) {
+      if ((tag & 7) == 4) {
+        // Abort on any end group tag.
+        return;
+      }
+      switch(tag) {
+          default:
+            _unknownFields = pb::UnknownFieldSet.MergeFieldFrom(_unknownFields, input);
+            break;
+          case 10: {
+            if (key_ == null) {
+              Key = new global::SuMultiplayer.Protocol.Circuit.CircuitChunkKey();
+            }
+            input.ReadMessage(Key);
+            break;
+          }
+          case 16: {
+            Generation = input.ReadInt64();
+            break;
+          }
+          case 24: {
+            TerrainSequence = input.ReadInt64();
+            break;
+          }
+          case 32: {
+            HasCircuit = input.ReadBool();
+            break;
+          }
+        }
+      }
+    #endif
+    }
+
+    #if !GOOGLE_PROTOBUF_REFSTRUCT_COMPATIBILITY_MODE
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    void pb::IBufferMessage.InternalMergeFrom(ref pb::ParseContext input) {
+      uint tag;
+      while ((tag = input.ReadTag()) != 0) {
+      if ((tag & 7) == 4) {
+        // Abort on any end group tag.
+        return;
+      }
+      switch(tag) {
+          default:
+            _unknownFields = pb::UnknownFieldSet.MergeFieldFrom(_unknownFields, ref input);
+            break;
+          case 10: {
+            if (key_ == null) {
+              Key = new global::SuMultiplayer.Protocol.Circuit.CircuitChunkKey();
+            }
+            input.ReadMessage(Key);
+            break;
+          }
+          case 16: {
+            Generation = input.ReadInt64();
+            break;
+          }
+          case 24: {
+            TerrainSequence = input.ReadInt64();
+            break;
+          }
+          case 32: {
+            HasCircuit = input.ReadBool();
+            break;
+          }
+        }
+      }
+    }
+    #endif
+
+  }
+
+  [global::System.Diagnostics.DebuggerDisplayAttribute("{ToString(),nq}")]
   public sealed partial class CircuitPayload : pb::IMessage<CircuitPayload>
   #if !GOOGLE_PROTOBUF_REFSTRUCT_COMPATIBILITY_MODE
       , pb::IBufferMessage
@@ -6950,7 +7828,7 @@ namespace SuMultiplayer.Protocol.Circuit {
     [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
     [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
     public static pbr::MessageDescriptor Descriptor {
-      get { return global::SuMultiplayer.Protocol.Circuit.CircuitReflection.Descriptor.MessageTypes[14]; }
+      get { return global::SuMultiplayer.Protocol.Circuit.CircuitReflection.Descriptor.MessageTypes[16]; }
     }
 
     [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
@@ -7185,7 +8063,7 @@ namespace SuMultiplayer.Protocol.Circuit {
     [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
     [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
     public static pbr::MessageDescriptor Descriptor {
-      get { return global::SuMultiplayer.Protocol.Circuit.CircuitReflection.Descriptor.MessageTypes[15]; }
+      get { return global::SuMultiplayer.Protocol.Circuit.CircuitReflection.Descriptor.MessageTypes[17]; }
     }
 
     [global::System.Diagnostics.DebuggerNonUserCodeAttribute]

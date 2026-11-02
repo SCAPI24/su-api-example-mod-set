@@ -462,7 +462,6 @@ namespace SuMultiplayer
                 engineModManager.ModParentField, engineModManager.ModParentMethod,
                 m_circuitPresentation);
             m_circuitModule = new CircuitSyncModule(m_circuitWorld, m_circuitPresentation,
-                delegate { return m_terrainModule.CurrentCircuitTerrainSequence; },
                 reconcileSnapshot: m_circuitWorld.ReconcileSnapshot,
                 randomSeed: delegate
                 {

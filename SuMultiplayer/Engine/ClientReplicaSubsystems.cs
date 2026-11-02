@@ -1728,18 +1728,49 @@ namespace SuMultiplayer.Engine
 
         private void AdvanceClientCircuitToTarget()
         {
-            while (CircuitStep < m_clientCircuitTargetStep)
+            Dictionary<ElectricElement, bool> elements =
+                ReplicaGates.GetField(this, "m_electricElements",
+                    typeof(SubsystemElectricity)) as Dictionary<ElectricElement, bool>;
+            if (elements == null)
+                throw new InvalidOperationException(
+                    "Client circuit input authority requires the electricity element table.");
+            var suppressed = new List<ElectricElement>();
+            foreach (ElectricElement element in new List<ElectricElement>(elements.Keys))
             {
-                int stepBudget = m_clientCircuitTargetStep - CircuitStep;
-                int stepBeforeUpdate = CircuitStep;
-                base.Update(stepBudget >= 10 ? 0.1f : 0.01f);
-                int stepsAdvanced = CircuitStep - stepBeforeUpdate;
-                if (stepsAdvanced == 0) return;
-                if (stepsAdvanced > stepBudget)
-                    throw new InvalidOperationException(
-                        "Client circuit solver advanced beyond the latest host circuit step.");
+                if (!IsClientAutomaticInput(element)) continue;
+                elements.Remove(element);
+                suppressed.Add(element);
+            }
+            try
+            {
+                while (CircuitStep < m_clientCircuitTargetStep)
+                {
+                    int stepBudget = m_clientCircuitTargetStep - CircuitStep;
+                    int stepBeforeUpdate = CircuitStep;
+                    base.Update(stepBudget >= 10 ? 0.1f : 0.01f);
+                    int stepsAdvanced = CircuitStep - stepBeforeUpdate;
+                    if (stepsAdvanced == 0) return;
+                    if (stepsAdvanced > stepBudget)
+                        throw new InvalidOperationException(
+                            "Client circuit solver advanced beyond the latest host circuit step.");
+                }
+            }
+            finally
+            {
+                foreach (ElectricElement element in suppressed)
+                    elements[element] = true;
             }
         }
+
+        private static bool IsClientAutomaticInput(ElectricElement element) =>
+            element is PressurePlateElectricElement ||
+            element is MotionDetectorElectricElement ||
+            element is PhotodiodeElectricElement ||
+            element is TargetElectricElement ||
+            element is DispenserElectricElement ||
+            element is SignElectricElement ||
+            element is FurnitureElectricElement ||
+            element is PistonElectricElement;
     }
 
     // =====================================================================================

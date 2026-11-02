@@ -162,8 +162,13 @@ namespace SuMultiplayer.Engine
         public event Action<ReceivedFrame> FrameArrived;
         /// <summary>主机侧权威改动（已捕获，尚未下发）。</summary>
         public event Action<ChunkKey, CellEdit> HostCellChanged;
+        /// <summary>主机格子改动已进入地形同步序号，再交给 circuit watermark/index 跟踪。</summary>
+        public event Action<ChunkKey, CellEdit> HostCellPublished;
         /// <summary>客户端通过既有主机 CellChange / chunk resync 落地后的权威格值。</summary>
         public event Action<ChunkKey, CellEdit> ReplicaCellApplied;
+        /// <summary>客户端应用的格子变更确实增删或修改了电气拓扑。</summary>
+        public event Action<ChunkKey, CellEdit> ReplicaElectricTopologyChanged;
+        public event Action<ChunkKey, CellEdit> ReplicaElectricCellChanged;
         /// <summary>
         /// 客户端侧捕获到的**本地地形写入**（主线程）。架构上客户端只允许主机改地形，
         /// 所以这些写入必须变成 CellEditRequest 交给主机审批（Part B）。
@@ -305,7 +310,9 @@ namespace SuMultiplayer.Engine
                 int oldValue = terrain.GetCellValueFast(x, edit.Y, z);
                 int oldValueWithoutLight = Game.Terrain.ReplaceLight(oldValue, 0);
                 terrain.SetCellValueFast(x, edit.Y, z, value);
-                if (ClientReplica && oldValueWithoutLight != value)
+                bool electricCellChanged = ClientReplica && oldValueWithoutLight != value &&
+                    IsElectricCell(oldValueWithoutLight, value);
+                bool electricTopologyChanged = ClientReplica && oldValueWithoutLight != value &&
                     NotifyElectricTopologyChanged(oldValueWithoutLight, value, x, edit.Y, z);
                 // 客户端补发方块行为通知（单一漏斗）：SetCellValueFast 绕过 ChangeCell，不补就
                 // 没有 OnBlockAdded/Removed/Modified → 营火/火把等 behavior 自己维护的粒子永远陈旧。
@@ -315,6 +322,10 @@ namespace SuMultiplayer.Engine
                     BlockBehaviorNotify.Notify(subsystem, oldValue, value, x, edit.Y, z);
                 if (ClientReplica && oldValueWithoutLight != value)
                     ReplicaCellApplied?.Invoke(key, edit);
+                if (electricTopologyChanged)
+                    ReplicaElectricTopologyChanged?.Invoke(key, edit);
+                if (electricCellChanged)
+                    ReplicaElectricCellChanged?.Invoke(key, edit);
             }
             AppliedCells += edits.Count;
             AppliedBatches++;
@@ -335,7 +346,7 @@ namespace SuMultiplayer.Engine
         }
 
         // Source: Survivalcraft/Game/SubsystemElectricBlockBehavior.cs:OnBlockAdded/OnBlockRemoved/OnBlockModified
-        private void NotifyElectricTopologyChanged(int oldValue, int newValue, int x, int y, int z)
+        private bool NotifyElectricTopologyChanged(int oldValue, int newValue, int x, int y, int z)
         {
             Block[] blocks = BlocksManager.Blocks;
             if (blocks == null)
@@ -349,7 +360,9 @@ namespace SuMultiplayer.Engine
 
             bool oldIsElectric = blocks[oldContents] is IElectricElementBlock;
             bool newIsElectric = blocks[newContents] is IElectricElementBlock;
-            if (!oldIsElectric && !newIsElectric) return;
+            if (!oldIsElectric && !newIsElectric) return false;
+            bool topologyChanged = IsElectricTopologyChange(oldValue, newValue, x, y, z,
+                blocks, oldContents, newContents);
 
             SubsystemElectricity electricity = GameManager.Project?
                 .FindSubsystem<SubsystemElectricity>(false);
@@ -360,12 +373,75 @@ namespace SuMultiplayer.Engine
             if (oldContents == newContents)
             {
                 electricity.OnElectricElementBlockModified(x, y, z);
-                return;
+                return topologyChanged;
             }
             if (oldIsElectric)
                 electricity.OnElectricElementBlockRemoved(x, y, z);
             if (newIsElectric)
                 electricity.OnElectricElementBlockAdded(x, y, z);
+            return topologyChanged;
+        }
+
+        public bool IsElectricTopologyChange(int oldValue, int newValue, int x, int y, int z)
+        {
+            Block[] blocks = BlocksManager.Blocks;
+            if (blocks == null)
+                throw new InvalidOperationException("Block database is unavailable while comparing electric topology.");
+            int oldContents = Game.Terrain.ExtractContents(oldValue);
+            int newContents = Game.Terrain.ExtractContents(newValue);
+            if (oldContents < 0 || oldContents >= blocks.Length ||
+                newContents < 0 || newContents >= blocks.Length)
+                throw new InvalidOperationException("Block contents are outside the loaded database while comparing electric topology.");
+            return IsElectricTopologyChange(oldValue, newValue, x, y, z,
+                blocks, oldContents, newContents);
+        }
+
+        private static bool IsElectricTopologyChange(int oldValue, int newValue, int x, int y,
+            int z, Block[] blocks, int oldContents, int newContents)
+        {
+            if (oldContents == newContents && oldValue == newValue) return false;
+            Block oldBlock = blocks[oldContents];
+            Block newBlock = blocks[newContents];
+            bool oldIsElectric = oldBlock is IElectricElementBlock;
+            bool newIsElectric = newBlock is IElectricElementBlock;
+            if (!oldIsElectric && !newIsElectric) return false;
+            if (!oldIsElectric || !newIsElectric) return true;
+            var oldElement = (IElectricElementBlock)oldBlock;
+            var newElement = (IElectricElementBlock)newBlock;
+            if (oldContents != newContents ||
+                oldElement.GetConnectionMask(oldValue) != newElement.GetConnectionMask(newValue))
+                return true;
+            SubsystemTerrain terrain = GameManager.Project?.FindSubsystem<SubsystemTerrain>(false);
+            if (terrain == null)
+                throw new InvalidOperationException("Terrain subsystem is unavailable while comparing electric topology.");
+            for (int mountingFace = 0; mountingFace < 6; mountingFace++)
+            {
+                for (int connectorFace = 0; connectorFace < 6; connectorFace++)
+                    if (oldElement.GetConnectorType(terrain, oldValue, mountingFace,
+                            connectorFace, x, y, z) != newElement.GetConnectorType(terrain,
+                            newValue, mountingFace, connectorFace, x, y, z))
+                        return true;
+                int oldWireMask = oldBlock is IElectricWireElementBlock oldWire
+                    ? oldWire.GetConnectedWireFacesMask(oldValue, mountingFace) : 0;
+                int newWireMask = newBlock is IElectricWireElementBlock newWire
+                    ? newWire.GetConnectedWireFacesMask(newValue, mountingFace) : 0;
+                if (oldWireMask != newWireMask) return true;
+            }
+            return false;
+        }
+
+        private static bool IsElectricCell(int oldValue, int newValue)
+        {
+            Block[] blocks = BlocksManager.Blocks;
+            if (blocks == null)
+                throw new InvalidOperationException("Block database is unavailable while classifying an electric cell edit.");
+            int oldContents = Game.Terrain.ExtractContents(oldValue);
+            int newContents = Game.Terrain.ExtractContents(newValue);
+            if (oldContents < 0 || oldContents >= blocks.Length ||
+                newContents < 0 || newContents >= blocks.Length)
+                throw new InvalidOperationException("Block contents are outside the loaded database while classifying an electric cell edit.");
+            return blocks[oldContents] is IElectricElementBlock ||
+                blocks[newContents] is IElectricElementBlock;
         }
 
         /// <summary>
@@ -1198,9 +1274,11 @@ namespace SuMultiplayer.Engine
                 }
                 int value = terrain.GetCellValueFast(cell.X, cell.Y, cell.Z);
                 var key = new ChunkKey(cell.X >> 4, cell.Z >> 4);
+                var edit = new CellEdit(cell.X & 15, cell.Y, cell.Z & 15,
+                    Game.Terrain.ExtractContents(value), Game.Terrain.ExtractData(value));
                 HostCellsCaptured++;
-                handler(key, new CellEdit(cell.X & 15, cell.Y, cell.Z & 15,
-                    Game.Terrain.ExtractContents(value), Game.Terrain.ExtractData(value)));
+                handler(key, edit);
+                HostCellPublished?.Invoke(key, edit);
             }
         }
 

@@ -1447,6 +1447,8 @@ namespace SuMultiplayer.Terrain
         /// 已广播的权威改动序号（从 1 递增；世界清单的导出基线与追帧范围都以它为准）。
         /// </summary>
         private long m_changeSequence;
+        private readonly Dictionary<ChunkKey, long> m_chunkChangeSequence =
+            new Dictionary<ChunkKey, long>();
         /// <summary>有界改动历史：序号递增，超出时间 / 条数上限就从队首裁掉（见 TrimChangeJournalLocked）。</summary>
         private readonly Queue<ChangeJournalEntry> m_changeJournal = new Queue<ChangeJournalEntry>();
         /// <summary>客户端 → 追帧发送任务（同一 clientId 只保留最新一次请求）。</summary>
@@ -1954,6 +1956,13 @@ namespace SuMultiplayer.Terrain
         public long CurrentChangeSequence
         {
             get { lock (m_gate) return m_changeSequence; }
+        }
+
+        public long CurrentChangeSequenceForChunk(ChunkKey key)
+        {
+            lock (m_gate)
+                return m_chunkChangeSequence.TryGetValue(key, out long sequence)
+                    ? sequence : 0L;
         }
 
         /// <summary>当前历史里最旧一条的序号；没有历史 = <see cref="CurrentChangeSequence"/>/+1（可直接接受当前序号）。</summary>
@@ -3230,13 +3239,15 @@ namespace SuMultiplayer.Terrain
         /// <summary>记一条权威改动进有界历史，并按时间 / 条数上限裁剪（裁掉数计数 + 限流一行原因）。</summary>
         private void RecordChangeLocked(ChunkKey key, CellEdit edit, long nowMs)
         {
+            long sequence = ++m_changeSequence;
             m_changeJournal.Enqueue(new ChangeJournalEntry
             {
-                Sequence = ++m_changeSequence,
+                Sequence = sequence,
                 Key = key,
                 Edit = edit,
                 CreatedMs = nowMs
             });
+            m_chunkChangeSequence[key] = sequence;
             TrimChangeJournalLocked(nowMs);
         }
 
@@ -4729,6 +4740,7 @@ namespace SuMultiplayer.Terrain
                 m_changeJournal.Clear();
                 m_catchUps.Clear();
                 m_changeSequence = 0L;
+                m_chunkChangeSequence.Clear();
                 m_changeJournalEvictions = 0L;
                 m_lastChangeJournalEvictionLogMs = 0L;
                 m_rejoinAccepted = 0L;
@@ -5488,6 +5500,17 @@ namespace SuMultiplayer.Terrain
 
         /// <summary>本端**上次应用到的权威改动序号**（重连时随 Hello 发回；主机据此从历史里追帧）。</summary>
         public long LastAppliedChangeSequence => m_lastAppliedChangeSequence;
+
+        public long LastAppliedChangeSequenceForChunk(ChunkKey key) =>
+            m_chunkChangeSequence.TryGetValue(key, out long sequence) ? sequence : 0L;
+
+        public int CopyLoadedChunks(List<ChunkKey> target)
+        {
+            if (target == null) throw new ArgumentNullException(nameof(target));
+            target.Clear();
+            foreach (ChunkKey key in m_world.LoadedChunks) target.Add(key);
+            return target.Count;
+        }
 
         /// <summary>最近一次 HelloAck 收到的**主机会话标识**（旧主机 = 空串）。</summary>
         public string HostSessionId { get; private set; } = string.Empty;

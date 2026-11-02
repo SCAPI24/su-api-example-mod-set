@@ -98,6 +98,36 @@ namespace SuMultiplayer.Engine
             }
         }
 
+        public bool RefreshSevenSegmentPresentationFromLiveVoltage(
+            SubsystemElectricity subsystem, CircuitElementState identity, out string error)
+        {
+            if (subsystem == null) throw new ArgumentNullException(nameof(subsystem));
+            if (identity == null) throw new ArgumentNullException(nameof(identity));
+            error = null;
+            try
+            {
+                ElectricElement element = subsystem.GetElectricElement(identity.X,
+                    identity.Y, identity.Z, checked((int)identity.MountingFace));
+                if (!(element is SevenSegmentDisplayElectricElement))
+                    throw new InvalidOperationException("Authoritative state is not a seven-segment display.");
+                if (GetStableTypeCode(element.GetType()) != identity.ElementType)
+                    throw new InvalidOperationException("Seven-segment element type code does not match the live element.");
+                Type declaringType = FindFieldDeclaringType(element.GetType(), "m_voltage");
+                if (declaringType == null)
+                    throw new InvalidOperationException("Seven-segment element has no m_voltage field.");
+                int level = QuantizeVoltage(GetField<float>(element, "m_voltage", declaringType));
+                RefreshPresentation(element, level);
+                return true;
+            }
+            catch (Exception ex)
+            {
+                error = "Live seven-segment presentation refresh failed at (" + identity.X + "," +
+                    identity.Y + "," + identity.Z + ") face " + identity.MountingFace +
+                    ": " + ex.Message;
+                return false;
+            }
+        }
+
         // Source: Survivalcraft/Game/SubsystemElectricity.cs:SubsystemElectricity.Update
         // This API is called on the game thread because it reads and mutates live circuit state.
         public bool CaptureChunk(SubsystemElectricity subsystem, int chunkX, int chunkZ,
@@ -144,6 +174,36 @@ namespace SuMultiplayer.Engine
             {
                 states.Clear();
                 error = "Circuit chunk capture failed: " + ex.Message;
+                return false;
+            }
+        }
+
+        public bool CaptureChunkTopologyValues(SubsystemElectricity subsystem, int chunkX,
+            int chunkZ, IDictionary<string, int> values, out string error)
+        {
+            if (subsystem == null) throw new ArgumentNullException(nameof(subsystem));
+            if (values == null) throw new ArgumentNullException(nameof(values));
+            values.Clear();
+            error = null;
+            try
+            {
+                foreach (ElectricElement element in GetAllElements(subsystem))
+                {
+                    foreach (CellFace face in element.CellFaces)
+                    {
+                        if ((face.X >> 4) != chunkX || (face.Z >> 4) != chunkZ)
+                            continue;
+                        int value = subsystem.SubsystemTerrain.Terrain.GetCellValue(face.X,
+                            face.Y, face.Z);
+                        values[face.X + ":" + face.Y + ":" + face.Z] = value;
+                    }
+                }
+                return true;
+            }
+            catch (Exception ex)
+            {
+                values.Clear();
+                error = "Circuit topology value capture failed: " + ex.Message;
                 return false;
             }
         }
@@ -682,6 +742,15 @@ namespace SuMultiplayer.Engine
             // intentionally has no circuit snapshot representation. Filter it before
             // any state capture path can reach EnsureSupportedType.
             return elements.Keys.Where(item => !(item is PistonElectricElement)).ToArray();
+        }
+
+        private ElectricElement[] GetAllElements(SubsystemElectricity subsystem)
+        {
+            var elements = (Dictionary<ElectricElement, bool>)GetStaticParentField(subsystem,
+                "m_electricElements", typeof(SubsystemElectricity));
+            if (elements == null)
+                throw new InvalidOperationException("SubsystemElectricity.m_electricElements is null.");
+            return elements.Keys.ToArray();
         }
 
         // Source: Mod/ScMultiplayer/Func/Circuit/CircuitSynchronizer.cs:CircuitSynchronizer.TryCaptureState

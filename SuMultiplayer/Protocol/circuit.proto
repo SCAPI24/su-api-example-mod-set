@@ -60,6 +60,7 @@ message CircuitEvent {
   CircuitOperation operation = 7;
   uint32 value = 8;
   int64 required_terrain_sequence = 9;
+  int64 required_topology_generation = 10;
 }
 
 message CircuitEventBatch {
@@ -100,6 +101,7 @@ message CircuitSnapshotRequest {
   uint64 request_id = 2;
   repeated CircuitChunkKey chunks = 3;
   bool replace_scope = 4;
+  bool scope_query = 5;
   bytes ext = 100;
   google.protobuf.Any custom = 101;
 }
@@ -117,6 +119,7 @@ message CircuitSnapshotPart {
   int64 required_terrain_sequence = 10;
   int32 last_event_sequence = 11;
   int32 timeline_generation = 12;
+  int64 required_topology_generation = 13;
   bytes ext = 100;
   google.protobuf.Any custom = 101;
 }
@@ -125,6 +128,7 @@ message CircuitChunkHash {
   int32 chunk_x = 1;
   int32 chunk_z = 2;
   uint32 hash = 3;
+  int64 topology_generation = 4;
 }
 
 message CircuitHashReport {
@@ -157,6 +161,7 @@ message CircuitRepairApplied {
   int64 terrain_sequence = 6;
   int32 last_event_sequence = 7;
   int32 timeline_generation = 8;
+  int64 topology_generation = 9;
 }
 
 message CircuitOperationResult {
@@ -173,11 +178,27 @@ message CircuitOperationResult {
   int64 required_terrain_sequence = 11;
   int32 timeline_generation = 12;
   bool has_cell_value = 13;
+  int64 required_topology_generation = 14;
 }
 
 message CircuitChunkKey {
   int32 x = 1;
   int32 z = 2;
+}
+
+message CircuitScopeSnapshot {
+  uint32 epoch = 1;
+  uint64 request_id = 2;
+  repeated CircuitChunkKey chunks = 3;
+  repeated CircuitChunkTopology topologies = 4;
+  int64 required_terrain_sequence = 5;
+}
+
+message CircuitChunkTopology {
+  CircuitChunkKey key = 1;
+  int64 generation = 2;
+  int64 terrain_sequence = 3;
+  bool has_circuit = 4;
 }
 
 message CircuitPayload {
