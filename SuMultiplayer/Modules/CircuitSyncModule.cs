@@ -295,6 +295,7 @@ namespace SuMultiplayer.Modules
         private long m_clientSnapshotTimeouts;
         private long m_clientTopologyGenerationAlignments;
         private long m_clientStaleDeltasDiscarded;
+        private long m_lastClientElementRecoveryMs;
         private long m_nextHostCaptureWarningMs;
         private long m_nextClientCaptureWarningMs;
         private int m_activePeerSyncScopeCount;
@@ -501,6 +502,7 @@ namespace SuMultiplayer.Modules
                 m_clientRequestedScope.Clear();
                 m_clientInitializedScope.Clear();
                 m_clientCircuitScope.Clear();
+                ResetClientSyncMetadata();
                 m_pendingClock = null;
                 m_clientClockInitialized = false;
                 m_clientClockPaused = false;
@@ -510,7 +512,10 @@ namespace SuMultiplayer.Modules
                 m_presentation.DetachPresentation();
             }
             if (!m_wasCircuitAttached && circuitAttached)
+            {
+                m_world.ResetClientCircuitState();
                 m_clientScopeRequested = false;
+            }
             m_wasCircuitAttached = circuitAttached;
             ReconcileClientTopologyChanges();
             ProcessPendingScopeSnapshot();
@@ -566,6 +571,7 @@ namespace SuMultiplayer.Modules
             m_clientRequestedScope.Clear();
             m_clientInitializedScope.Clear();
             m_clientCircuitScope.Clear();
+            ResetClientSyncMetadata();
             m_deferredOperationResults.Clear();
             m_deferredEvents.Clear();
             m_peers.Clear();
@@ -2725,6 +2731,11 @@ namespace SuMultiplayer.Modules
                 }
                 if (!m_world.AreElementsReady(states))
                 {
+                    if (nowMs - m_lastClientElementRecoveryMs >= 250)
+                    {
+                        m_world.ResetClientCircuitState();
+                        m_lastClientElementRecoveryMs = nowMs;
+                    }
                     if (IsSnapshotExpired(assembly, nowMs))
                     {
                         m_snapshotAssemblies.Remove(assembly.SnapshotId);
@@ -3267,6 +3278,8 @@ namespace SuMultiplayer.Modules
             if (string.IsNullOrEmpty(current)) return;
             if (string.Equals(current, m_sessionId, StringComparison.Ordinal)) return;
             m_sessionId = current;
+            if (m_transport.IsClient)
+                m_world.ResetClientCircuitState();
             // Only the host creates a new circuit epoch. A client must not advance
             // an epoch locally when the transport session changes; it waits for
             // the host's first CircuitClock after the reconnect.
@@ -3289,6 +3302,7 @@ namespace SuMultiplayer.Modules
             m_hostWasAccelerated = false;
             m_clientInitializedScope.Clear();
             m_clientCircuitScope.Clear();
+            ResetClientSyncMetadata();
             CircuitSimulationPauseSignal.ClearClientClock();
             m_peerStates.Clear();
             m_pendingOperations.Clear();
@@ -3300,6 +3314,17 @@ namespace SuMultiplayer.Modules
             m_pendingClock = null;
             m_hasConfiguredRandomSeed = false;
             m_randomSeedAuthority = false;
+        }
+
+        private void ResetClientSyncMetadata()
+        {
+            m_clientScopeMembershipDirtyChunks.Clear();
+            m_clientTopologyDirtyChunks.Clear();
+            m_clientTopologyAwaitingSnapshot.Clear();
+            m_clientTopologyGenerations.Clear();
+            m_clientTopologyTerrainSequences.Clear();
+            m_clientCircuitCellValues.Clear();
+            m_clientDesiredCircuitScope.Clear();
         }
 
         private bool SendBatch(int clientId, CircuitSyncBatch batch) =>

@@ -125,6 +125,7 @@ namespace SuMultiplayer.Modules
         bool IsElectricTopologyChange(int oldValue, int newValue, int x, int y, int z);
         bool IsElectricTopologyCell(ChunkKey key, CellEdit edit);
         void ClearAuthoritativeStatesForChunk(ChunkKey key);
+        void ResetClientCircuitState();
         int CopyLoadedChunks(List<ChunkKey> target);
         string DescribeDiagnostics();
         void Pump();

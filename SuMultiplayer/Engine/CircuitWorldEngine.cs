@@ -26,6 +26,7 @@ namespace SuMultiplayer.Engine
         private readonly int m_mainThreadId;
         private Project m_project;
         private bool m_topologyDirty = true;
+        private bool m_clientElectricitySeedPending = true;
         private bool m_clientSleepScaleFailureLogged;
         private sealed class AuthoritativeState
         {
@@ -720,6 +721,14 @@ namespace SuMultiplayer.Engine
                 m_authoritativeStates.Remove(pair.Key);
         }
 
+        public void ResetClientCircuitState()
+        {
+            EnsureMainThread(nameof(ResetClientCircuitState));
+            m_authoritativeStates.Clear();
+            m_topologyDirty = true;
+            m_clientElectricitySeedPending = true;
+        }
+
         public void Pump()
         {
             EnsureMainThread(nameof(Pump));
@@ -736,6 +745,7 @@ namespace SuMultiplayer.Engine
                 m_project = project;
                 m_authoritativeStates.Clear();
                 m_topologyDirty = true;
+                m_clientElectricitySeedPending = true;
             }
             if (!m_topologyDirty)
             {
@@ -746,12 +756,17 @@ namespace SuMultiplayer.Engine
             if (electricity == null) return;
             try
             {
+                bool seededElectricity = true;
+                if (m_clientElectricitySeedPending)
+                    seededElectricity = SeedLoadedElectricityElements(project, electricity);
                 m_parentMethod.InvokeParentMethod(electricity, "UpdateElectricElements",
                     Type.EmptyTypes);
                 // The engine rebuild schedules newly added elements and their neighbors.
                 // Keep those kicks while replaying cached authoritative voltages.
                 ReapplyAuthoritativeStates(electricity);
                 m_topologyDirty = false;
+                if (seededElectricity)
+                    m_clientElectricitySeedPending = false;
                 RefreshCachedSevenSegmentPresentations(project);
             }
             catch (Exception error)
@@ -759,6 +774,35 @@ namespace SuMultiplayer.Engine
                 throw new InvalidOperationException("Client electric topology refresh failed without running circuit simulation.",
                     error);
             }
+        }
+
+        private static bool SeedLoadedElectricityElements(Project project,
+            SubsystemElectricity electricity)
+        {
+            SubsystemTerrain terrainSubsystem = project?.FindSubsystem<SubsystemTerrain>(false);
+            Game.Terrain terrain = terrainSubsystem?.Terrain;
+            Block[] blocks = BlocksManager.Blocks;
+            if (terrain == null || blocks == null)
+                throw new InvalidOperationException(
+                    "Client electricity cannot seed before terrain and blocks are ready.");
+            bool foundValidChunk = false;
+            foreach (TerrainChunk chunk in terrain.AllocatedChunks)
+            {
+                if (chunk == null || !ChunkContentStages.IsContentValid((int)chunk.State))
+                    continue;
+                foundValidChunk = true;
+                for (int x = chunk.Origin.X; x < chunk.Origin.X + 16; x++)
+                    for (int z = chunk.Origin.Y; z < chunk.Origin.Y + 16; z++)
+                        for (int y = 0; y < 256; y++)
+                        {
+                            int contents = Game.Terrain.ExtractContents(
+                                terrain.GetCellValueFast(x, y, z));
+                            if (contents >= 0 && contents < blocks.Length &&
+                                blocks[contents] is IElectricElementBlock)
+                                electricity.OnElectricElementBlockGenerated(x, y, z);
+                        }
+            }
+            return foundValidChunk;
         }
 
         private void RefreshCachedSevenSegmentPresentations(Project project)
