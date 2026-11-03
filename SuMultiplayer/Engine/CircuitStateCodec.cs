@@ -96,7 +96,7 @@ namespace SuMultiplayer.Engine
         public void RefreshDisplayElements(SubsystemElectricity subsystem)
         {
             if (subsystem == null) throw new ArgumentNullException(nameof(subsystem));
-            foreach (ElectricElement element in GetAllElements(subsystem))
+            foreach (ElectricElement element in GetElectricElements(subsystem).Keys)
                 if (IsDisplayElement(element))
                     element.Simulate();
         }
@@ -171,8 +171,7 @@ namespace SuMultiplayer.Engine
 
             try
             {
-                var elements = GetElements(subsystem);
-                foreach (ElectricElement element in elements)
+                foreach (ElectricElement element in GetElectricElements(subsystem).Keys)
                 {
                     // Piston elements are replicated by the piston module, but they must
                     // still be ignored before any type validation so one piston cannot
@@ -218,7 +217,7 @@ namespace SuMultiplayer.Engine
             error = null;
             try
             {
-                foreach (ElectricElement element in GetAllElements(subsystem))
+                foreach (ElectricElement element in GetElectricElements(subsystem).Keys)
                 {
                     foreach (CellFace face in element.CellFaces)
                     {
@@ -255,7 +254,7 @@ namespace SuMultiplayer.Engine
                     if (!statesByChunk.ContainsKey(chunk))
                         statesByChunk.Add(chunk, new List<CircuitElementState>());
 
-                foreach (ElectricElement element in GetElements(subsystem))
+                foreach (ElectricElement element in GetElectricElements(subsystem).Keys)
                 {
                     if (element is PistonElectricElement)
                         continue;
@@ -310,7 +309,7 @@ namespace SuMultiplayer.Engine
                     if (!statesByChunk.ContainsKey(chunk))
                         statesByChunk.Add(chunk, new List<CircuitElementState>());
 
-                foreach (ElectricElement element in GetElements(subsystem))
+                foreach (ElectricElement element in GetElectricElements(subsystem).Keys)
                 {
                     if (element is PistonElectricElement) continue;
                     if (element is WireDomainElectricElement)
@@ -392,7 +391,7 @@ namespace SuMultiplayer.Engine
 
             try
             {
-                foreach (ElectricElement element in GetElements(subsystem))
+                foreach (ElectricElement element in GetElectricElements(subsystem).Keys)
                 {
                     if (element is PistonElectricElement)
                         continue;
@@ -768,25 +767,15 @@ namespace SuMultiplayer.Engine
         }
 
         // Source: Survivalcraft/Game/SubsystemElectricity.cs:SubsystemElectricity.m_electricElements
-        private ElectricElement[] GetElements(SubsystemElectricity subsystem)
+        // Capture callers run on the game thread, so enumerate the live table directly without
+        // allocating a full Keys array for every chunk capture.
+        private Dictionary<ElectricElement, bool> GetElectricElements(SubsystemElectricity subsystem)
         {
             var elements = (Dictionary<ElectricElement, bool>)GetStaticParentField(subsystem,
                 "m_electricElements", typeof(SubsystemElectricity));
             if (elements == null)
                 throw new InvalidOperationException("SubsystemElectricity.m_electricElements is null.");
-            // PistonElectricElement is simulated by SubsystemPistonBlockBehavior and
-            // intentionally has no circuit snapshot representation. Filter it before
-            // any state capture path can reach EnsureSupportedType.
-            return elements.Keys.Where(item => !(item is PistonElectricElement)).ToArray();
-        }
-
-        private ElectricElement[] GetAllElements(SubsystemElectricity subsystem)
-        {
-            var elements = (Dictionary<ElectricElement, bool>)GetStaticParentField(subsystem,
-                "m_electricElements", typeof(SubsystemElectricity));
-            if (elements == null)
-                throw new InvalidOperationException("SubsystemElectricity.m_electricElements is null.");
-            return elements.Keys.ToArray();
+            return elements;
         }
 
         private static bool IsDisplayElement(ElectricElement element) =>
@@ -1035,8 +1024,18 @@ namespace SuMultiplayer.Engine
         {
             if (element.CellFaces.Count == 0)
                 throw new InvalidOperationException("Electric element has no cell faces.");
-            return element.CellFaces.OrderBy(face => face.X).ThenBy(face => face.Y)
-                .ThenBy(face => face.Z).ThenBy(face => face.Face).First();
+            CellFace stableFace = element.CellFaces[0];
+            for (int i = 1; i < element.CellFaces.Count; i++)
+            {
+                CellFace face = element.CellFaces[i];
+                if (face.X < stableFace.X ||
+                    (face.X == stableFace.X && face.Y < stableFace.Y) ||
+                    (face.X == stableFace.X && face.Y == stableFace.Y && face.Z < stableFace.Z) ||
+                    (face.X == stableFace.X && face.Y == stableFace.Y && face.Z == stableFace.Z &&
+                        face.Face < stableFace.Face))
+                    stableFace = face;
+            }
+            return stableFace;
         }
 
         // Source: Mod/ScMultiplayer/Func/Circuit/CircuitSynchronizer.cs:CircuitSynchronizer.TryCaptureState

@@ -195,6 +195,9 @@ namespace SuMultiplayer.Modules
             new Dictionary<ulong, CircuitOperationResult>();
         private readonly Dictionary<ulong, SnapshotAssembly> m_snapshotAssemblies =
             new Dictionary<ulong, SnapshotAssembly>();
+        // Snapshot parts are assembled in PartIndex order; reuse this main-thread scratch list.
+        private readonly List<CircuitElementState> m_snapshotStates =
+            new List<CircuitElementState>(MaximumSnapshotElements);
         private readonly Dictionary<ChunkKey, AppliedBoundary> m_clientChunkBoundaries =
             new Dictionary<ChunkKey, AppliedBoundary>();
         private readonly HashSet<ChunkKey> m_clientRequestedScope = new HashSet<ChunkKey>();
@@ -1240,9 +1243,6 @@ namespace SuMultiplayer.Modules
         private static string CircuitCellKey(int x, int y, int z) =>
             x + ":" + y + ":" + z;
 
-        private static string CircuitElementKey(CircuitElementState state) =>
-            CircuitCellKey(state.X, state.Y, state.Z) + ":" + state.MountingFace;
-
         private void CaptureCircuitCellValues(ChunkKey key, IList<CircuitElementState> states,
             Dictionary<ChunkKey, Dictionary<string, int>> target)
         {
@@ -1408,6 +1408,7 @@ namespace SuMultiplayer.Modules
             return generation;
         }
 
+        // Source: CircuitStateCodec.CaptureChunkTopology and BuildStatePayloads
         private bool SnapshotTopologyMatches(ChunkKey key,
             IList<CircuitElementState> expected)
         {
@@ -1416,11 +1417,17 @@ namespace SuMultiplayer.Modules
                 Warn("Snapshot topology validation failed for " + key + ": " + error);
                 return false;
             }
-            var local = new HashSet<string>(m_states.Select(state =>
-                CircuitElementKey(state) + ":" + state.ElementType), StringComparer.Ordinal);
-            var remote = new HashSet<string>(expected.Select(state =>
-                CircuitElementKey(state) + ":" + state.ElementType), StringComparer.Ordinal);
-            return local.SetEquals(remote);
+            if (m_states.Count != expected.Count) return false;
+            for (int i = 0; i < m_states.Count; i++)
+            {
+                CircuitElementState local = m_states[i];
+                CircuitElementState remote = expected[i];
+                if (local.X != remote.X || local.Y != remote.Y || local.Z != remote.Z ||
+                    local.MountingFace != remote.MountingFace ||
+                    local.ElementType != remote.ElementType)
+                    return false;
+            }
+            return true;
         }
 
         private void ClearInactivePeerSyncScopes()
@@ -2777,6 +2784,7 @@ namespace SuMultiplayer.Modules
             bool displayRefreshNeeded = false;
             foreach (SnapshotAssembly assembly in m_snapshotAssemblies.Values.ToArray())
             {
+                m_snapshotStates.Clear();
                 ChunkKey key = new ChunkKey(assembly.ChunkX, assembly.ChunkZ);
                 if (m_transport?.IsClient == true && !m_clientClockInitialized)
                     continue;
@@ -2842,9 +2850,8 @@ namespace SuMultiplayer.Modules
                     if (!m_snapshotAssemblies.ContainsKey(assembly.SnapshotId)) continue;
                 }
                 bool applied = true;
-                var states = new List<CircuitElementState>();
                 foreach (CircuitSnapshotPart part in assembly.Parts.Values)
-                    states.AddRange(part.Elements);
+                    m_snapshotStates.AddRange(part.Elements);
                 // A join-time scope request can arrive before the target terrain chunk is
                 // valid. Keep the complete snapshot queued until the terrain is ready instead
                 // of counting this transient loading state as an element-apply failure.
@@ -2857,7 +2864,7 @@ namespace SuMultiplayer.Modules
                     }
                     continue;
                 }
-                if (!m_world.AreElementsReady(states))
+                if (!m_world.AreElementsReady(m_snapshotStates))
                 {
                     if (nowMs - m_lastClientElementRecoveryMs >= 250)
                     {
@@ -2873,7 +2880,7 @@ namespace SuMultiplayer.Modules
                 }
                 if (assembly.Full)
                 {
-                    if (!SnapshotTopologyMatches(key, states))
+                    if (!SnapshotTopologyMatches(key, m_snapshotStates))
                     {
                         if (IsSnapshotExpired(assembly, nowMs))
                         {
@@ -2884,9 +2891,9 @@ namespace SuMultiplayer.Modules
                     }
                     m_probeTrigger = "full-snapshot-reconcile";
                     m_probeScopeChunks = 1;
-                    m_probePendingStates = states.Count;
+                    m_probePendingStates = m_snapshotStates.Count;
                     long reconcileStarted = m_probe.Start();
-                    string reconcileError = m_reconcileSnapshot?.Invoke(key, states,
+                    string reconcileError = m_reconcileSnapshot?.Invoke(key, m_snapshotStates,
                         assembly.HostStep);
                     RecordProbe("snapshot-reconcile", reconcileStarted);
                     if (m_reconcileSnapshot == null || !string.IsNullOrEmpty(reconcileError))
@@ -2901,9 +2908,9 @@ namespace SuMultiplayer.Modules
                 {
                     m_probeTrigger = "delta-snapshot-apply";
                     m_probeScopeChunks = 1;
-                    m_probePendingStates = states.Count;
+                    m_probePendingStates = m_snapshotStates.Count;
                     long applyStarted = m_probe.Start();
-                    foreach (CircuitElementState state in states)
+                    foreach (CircuitElementState state in m_snapshotStates)
                     {
                         if (!m_world.Apply(state, assembly.HostStep, out string error))
                         {
@@ -2965,7 +2972,7 @@ namespace SuMultiplayer.Modules
                     }
                     m_clientTopologyAwaitingSnapshot.Remove(key);
                     m_clientSnapshotsApplied++;
-                    m_clientStatesApplied += states.Count;
+                    m_clientStatesApplied += m_snapshotStates.Count;
                     uint snapshotSequence = unchecked((uint)assembly.EventSequence);
                     uint currentEventSequence = unchecked((uint)m_lastEventSequence);
                     if (IsNewerEventSequence(snapshotSequence, currentEventSequence))
