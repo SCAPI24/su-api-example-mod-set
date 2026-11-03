@@ -39,6 +39,17 @@ namespace SuMultiplayer.Engine
         private static readonly IComparer<CircuitScheduledVoltage> s_scheduledVoltageComparer =
             new ScheduledVoltageComparer();
 
+        private static readonly uint s_sevenSegmentTypeCode =
+            GetStableTypeCode(typeof(SevenSegmentDisplayElectricElement));
+        private static readonly uint s_fourLedTypeCode =
+            GetStableTypeCode(typeof(FourLedElectricElement));
+        private static readonly uint s_oneLedTypeCode =
+            GetStableTypeCode(typeof(OneLedElectricElement));
+        private static readonly uint s_ledTypeCode =
+            GetStableTypeCode(typeof(LedElectricElement));
+        private static readonly uint s_multicoloredLedTypeCode =
+            GetStableTypeCode(typeof(MulticoloredLedElectricElement));
+
         private readonly IModParentField m_parentField;
         private readonly List<KeyValuePair<int, float>> m_delayHistoryScratch =
             new List<KeyValuePair<int, float>>(MaximumDelayHistoryEntries);
@@ -63,12 +74,32 @@ namespace SuMultiplayer.Engine
         public static int CountSevenSegmentStates(IEnumerable<CircuitElementState> states)
         {
             if (states == null) throw new ArgumentNullException(nameof(states));
-            uint typeCode = GetStableTypeCode(typeof(SevenSegmentDisplayElectricElement));
-            return states.Count(state => state != null && state.ElementType == typeCode);
+            return states.Count(state => state != null && state.ElementType == s_sevenSegmentTypeCode);
         }
 
         public static uint SevenSegmentTypeCode =>
-            GetStableTypeCode(typeof(SevenSegmentDisplayElectricElement));
+            s_sevenSegmentTypeCode;
+
+        public static bool IsDisplayElementType(uint typeCode) =>
+            typeCode == s_sevenSegmentTypeCode ||
+            typeCode == s_fourLedTypeCode ||
+            typeCode == s_oneLedTypeCode ||
+            typeCode == s_ledTypeCode ||
+            typeCode == s_multicoloredLedTypeCode;
+
+        // Source: Survivalcraft/Game/SevenSegmentDisplayElectricElement.cs:Simulate
+        // Source: Survivalcraft/Game/FourLedElectricElement.cs:Simulate
+        // Source: Survivalcraft/Game/OneLedElectricElement.cs:Simulate
+        // Source: Survivalcraft/Game/LedElectricElement.cs:Simulate
+        // Source: Survivalcraft/Game/MulticoloredLedElectricElement.cs:Simulate
+        // Display elements only read their neighbor outputs and update their own glow cache.
+        public void RefreshDisplayElements(SubsystemElectricity subsystem)
+        {
+            if (subsystem == null) throw new ArgumentNullException(nameof(subsystem));
+            foreach (ElectricElement element in GetAllElements(subsystem))
+                if (IsDisplayElement(element))
+                    element.Simulate();
+        }
 
         // Source: Survivalcraft/Game/SevenSegmentDisplayElectricElement.cs:Simulate
         // The client replica does not advance the electricity solver. Reapply only the
@@ -630,7 +661,11 @@ namespace SuMultiplayer.Engine
             uint hash = FnvOffsetBasis;
             foreach (CircuitElementState state in states.OrderBy(item => item.X)
                 .ThenBy(item => item.Y).ThenBy(item => item.Z).ThenBy(item => item.MountingFace))
+            {
+                if (state == null) throw new ArgumentException("Circuit states cannot contain null.", nameof(states));
+                if (IsDisplayElementType(state.ElementType)) continue;
                 HashState(ref hash, state, scheduledVoltagesAreSorted: false);
+            }
             return hash;
         }
 
@@ -649,6 +684,11 @@ namespace SuMultiplayer.Engine
                 if (previous != null && CompareStates(previous, state) > 0)
                     throw new InvalidOperationException(
                         "Captured circuit states are not sorted by coordinate and mounting face.");
+                if (IsDisplayElementType(state.ElementType))
+                {
+                    previous = state;
+                    continue;
+                }
                 HashState(ref hash, state, scheduledVoltagesAreSorted: true);
                 previous = state;
             }
@@ -673,10 +713,6 @@ namespace SuMultiplayer.Engine
             Hash(ref hash, unchecked((int)state.AuxiliaryState));
             Hash(ref hash, unchecked((int)(state.AuxiliaryState >> 32)));
             Hash(ref hash, unchecked((int)state.ButtonPhase));
-            Hash(ref hash, unchecked((int)state.ButtonRemainingSteps));
-            Hash(ref hash, unchecked((int)state.RelatedSequence));
-            Hash(ref hash, state.OutputVoltageLevels.Count);
-            foreach (int output in state.OutputVoltageLevels) Hash(ref hash, output);
             Hash(ref hash, state.ScheduledVoltages.Count);
             if (scheduledVoltagesAreSorted)
             {
@@ -752,6 +788,13 @@ namespace SuMultiplayer.Engine
                 throw new InvalidOperationException("SubsystemElectricity.m_electricElements is null.");
             return elements.Keys.ToArray();
         }
+
+        private static bool IsDisplayElement(ElectricElement element) =>
+            element is SevenSegmentDisplayElectricElement ||
+            element is FourLedElectricElement ||
+            element is OneLedElectricElement ||
+            element is LedElectricElement ||
+            element is MulticoloredLedElectricElement;
 
         // Source: Mod/ScMultiplayer/Func/Circuit/CircuitSynchronizer.cs:CircuitSynchronizer.TryCaptureState
         private CircuitElementState CaptureElement(SubsystemElectricity subsystem,

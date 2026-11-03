@@ -108,6 +108,7 @@ namespace SuMultiplayer.Modules
             IDictionary<ChunkKey, List<CircuitElementState>> target,
             IDictionary<ChunkKey, string> chunkErrors, out string error);
         bool Apply(CircuitElementState state, int hostStep, out string error);
+        void RefreshClientDisplayElements();
         bool AlignClientCircuitStep(int hostStep, bool restoreAuthoritativeStates,
             out string error);
         bool ApplyClock(double totalElapsedGameTime, double timeOfDayOffset,

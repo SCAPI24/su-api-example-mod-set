@@ -25,6 +25,16 @@ message ModuleTickSample {
   float max_ms = 4;
 }
 
+message CircuitStageSample {
+  string id = 1;
+  uint64 calls = 2;
+  float total_ms = 3;
+  float max_ms = 4;
+  float last_ms = 5;
+  uint64 slow_calls = 6;
+  string max_context = 7;
+}
+
 message MessageTypeTraffic {
   uint32 type_id = 1;
   string name = 2;
@@ -98,6 +108,7 @@ message CircuitSyncSample {
   uint64 host_batch_capture_failures = 38;
   uint64 requested_snapshot_capture_failures = 39;
   uint64 host_batch_capture_chunks_failed = 40;
+  repeated CircuitStageSample stages = 41;
 }
 
 message ClientCircuitSample {
@@ -113,6 +124,7 @@ message ClientCircuitSample {
   uint64 apply_failures = 10;
   uint64 watermark_expired = 11;
   uint64 snapshot_timeouts = 12;
+  repeated CircuitStageSample stages = 13;
 }
 
 message TerrainSyncSample {

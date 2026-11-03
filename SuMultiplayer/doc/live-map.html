@@ -171,7 +171,11 @@ footer{margin-top:20px;padding-top:12px;border-top:1px solid var(--line);font-si
       </section>
       <section class="telemetry-block" style="grid-column:1/-1">
         <h4>同步模块耗时</h4>
-        <div class="telemetry-table-wrap"><table><thead><tr><th>实例 / 模块</th><th>调用 / 秒</th><th>耗时 / 秒</th><th>平均耗时 / 次</th><th>最大耗时</th></tr></thead><tbody id="telemetryModuleBody"><tr><td colspan="5" class="mono telemetry-unavailable">模块耗时统计不可用</td></tr></tbody></table></div>
+        <div class="telemetry-table-wrap"><table><thead><tr><th>实例 / 模块</th><th>调用 / 秒</th><th>耗时 / 秒</th><th>平均耗时 / 次</th><th>生命周期历史最大</th></tr></thead><tbody id="telemetryModuleBody"><tr><td colspan="5" class="mono telemetry-unavailable">模块耗时统计不可用</td></tr></tbody></table></div>
+      </section>
+      <section class="telemetry-block" style="grid-column:1/-1">
+        <h4>电路同步阶段尖峰</h4>
+        <div class="telemetry-table-wrap"><table><thead><tr><th>实例 / 阶段</th><th>调用</th><th>累计耗时</th><th>窗口最大</th><th>最近耗时</th><th>慢调用</th><th>窗口峰值上下文</th></tr></thead><tbody id="telemetryCircuitStagesBody"><tr><td colspan="7" class="mono telemetry-unavailable">电路阶段探针不可用</td></tr></tbody></table></div>
       </section>
     </div>
   </div>
@@ -1719,6 +1723,7 @@ footer{margin-top:20px;padding-top:12px;border-top:1px solid var(--line);font-si
     var workBody = $("telemetryWorkBody"), clientBody = $("telemetryClientBody");
     var clientCircuitBody = $("telemetryClientCircuitBody");
     var peerBody = $("telemetryPeerBody"), moduleBody = $("telemetryModuleBody");
+    var circuitStagesBody = $("telemetryCircuitStagesBody");
     if (!chip || !hostTiles || !workBody || !clientBody || !peerBody || !moduleBody) return;
     var telemetry = state && state.telemetry;
     if (!telemetry || typeof telemetry !== "object") {
@@ -1734,6 +1739,7 @@ footer{margin-top:20px;padding-top:12px;border-top:1px solid var(--line);font-si
       if (clientCircuitBody) clientCircuitBody.innerHTML = unavailableRow(4, "客户端电路遥测不可用");
       peerBody.innerHTML = unavailableRow(11, "连接统计不可用");
       moduleBody.innerHTML = unavailableRow(5, "模块耗时统计不可用");
+      if (circuitStagesBody) circuitStagesBody.innerHTML = unavailableRow(7, "电路阶段探针不可用");
       return;
     }
     var sampledAt = telemetry.sampledAtMs;
@@ -2112,6 +2118,30 @@ footer{margin-top:20px;padding-top:12px;border-top:1px solid var(--line);font-si
         peer.name || peer.key || ("clientId=" + peer.clientId));
     });
     moduleBody.innerHTML = moduleRows.length ? moduleRows.join("") : unavailableRow(5, "模块耗时统计不可用");
+
+    var circuitStageRows = [];
+    function appendCircuitStages(stages, label) {
+      if (!Array.isArray(stages)) return;
+      stages.forEach(function (stage) {
+        if (!stage || typeof stage !== "object") return;
+        circuitStageRows.push({ maxMs: Number(stage.maxMs) || 0, html: "<tr><td class='mono'>" + esc(label + " · " + (stage.id || "unknown")) +
+          "</td><td class='num'>" + (finiteMetric(stage.calls) ? esc(String(stage.calls)) : "不可用") +
+          "</td><td class='num'>" + (finiteMetric(stage.totalMs) ? esc(metricValue(stage.totalMs, 2) + " ms") : "不可用") +
+          "</td><td class='num telemetry-rate'>" + (finiteMetric(stage.maxMs) ? esc(metricValue(stage.maxMs, 2) + " ms") : "不可用") +
+          "</td><td class='num telemetry-rate'>" + (finiteMetric(stage.lastMs) ? esc(metricValue(stage.lastMs, 2) + " ms") : "不可用") +
+          "</td><td class='num'>" + (finiteMetric(stage.slowCalls) ? esc(String(stage.slowCalls)) : "不可用") +
+          "</td><td class='mono'>" + esc(stage.maxContext || "") + "</td></tr>" });
+      });
+    }
+    appendCircuitStages(circuit && circuit.stages, "主机");
+    if (peers) peers.forEach(function (peer) {
+      var label = peer.name || peer.key || ("clientId=" + peer.clientId);
+      appendCircuitStages(peer.clientCircuit && peer.clientCircuit.stages, label);
+    });
+    circuitStageRows.sort(function (a, b) { return b.maxMs - a.maxMs; });
+    if (circuitStagesBody)
+      circuitStagesBody.innerHTML = circuitStageRows.length ? circuitStageRows.map(function (row) { return row.html; }).join("") :
+        unavailableRow(7, "当前遥测窗口没有电路阶段样本");
   }
 
   function renderStats(state, sel, who) {

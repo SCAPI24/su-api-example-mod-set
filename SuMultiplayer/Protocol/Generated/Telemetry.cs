@@ -33,93 +33,99 @@ namespace SuMultiplayer.Protocol.Telemetry {
             "IAMoCzIgLnN1bXAudGVsZW1ldHJ5Lk1vZHVsZVRpY2tTYW1wbGUSGwoTbW9k",
             "dWxlX3NhbXBsZV9ldmVyeRgKIAEoDSJPChBNb2R1bGVUaWNrU2FtcGxlEgoK",
             "AmlkGAEgASgJEg0KBWNhbGxzGAIgASgEEhAKCHRvdGFsX21zGAMgASgCEg4K",
-            "Bm1heF9tcxgEIAEoAiKNAQoSTWVzc2FnZVR5cGVUcmFmZmljEg8KB3R5cGVf",
-            "aWQYASABKA0SDAoEbmFtZRgCIAEoCRITCgtmcmFtZXNfc2VudBgDIAEoBBIS",
-            "CgpieXRlc19zZW50GAQgASgEEhcKD2ZyYW1lc19yZWNlaXZlZBgFIAEoBBIW",
-            "Cg5ieXRlc19yZWNlaXZlZBgGIAEoBCKGAgoNQ2hhbm5lbFNhbXBsZRINCgVz",
-            "dGF0ZRgBIAEoCRITCgtmcmFtZXNfc2VudBgCIAEoBBISCgpieXRlc19zZW50",
-            "GAMgASgEEhcKD2ZyYW1lc19yZWNlaXZlZBgEIAEoBBIWCg5ieXRlc19yZWNl",
-            "aXZlZBgFIAEoBBIbChNiYWNrcHJlc3N1cmVfZXZlbnRzGAYgASgEEhsKE3By",
-            "b3RvY29sX3Zpb2xhdGlvbnMYByABKAQSFwoPc2VuZF9xdWV1ZV9oaWdoGAgg",
-            "ASgEEjkKDW1lc3NhZ2VfdHlwZXMYCSADKAsyIi5zdW1wLnRlbGVtZXRyeS5N",
-            "ZXNzYWdlVHlwZVRyYWZmaWMipgIKClBlZXJTYW1wbGUSEQoJY2xpZW50X2lk",
-            "GAEgASgFEgsKA2tleRgCIAEoCRIMCgRuYW1lGAMgASgJEjUKDmNsaWVudF9y",
-            "dW50aW1lGAQgASgLMh0uc3VtcC50ZWxlbWV0cnkuUnVudGltZVNhbXBsZRIW",
-            "Cg5ydW50aW1lX2FnZV9tcxgFIAEoBBIuCgdwcmltYXJ5GAYgASgLMh0uc3Vt",
-            "cC50ZWxlbWV0cnkuQ2hhbm5lbFNhbXBsZRIuCgdjaXJjdWl0GAcgASgLMh0u",
-            "c3VtcC50ZWxlbWV0cnkuQ2hhbm5lbFNhbXBsZRI7Cg5jbGllbnRfY2lyY3Vp",
-            "dBgIIAEoCzIjLnN1bXAudGVsZW1ldHJ5LkNsaWVudENpcmN1aXRTYW1wbGUi",
-            "jQoKEUNpcmN1aXRTeW5jU2FtcGxlEg4KBnJvdW5kcxgBIAEoBBIWCg5hdHRh",
-            "Y2hlZF9wZWVycxgCIAEoBBIUCgxzY29wZV9jaHVua3MYAyABKAQSHAoUc2V2",
-            "ZW5fc2VnbWVudF9zdGF0ZXMYBCABKAQSFwoPc25hcHNob3RfY2h1bmtzGAUg",
-            "ASgEEhkKEXNuYXBzaG90X2VsZW1lbnRzGAYgASgEEhYKDnNuYXBzaG90X3Bh",
-            "cnRzGAcgASgEEhQKDGRlbHRhX3N0YXRlcxgIIAEoBBIVCg1zZW5kX2ZhaWx1",
-            "cmVzGAkgASgEEh0KFWNsaWVudF9zY29wZV9yZXF1ZXN0cxgKIAEoBBIbChNj",
-            "bGllbnRfc2NvcGVfY2h1bmtzGAsgASgEEh0KFWNsaWVudF9zbmFwc2hvdF9w",
-            "YXJ0cxgMIAEoBBIgChhjbGllbnRfc25hcHNob3RzX2FwcGxpZWQYDSABKAQS",
-            "HQoVY2xpZW50X3N0YXRlc19hcHBsaWVkGA4gASgEEh0KFWNsaWVudF9hcHBs",
-            "eV9mYWlsdXJlcxgPIAEoBBIbChNjbGllbnRfaGFzaF9yZXBvcnRzGBAgASgE",
-            "EhoKEmNsaWVudF9oYXNoX2NodW5rcxgRIAEoBBIgChhjbGllbnRfd2F0ZXJt",
-            "YXJrX2V4cGlyZWQYEiABKAQSIQoZY2xpZW50X3NpbXVsYXRpb25fZW5hYmxl",
-            "ZBgTIAEoCBIeChZob3N0X3N5bmNfd2luZG93X2NhbGxzGBQgASgEEhsKE2hv",
-            "c3Rfc3luY193aW5kb3dfbXMYFSABKAISHwoXaG9zdF9zeW5jX3dpbmRvd19t",
-            "YXhfbXMYFiABKAISIAoYaGFzaF9taXNtYXRjaGVzX29ic2VydmVkGBcgASgE",
-            "EiEKGWhhc2hfcmVwYWlyX2NodW5rc19xdWV1ZWQYGCABKAQSIgoacmVwYWly",
-            "X2Fja19oYXNoX21pc21hdGNoZXMYGSABKAQSIAoYcmVwYWlyX2Fja19jaHVu",
-            "a3NfcXVldWVkGBogASgEEh8KF3NuYXBzaG90X3JlcXVlc3RfY2h1bmtzGBsg",
-            "ASgEEikKIW5lZWRzX2Z1bGxfc25hcHNob3RfY2h1bmtzX3F1ZXVlZBgcIAEo",
-            "BBIfChdzbmFwc2hvdHNfaW5pdGlhbF9zY29wZRgdIAEoBBIdChVzbmFwc2hv",
-            "dHNfaGFzaF9yZXBhaXIYHiABKAQSIwobc25hcHNob3RzX3JlcGFpcl9hY2tf",
-            "cmVwYWlyGB8gASgEEiAKGHNuYXBzaG90c19jbGllbnRfcmVxdWVzdBggIAEo",
-            "BBIlCh1zbmFwc2hvdHNfbmVlZHNfZnVsbF9yZWNvdmVyeRghIAEoBBIfChdz",
-            "bmFwc2hvdHNfcGF1c2VfYmFycmllchgiIAEoBBIhChlzbmFwc2hvdHNfdG9w",
-            "b2xvZ3lfY2hhbmdlGCMgASgEEicKH3NuYXBzaG90c19zZW5kX2ZhaWx1cmVf",
-            "cmVjb3ZlcnkYJCABKAQSHgoWc25hcHNob3Rfc2VuZF9mYWlsdXJlcxglIAEo",
-            "BBIjChtob3N0X2JhdGNoX2NhcHR1cmVfZmFpbHVyZXMYJiABKAQSKwojcmVx",
-            "dWVzdGVkX3NuYXBzaG90X2NhcHR1cmVfZmFpbHVyZXMYJyABKAQSKAogaG9z",
-            "dF9iYXRjaF9jYXB0dXJlX2NodW5rc19mYWlsZWQYKCABKAQi8AIKE0NsaWVu",
-            "dENpcmN1aXRTYW1wbGUSHQoVaGFzaF9jYXB0dXJlX2ZhaWx1cmVzGAEgASgE",
-            "EiMKG2hhc2hfY2FwdHVyZV9jaHVua3Nfc2tpcHBlZBgCIAEoBBIZChFoYXNo",
-            "X3JlcG9ydHNfc2VudBgDIAEoBBIYChBoYXNoX2NodW5rc19zZW50GAQgASgE",
-            "EhsKE3Njb3BlX3JlcXVlc3RzX3NlbnQYBSABKAQSIQoZc2NvcGVfcmVxdWVz",
-            "dF9jaHVua3Nfc2VudBgGIAEoBBIfChdzbmFwc2hvdF9wYXJ0c19yZWNlaXZl",
-            "ZBgHIAEoBBIZChFzbmFwc2hvdHNfYXBwbGllZBgIIAEoBBIWCg5zdGF0ZXNf",
-            "YXBwbGllZBgJIAEoBBIWCg5hcHBseV9mYWlsdXJlcxgKIAEoBBIZChF3YXRl",
-            "cm1hcmtfZXhwaXJlZBgLIAEoBBIZChFzbmFwc2hvdF90aW1lb3V0cxgMIAEo",
-            "BCKLAwoRVGVycmFpblN5bmNTYW1wbGUSFgoOZGlnZXN0X3JlcG9ydHMYASAB",
-            "KAQSHgoWY2VsbF9jaGFuZ2VzX2Jyb2FkY2FzdBgCIAEoBBIbChNjZWxsX2No",
-            "YW5nZV9yZXBhaXJzGAMgASgEEhQKDHJlc3luY19ieXRlcxgEIAEoBBIaChJy",
-            "ZXBvcnRzX3Blcl9zZWNvbmQYBSABKAQSGwoTbWlzbWF0Y2hfcGVyX3NlY29u",
-            "ZBgGIAEoBBIiChpyZXN5bmNfcmVjZWl2ZWRfcGVyX3NlY29uZBgHIAEoBBIh",
-            "ChlyZXN5bmNfYXBwbGllZF9wZXJfc2Vjb25kGAggASgEEhwKFHZlcmlmeV9y",
-            "ZXF1ZXN0c19zZW50GAkgASgEEiQKHHZlcmlmeV9yZXF1ZXN0X3NlbmRfZmFp",
-            "bHVyZXMYCiABKAQSFwoPcGVuZGluZ19yZXBvcnRzGAsgASgNEhUKDXBlbmRp",
-            "bmdfbWFya3MYDCABKA0SFwoPcGVuZGluZ19jbGllbnRzGA0gASgNIt8DCg1M",
-            "aXZlVGVsZW1ldHJ5EhEKCXNhbXBsZV9pZBgBIAEoBBIVCg1zYW1wbGVkX2F0",
-            "X21zGAIgASgEEjMKDGhvc3RfcnVudGltZRgDIAEoCzIdLnN1bXAudGVsZW1l",
-            "dHJ5LlJ1bnRpbWVTYW1wbGUSMgoHY2lyY3VpdBgEIAEoCzIhLnN1bXAudGVs",
-            "ZW1ldHJ5LkNpcmN1aXRTeW5jU2FtcGxlEjIKB3RlcnJhaW4YBSABKAsyIS5z",
-            "dW1wLnRlbGVtZXRyeS5UZXJyYWluU3luY1NhbXBsZRIpCgVwZWVycxgGIAMo",
-            "CzIaLnN1bXAudGVsZW1ldHJ5LlBlZXJTYW1wbGUSGQoRbGl2ZV9tYXBfYnVp",
-            "bGRfbXMYByABKAISFwoPbGl2ZV9tYXBfY2h1bmtzGAggASgNEhgKEGxpdmVf",
-            "bWFwX2JhdGNoZXMYCSABKA0SGwoTbGl2ZV9tYXBfYnl0ZXNfc2VudBgKIAEo",
-            "BBIcChRsaXZlX21hcF9mcmFtZXNfc2VudBgLIAEoBBIZChFsaXZlX21hcF9y",
-            "ZXF1ZXN0cxgMIAEoBBI4ChFtb25pdG9yX3RyYW5zcG9ydBgNIAEoCzIdLnN1",
-            "bXAudGVsZW1ldHJ5LkNoYW5uZWxTYW1wbGUifgoWQ2xpZW50UnVudGltZVRl",
-            "bGVtZXRyeRIuCgdydW50aW1lGAEgASgLMh0uc3VtcC50ZWxlbWV0cnkuUnVu",
-            "dGltZVNhbXBsZRI0CgdjaXJjdWl0GAIgASgLMiMuc3VtcC50ZWxlbWV0cnku",
-            "Q2xpZW50Q2lyY3VpdFNhbXBsZUIlSAGqAiBTdU11bHRpcGxheWVyLlByb3Rv",
-            "Y29sLlRlbGVtZXRyeWIGcHJvdG8z"));
+            "Bm1heF9tcxgEIAEoAiKLAQoSQ2lyY3VpdFN0YWdlU2FtcGxlEgoKAmlkGAEg",
+            "ASgJEg0KBWNhbGxzGAIgASgEEhAKCHRvdGFsX21zGAMgASgCEg4KBm1heF9t",
+            "cxgEIAEoAhIPCgdsYXN0X21zGAUgASgCEhIKCnNsb3dfY2FsbHMYBiABKAQS",
+            "EwoLbWF4X2NvbnRleHQYByABKAkijQEKEk1lc3NhZ2VUeXBlVHJhZmZpYxIP",
+            "Cgd0eXBlX2lkGAEgASgNEgwKBG5hbWUYAiABKAkSEwoLZnJhbWVzX3NlbnQY",
+            "AyABKAQSEgoKYnl0ZXNfc2VudBgEIAEoBBIXCg9mcmFtZXNfcmVjZWl2ZWQY",
+            "BSABKAQSFgoOYnl0ZXNfcmVjZWl2ZWQYBiABKAQihgIKDUNoYW5uZWxTYW1w",
+            "bGUSDQoFc3RhdGUYASABKAkSEwoLZnJhbWVzX3NlbnQYAiABKAQSEgoKYnl0",
+            "ZXNfc2VudBgDIAEoBBIXCg9mcmFtZXNfcmVjZWl2ZWQYBCABKAQSFgoOYnl0",
+            "ZXNfcmVjZWl2ZWQYBSABKAQSGwoTYmFja3ByZXNzdXJlX2V2ZW50cxgGIAEo",
+            "BBIbChNwcm90b2NvbF92aW9sYXRpb25zGAcgASgEEhcKD3NlbmRfcXVldWVf",
+            "aGlnaBgIIAEoBBI5Cg1tZXNzYWdlX3R5cGVzGAkgAygLMiIuc3VtcC50ZWxl",
+            "bWV0cnkuTWVzc2FnZVR5cGVUcmFmZmljIqYCCgpQZWVyU2FtcGxlEhEKCWNs",
+            "aWVudF9pZBgBIAEoBRILCgNrZXkYAiABKAkSDAoEbmFtZRgDIAEoCRI1Cg5j",
+            "bGllbnRfcnVudGltZRgEIAEoCzIdLnN1bXAudGVsZW1ldHJ5LlJ1bnRpbWVT",
+            "YW1wbGUSFgoOcnVudGltZV9hZ2VfbXMYBSABKAQSLgoHcHJpbWFyeRgGIAEo",
+            "CzIdLnN1bXAudGVsZW1ldHJ5LkNoYW5uZWxTYW1wbGUSLgoHY2lyY3VpdBgH",
+            "IAEoCzIdLnN1bXAudGVsZW1ldHJ5LkNoYW5uZWxTYW1wbGUSOwoOY2xpZW50",
+            "X2NpcmN1aXQYCCABKAsyIy5zdW1wLnRlbGVtZXRyeS5DbGllbnRDaXJjdWl0",
+            "U2FtcGxlIsEKChFDaXJjdWl0U3luY1NhbXBsZRIOCgZyb3VuZHMYASABKAQS",
+            "FgoOYXR0YWNoZWRfcGVlcnMYAiABKAQSFAoMc2NvcGVfY2h1bmtzGAMgASgE",
+            "EhwKFHNldmVuX3NlZ21lbnRfc3RhdGVzGAQgASgEEhcKD3NuYXBzaG90X2No",
+            "dW5rcxgFIAEoBBIZChFzbmFwc2hvdF9lbGVtZW50cxgGIAEoBBIWCg5zbmFw",
+            "c2hvdF9wYXJ0cxgHIAEoBBIUCgxkZWx0YV9zdGF0ZXMYCCABKAQSFQoNc2Vu",
+            "ZF9mYWlsdXJlcxgJIAEoBBIdChVjbGllbnRfc2NvcGVfcmVxdWVzdHMYCiAB",
+            "KAQSGwoTY2xpZW50X3Njb3BlX2NodW5rcxgLIAEoBBIdChVjbGllbnRfc25h",
+            "cHNob3RfcGFydHMYDCABKAQSIAoYY2xpZW50X3NuYXBzaG90c19hcHBsaWVk",
+            "GA0gASgEEh0KFWNsaWVudF9zdGF0ZXNfYXBwbGllZBgOIAEoBBIdChVjbGll",
+            "bnRfYXBwbHlfZmFpbHVyZXMYDyABKAQSGwoTY2xpZW50X2hhc2hfcmVwb3J0",
+            "cxgQIAEoBBIaChJjbGllbnRfaGFzaF9jaHVua3MYESABKAQSIAoYY2xpZW50",
+            "X3dhdGVybWFya19leHBpcmVkGBIgASgEEiEKGWNsaWVudF9zaW11bGF0aW9u",
+            "X2VuYWJsZWQYEyABKAgSHgoWaG9zdF9zeW5jX3dpbmRvd19jYWxscxgUIAEo",
+            "BBIbChNob3N0X3N5bmNfd2luZG93X21zGBUgASgCEh8KF2hvc3Rfc3luY193",
+            "aW5kb3dfbWF4X21zGBYgASgCEiAKGGhhc2hfbWlzbWF0Y2hlc19vYnNlcnZl",
+            "ZBgXIAEoBBIhChloYXNoX3JlcGFpcl9jaHVua3NfcXVldWVkGBggASgEEiIK",
+            "GnJlcGFpcl9hY2tfaGFzaF9taXNtYXRjaGVzGBkgASgEEiAKGHJlcGFpcl9h",
+            "Y2tfY2h1bmtzX3F1ZXVlZBgaIAEoBBIfChdzbmFwc2hvdF9yZXF1ZXN0X2No",
+            "dW5rcxgbIAEoBBIpCiFuZWVkc19mdWxsX3NuYXBzaG90X2NodW5rc19xdWV1",
+            "ZWQYHCABKAQSHwoXc25hcHNob3RzX2luaXRpYWxfc2NvcGUYHSABKAQSHQoV",
+            "c25hcHNob3RzX2hhc2hfcmVwYWlyGB4gASgEEiMKG3NuYXBzaG90c19yZXBh",
+            "aXJfYWNrX3JlcGFpchgfIAEoBBIgChhzbmFwc2hvdHNfY2xpZW50X3JlcXVl",
+            "c3QYICABKAQSJQodc25hcHNob3RzX25lZWRzX2Z1bGxfcmVjb3ZlcnkYISAB",
+            "KAQSHwoXc25hcHNob3RzX3BhdXNlX2JhcnJpZXIYIiABKAQSIQoZc25hcHNo",
+            "b3RzX3RvcG9sb2d5X2NoYW5nZRgjIAEoBBInCh9zbmFwc2hvdHNfc2VuZF9m",
+            "YWlsdXJlX3JlY292ZXJ5GCQgASgEEh4KFnNuYXBzaG90X3NlbmRfZmFpbHVy",
+            "ZXMYJSABKAQSIwobaG9zdF9iYXRjaF9jYXB0dXJlX2ZhaWx1cmVzGCYgASgE",
+            "EisKI3JlcXVlc3RlZF9zbmFwc2hvdF9jYXB0dXJlX2ZhaWx1cmVzGCcgASgE",
+            "EigKIGhvc3RfYmF0Y2hfY2FwdHVyZV9jaHVua3NfZmFpbGVkGCggASgEEjIK",
+            "BnN0YWdlcxgpIAMoCzIiLnN1bXAudGVsZW1ldHJ5LkNpcmN1aXRTdGFnZVNh",
+            "bXBsZSKkAwoTQ2xpZW50Q2lyY3VpdFNhbXBsZRIdChVoYXNoX2NhcHR1cmVf",
+            "ZmFpbHVyZXMYASABKAQSIwobaGFzaF9jYXB0dXJlX2NodW5rc19za2lwcGVk",
+            "GAIgASgEEhkKEWhhc2hfcmVwb3J0c19zZW50GAMgASgEEhgKEGhhc2hfY2h1",
+            "bmtzX3NlbnQYBCABKAQSGwoTc2NvcGVfcmVxdWVzdHNfc2VudBgFIAEoBBIh",
+            "ChlzY29wZV9yZXF1ZXN0X2NodW5rc19zZW50GAYgASgEEh8KF3NuYXBzaG90",
+            "X3BhcnRzX3JlY2VpdmVkGAcgASgEEhkKEXNuYXBzaG90c19hcHBsaWVkGAgg",
+            "ASgEEhYKDnN0YXRlc19hcHBsaWVkGAkgASgEEhYKDmFwcGx5X2ZhaWx1cmVz",
+            "GAogASgEEhkKEXdhdGVybWFya19leHBpcmVkGAsgASgEEhkKEXNuYXBzaG90",
+            "X3RpbWVvdXRzGAwgASgEEjIKBnN0YWdlcxgNIAMoCzIiLnN1bXAudGVsZW1l",
+            "dHJ5LkNpcmN1aXRTdGFnZVNhbXBsZSKLAwoRVGVycmFpblN5bmNTYW1wbGUS",
+            "FgoOZGlnZXN0X3JlcG9ydHMYASABKAQSHgoWY2VsbF9jaGFuZ2VzX2Jyb2Fk",
+            "Y2FzdBgCIAEoBBIbChNjZWxsX2NoYW5nZV9yZXBhaXJzGAMgASgEEhQKDHJl",
+            "c3luY19ieXRlcxgEIAEoBBIaChJyZXBvcnRzX3Blcl9zZWNvbmQYBSABKAQS",
+            "GwoTbWlzbWF0Y2hfcGVyX3NlY29uZBgGIAEoBBIiChpyZXN5bmNfcmVjZWl2",
+            "ZWRfcGVyX3NlY29uZBgHIAEoBBIhChlyZXN5bmNfYXBwbGllZF9wZXJfc2Vj",
+            "b25kGAggASgEEhwKFHZlcmlmeV9yZXF1ZXN0c19zZW50GAkgASgEEiQKHHZl",
+            "cmlmeV9yZXF1ZXN0X3NlbmRfZmFpbHVyZXMYCiABKAQSFwoPcGVuZGluZ19y",
+            "ZXBvcnRzGAsgASgNEhUKDXBlbmRpbmdfbWFya3MYDCABKA0SFwoPcGVuZGlu",
+            "Z19jbGllbnRzGA0gASgNIt8DCg1MaXZlVGVsZW1ldHJ5EhEKCXNhbXBsZV9p",
+            "ZBgBIAEoBBIVCg1zYW1wbGVkX2F0X21zGAIgASgEEjMKDGhvc3RfcnVudGlt",
+            "ZRgDIAEoCzIdLnN1bXAudGVsZW1ldHJ5LlJ1bnRpbWVTYW1wbGUSMgoHY2ly",
+            "Y3VpdBgEIAEoCzIhLnN1bXAudGVsZW1ldHJ5LkNpcmN1aXRTeW5jU2FtcGxl",
+            "EjIKB3RlcnJhaW4YBSABKAsyIS5zdW1wLnRlbGVtZXRyeS5UZXJyYWluU3lu",
+            "Y1NhbXBsZRIpCgVwZWVycxgGIAMoCzIaLnN1bXAudGVsZW1ldHJ5LlBlZXJT",
+            "YW1wbGUSGQoRbGl2ZV9tYXBfYnVpbGRfbXMYByABKAISFwoPbGl2ZV9tYXBf",
+            "Y2h1bmtzGAggASgNEhgKEGxpdmVfbWFwX2JhdGNoZXMYCSABKA0SGwoTbGl2",
+            "ZV9tYXBfYnl0ZXNfc2VudBgKIAEoBBIcChRsaXZlX21hcF9mcmFtZXNfc2Vu",
+            "dBgLIAEoBBIZChFsaXZlX21hcF9yZXF1ZXN0cxgMIAEoBBI4ChFtb25pdG9y",
+            "X3RyYW5zcG9ydBgNIAEoCzIdLnN1bXAudGVsZW1ldHJ5LkNoYW5uZWxTYW1w",
+            "bGUifgoWQ2xpZW50UnVudGltZVRlbGVtZXRyeRIuCgdydW50aW1lGAEgASgL",
+            "Mh0uc3VtcC50ZWxlbWV0cnkuUnVudGltZVNhbXBsZRI0CgdjaXJjdWl0GAIg",
+            "ASgLMiMuc3VtcC50ZWxlbWV0cnkuQ2xpZW50Q2lyY3VpdFNhbXBsZUIlSAGq",
+            "AiBTdU11bHRpcGxheWVyLlByb3RvY29sLlRlbGVtZXRyeWIGcHJvdG8z"));
       descriptor = pbr::FileDescriptor.FromGeneratedCode(descriptorData,
           new pbr::FileDescriptor[] { },
           new pbr::GeneratedClrTypeInfo(null, null, new pbr::GeneratedClrTypeInfo[] {
             new pbr::GeneratedClrTypeInfo(typeof(global::SuMultiplayer.Protocol.Telemetry.RuntimeSample), global::SuMultiplayer.Protocol.Telemetry.RuntimeSample.Parser, new[]{ "SampledAtMs", "CpuAvailable", "CpuOneCorePercent", "CpuTotalPercent", "ProcessorCount", "GameUpdateHz", "FrameTimeAvgMs", "FrameTimeMaxMs", "Modules", "ModuleSampleEvery" }, null, null, null, null),
             new pbr::GeneratedClrTypeInfo(typeof(global::SuMultiplayer.Protocol.Telemetry.ModuleTickSample), global::SuMultiplayer.Protocol.Telemetry.ModuleTickSample.Parser, new[]{ "Id", "Calls", "TotalMs", "MaxMs" }, null, null, null, null),
+            new pbr::GeneratedClrTypeInfo(typeof(global::SuMultiplayer.Protocol.Telemetry.CircuitStageSample), global::SuMultiplayer.Protocol.Telemetry.CircuitStageSample.Parser, new[]{ "Id", "Calls", "TotalMs", "MaxMs", "LastMs", "SlowCalls", "MaxContext" }, null, null, null, null),
             new pbr::GeneratedClrTypeInfo(typeof(global::SuMultiplayer.Protocol.Telemetry.MessageTypeTraffic), global::SuMultiplayer.Protocol.Telemetry.MessageTypeTraffic.Parser, new[]{ "TypeId", "Name", "FramesSent", "BytesSent", "FramesReceived", "BytesReceived" }, null, null, null, null),
             new pbr::GeneratedClrTypeInfo(typeof(global::SuMultiplayer.Protocol.Telemetry.ChannelSample), global::SuMultiplayer.Protocol.Telemetry.ChannelSample.Parser, new[]{ "State", "FramesSent", "BytesSent", "FramesReceived", "BytesReceived", "BackpressureEvents", "ProtocolViolations", "SendQueueHigh", "MessageTypes" }, null, null, null, null),
             new pbr::GeneratedClrTypeInfo(typeof(global::SuMultiplayer.Protocol.Telemetry.PeerSample), global::SuMultiplayer.Protocol.Telemetry.PeerSample.Parser, new[]{ "ClientId", "Key", "Name", "ClientRuntime", "RuntimeAgeMs", "Primary", "Circuit", "ClientCircuit" }, null, null, null, null),
-            new pbr::GeneratedClrTypeInfo(typeof(global::SuMultiplayer.Protocol.Telemetry.CircuitSyncSample), global::SuMultiplayer.Protocol.Telemetry.CircuitSyncSample.Parser, new[]{ "Rounds", "AttachedPeers", "ScopeChunks", "SevenSegmentStates", "SnapshotChunks", "SnapshotElements", "SnapshotParts", "DeltaStates", "SendFailures", "ClientScopeRequests", "ClientScopeChunks", "ClientSnapshotParts", "ClientSnapshotsApplied", "ClientStatesApplied", "ClientApplyFailures", "ClientHashReports", "ClientHashChunks", "ClientWatermarkExpired", "ClientSimulationEnabled", "HostSyncWindowCalls", "HostSyncWindowMs", "HostSyncWindowMaxMs", "HashMismatchesObserved", "HashRepairChunksQueued", "RepairAckHashMismatches", "RepairAckChunksQueued", "SnapshotRequestChunks", "NeedsFullSnapshotChunksQueued", "SnapshotsInitialScope", "SnapshotsHashRepair", "SnapshotsRepairAckRepair", "SnapshotsClientRequest", "SnapshotsNeedsFullRecovery", "SnapshotsPauseBarrier", "SnapshotsTopologyChange", "SnapshotsSendFailureRecovery", "SnapshotSendFailures", "HostBatchCaptureFailures", "RequestedSnapshotCaptureFailures", "HostBatchCaptureChunksFailed" }, null, null, null, null),
-            new pbr::GeneratedClrTypeInfo(typeof(global::SuMultiplayer.Protocol.Telemetry.ClientCircuitSample), global::SuMultiplayer.Protocol.Telemetry.ClientCircuitSample.Parser, new[]{ "HashCaptureFailures", "HashCaptureChunksSkipped", "HashReportsSent", "HashChunksSent", "ScopeRequestsSent", "ScopeRequestChunksSent", "SnapshotPartsReceived", "SnapshotsApplied", "StatesApplied", "ApplyFailures", "WatermarkExpired", "SnapshotTimeouts" }, null, null, null, null),
+            new pbr::GeneratedClrTypeInfo(typeof(global::SuMultiplayer.Protocol.Telemetry.CircuitSyncSample), global::SuMultiplayer.Protocol.Telemetry.CircuitSyncSample.Parser, new[]{ "Rounds", "AttachedPeers", "ScopeChunks", "SevenSegmentStates", "SnapshotChunks", "SnapshotElements", "SnapshotParts", "DeltaStates", "SendFailures", "ClientScopeRequests", "ClientScopeChunks", "ClientSnapshotParts", "ClientSnapshotsApplied", "ClientStatesApplied", "ClientApplyFailures", "ClientHashReports", "ClientHashChunks", "ClientWatermarkExpired", "ClientSimulationEnabled", "HostSyncWindowCalls", "HostSyncWindowMs", "HostSyncWindowMaxMs", "HashMismatchesObserved", "HashRepairChunksQueued", "RepairAckHashMismatches", "RepairAckChunksQueued", "SnapshotRequestChunks", "NeedsFullSnapshotChunksQueued", "SnapshotsInitialScope", "SnapshotsHashRepair", "SnapshotsRepairAckRepair", "SnapshotsClientRequest", "SnapshotsNeedsFullRecovery", "SnapshotsPauseBarrier", "SnapshotsTopologyChange", "SnapshotsSendFailureRecovery", "SnapshotSendFailures", "HostBatchCaptureFailures", "RequestedSnapshotCaptureFailures", "HostBatchCaptureChunksFailed", "Stages" }, null, null, null, null),
+            new pbr::GeneratedClrTypeInfo(typeof(global::SuMultiplayer.Protocol.Telemetry.ClientCircuitSample), global::SuMultiplayer.Protocol.Telemetry.ClientCircuitSample.Parser, new[]{ "HashCaptureFailures", "HashCaptureChunksSkipped", "HashReportsSent", "HashChunksSent", "ScopeRequestsSent", "ScopeRequestChunksSent", "SnapshotPartsReceived", "SnapshotsApplied", "StatesApplied", "ApplyFailures", "WatermarkExpired", "SnapshotTimeouts", "Stages" }, null, null, null, null),
             new pbr::GeneratedClrTypeInfo(typeof(global::SuMultiplayer.Protocol.Telemetry.TerrainSyncSample), global::SuMultiplayer.Protocol.Telemetry.TerrainSyncSample.Parser, new[]{ "DigestReports", "CellChangesBroadcast", "CellChangeRepairs", "ResyncBytes", "ReportsPerSecond", "MismatchPerSecond", "ResyncReceivedPerSecond", "ResyncAppliedPerSecond", "VerifyRequestsSent", "VerifyRequestSendFailures", "PendingReports", "PendingMarks", "PendingClients" }, null, null, null, null),
             new pbr::GeneratedClrTypeInfo(typeof(global::SuMultiplayer.Protocol.Telemetry.LiveTelemetry), global::SuMultiplayer.Protocol.Telemetry.LiveTelemetry.Parser, new[]{ "SampleId", "SampledAtMs", "HostRuntime", "Circuit", "Terrain", "Peers", "LiveMapBuildMs", "LiveMapChunks", "LiveMapBatches", "LiveMapBytesSent", "LiveMapFramesSent", "LiveMapRequests", "MonitorTransport" }, null, null, null, null),
             new pbr::GeneratedClrTypeInfo(typeof(global::SuMultiplayer.Protocol.Telemetry.ClientRuntimeTelemetry), global::SuMultiplayer.Protocol.Telemetry.ClientRuntimeTelemetry.Parser, new[]{ "Runtime", "Circuit" }, null, null, null, null)
@@ -959,6 +965,426 @@ namespace SuMultiplayer.Protocol.Telemetry {
   }
 
   [global::System.Diagnostics.DebuggerDisplayAttribute("{ToString(),nq}")]
+  public sealed partial class CircuitStageSample : pb::IMessage<CircuitStageSample>
+  #if !GOOGLE_PROTOBUF_REFSTRUCT_COMPATIBILITY_MODE
+      , pb::IBufferMessage
+  #endif
+  {
+    private static readonly pb::MessageParser<CircuitStageSample> _parser = new pb::MessageParser<CircuitStageSample>(() => new CircuitStageSample());
+    private pb::UnknownFieldSet _unknownFields;
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public static pb::MessageParser<CircuitStageSample> Parser { get { return _parser; } }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public static pbr::MessageDescriptor Descriptor {
+      get { return global::SuMultiplayer.Protocol.Telemetry.TelemetryReflection.Descriptor.MessageTypes[2]; }
+    }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    pbr::MessageDescriptor pb::IMessage.Descriptor {
+      get { return Descriptor; }
+    }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public CircuitStageSample() {
+      OnConstruction();
+    }
+
+    partial void OnConstruction();
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public CircuitStageSample(CircuitStageSample other) : this() {
+      id_ = other.id_;
+      calls_ = other.calls_;
+      totalMs_ = other.totalMs_;
+      maxMs_ = other.maxMs_;
+      lastMs_ = other.lastMs_;
+      slowCalls_ = other.slowCalls_;
+      maxContext_ = other.maxContext_;
+      _unknownFields = pb::UnknownFieldSet.Clone(other._unknownFields);
+    }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public CircuitStageSample Clone() {
+      return new CircuitStageSample(this);
+    }
+
+    /// <summary>Field number for the "id" field.</summary>
+    public const int IdFieldNumber = 1;
+    private string id_ = "";
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public string Id {
+      get { return id_; }
+      set {
+        id_ = pb::ProtoPreconditions.CheckNotNull(value, "value");
+      }
+    }
+
+    /// <summary>Field number for the "calls" field.</summary>
+    public const int CallsFieldNumber = 2;
+    private ulong calls_;
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public ulong Calls {
+      get { return calls_; }
+      set {
+        calls_ = value;
+      }
+    }
+
+    /// <summary>Field number for the "total_ms" field.</summary>
+    public const int TotalMsFieldNumber = 3;
+    private float totalMs_;
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public float TotalMs {
+      get { return totalMs_; }
+      set {
+        totalMs_ = value;
+      }
+    }
+
+    /// <summary>Field number for the "max_ms" field.</summary>
+    public const int MaxMsFieldNumber = 4;
+    private float maxMs_;
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public float MaxMs {
+      get { return maxMs_; }
+      set {
+        maxMs_ = value;
+      }
+    }
+
+    /// <summary>Field number for the "last_ms" field.</summary>
+    public const int LastMsFieldNumber = 5;
+    private float lastMs_;
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public float LastMs {
+      get { return lastMs_; }
+      set {
+        lastMs_ = value;
+      }
+    }
+
+    /// <summary>Field number for the "slow_calls" field.</summary>
+    public const int SlowCallsFieldNumber = 6;
+    private ulong slowCalls_;
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public ulong SlowCalls {
+      get { return slowCalls_; }
+      set {
+        slowCalls_ = value;
+      }
+    }
+
+    /// <summary>Field number for the "max_context" field.</summary>
+    public const int MaxContextFieldNumber = 7;
+    private string maxContext_ = "";
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public string MaxContext {
+      get { return maxContext_; }
+      set {
+        maxContext_ = pb::ProtoPreconditions.CheckNotNull(value, "value");
+      }
+    }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public override bool Equals(object other) {
+      return Equals(other as CircuitStageSample);
+    }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public bool Equals(CircuitStageSample other) {
+      if (ReferenceEquals(other, null)) {
+        return false;
+      }
+      if (ReferenceEquals(other, this)) {
+        return true;
+      }
+      if (Id != other.Id) return false;
+      if (Calls != other.Calls) return false;
+      if (!pbc::ProtobufEqualityComparers.BitwiseSingleEqualityComparer.Equals(TotalMs, other.TotalMs)) return false;
+      if (!pbc::ProtobufEqualityComparers.BitwiseSingleEqualityComparer.Equals(MaxMs, other.MaxMs)) return false;
+      if (!pbc::ProtobufEqualityComparers.BitwiseSingleEqualityComparer.Equals(LastMs, other.LastMs)) return false;
+      if (SlowCalls != other.SlowCalls) return false;
+      if (MaxContext != other.MaxContext) return false;
+      return Equals(_unknownFields, other._unknownFields);
+    }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public override int GetHashCode() {
+      int hash = 1;
+      if (Id.Length != 0) hash ^= Id.GetHashCode();
+      if (Calls != 0UL) hash ^= Calls.GetHashCode();
+      if (TotalMs != 0F) hash ^= pbc::ProtobufEqualityComparers.BitwiseSingleEqualityComparer.GetHashCode(TotalMs);
+      if (MaxMs != 0F) hash ^= pbc::ProtobufEqualityComparers.BitwiseSingleEqualityComparer.GetHashCode(MaxMs);
+      if (LastMs != 0F) hash ^= pbc::ProtobufEqualityComparers.BitwiseSingleEqualityComparer.GetHashCode(LastMs);
+      if (SlowCalls != 0UL) hash ^= SlowCalls.GetHashCode();
+      if (MaxContext.Length != 0) hash ^= MaxContext.GetHashCode();
+      if (_unknownFields != null) {
+        hash ^= _unknownFields.GetHashCode();
+      }
+      return hash;
+    }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public override string ToString() {
+      return pb::JsonFormatter.ToDiagnosticString(this);
+    }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public void WriteTo(pb::CodedOutputStream output) {
+    #if !GOOGLE_PROTOBUF_REFSTRUCT_COMPATIBILITY_MODE
+      output.WriteRawMessage(this);
+    #else
+      if (Id.Length != 0) {
+        output.WriteRawTag(10);
+        output.WriteString(Id);
+      }
+      if (Calls != 0UL) {
+        output.WriteRawTag(16);
+        output.WriteUInt64(Calls);
+      }
+      if (TotalMs != 0F) {
+        output.WriteRawTag(29);
+        output.WriteFloat(TotalMs);
+      }
+      if (MaxMs != 0F) {
+        output.WriteRawTag(37);
+        output.WriteFloat(MaxMs);
+      }
+      if (LastMs != 0F) {
+        output.WriteRawTag(45);
+        output.WriteFloat(LastMs);
+      }
+      if (SlowCalls != 0UL) {
+        output.WriteRawTag(48);
+        output.WriteUInt64(SlowCalls);
+      }
+      if (MaxContext.Length != 0) {
+        output.WriteRawTag(58);
+        output.WriteString(MaxContext);
+      }
+      if (_unknownFields != null) {
+        _unknownFields.WriteTo(output);
+      }
+    #endif
+    }
+
+    #if !GOOGLE_PROTOBUF_REFSTRUCT_COMPATIBILITY_MODE
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    void pb::IBufferMessage.InternalWriteTo(ref pb::WriteContext output) {
+      if (Id.Length != 0) {
+        output.WriteRawTag(10);
+        output.WriteString(Id);
+      }
+      if (Calls != 0UL) {
+        output.WriteRawTag(16);
+        output.WriteUInt64(Calls);
+      }
+      if (TotalMs != 0F) {
+        output.WriteRawTag(29);
+        output.WriteFloat(TotalMs);
+      }
+      if (MaxMs != 0F) {
+        output.WriteRawTag(37);
+        output.WriteFloat(MaxMs);
+      }
+      if (LastMs != 0F) {
+        output.WriteRawTag(45);
+        output.WriteFloat(LastMs);
+      }
+      if (SlowCalls != 0UL) {
+        output.WriteRawTag(48);
+        output.WriteUInt64(SlowCalls);
+      }
+      if (MaxContext.Length != 0) {
+        output.WriteRawTag(58);
+        output.WriteString(MaxContext);
+      }
+      if (_unknownFields != null) {
+        _unknownFields.WriteTo(ref output);
+      }
+    }
+    #endif
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public int CalculateSize() {
+      int size = 0;
+      if (Id.Length != 0) {
+        size += 1 + pb::CodedOutputStream.ComputeStringSize(Id);
+      }
+      if (Calls != 0UL) {
+        size += 1 + pb::CodedOutputStream.ComputeUInt64Size(Calls);
+      }
+      if (TotalMs != 0F) {
+        size += 1 + 4;
+      }
+      if (MaxMs != 0F) {
+        size += 1 + 4;
+      }
+      if (LastMs != 0F) {
+        size += 1 + 4;
+      }
+      if (SlowCalls != 0UL) {
+        size += 1 + pb::CodedOutputStream.ComputeUInt64Size(SlowCalls);
+      }
+      if (MaxContext.Length != 0) {
+        size += 1 + pb::CodedOutputStream.ComputeStringSize(MaxContext);
+      }
+      if (_unknownFields != null) {
+        size += _unknownFields.CalculateSize();
+      }
+      return size;
+    }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public void MergeFrom(CircuitStageSample other) {
+      if (other == null) {
+        return;
+      }
+      if (other.Id.Length != 0) {
+        Id = other.Id;
+      }
+      if (other.Calls != 0UL) {
+        Calls = other.Calls;
+      }
+      if (other.TotalMs != 0F) {
+        TotalMs = other.TotalMs;
+      }
+      if (other.MaxMs != 0F) {
+        MaxMs = other.MaxMs;
+      }
+      if (other.LastMs != 0F) {
+        LastMs = other.LastMs;
+      }
+      if (other.SlowCalls != 0UL) {
+        SlowCalls = other.SlowCalls;
+      }
+      if (other.MaxContext.Length != 0) {
+        MaxContext = other.MaxContext;
+      }
+      _unknownFields = pb::UnknownFieldSet.MergeFrom(_unknownFields, other._unknownFields);
+    }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public void MergeFrom(pb::CodedInputStream input) {
+    #if !GOOGLE_PROTOBUF_REFSTRUCT_COMPATIBILITY_MODE
+      input.ReadRawMessage(this);
+    #else
+      uint tag;
+      while ((tag = input.ReadTag()) != 0) {
+      if ((tag & 7) == 4) {
+        // Abort on any end group tag.
+        return;
+      }
+      switch(tag) {
+          default:
+            _unknownFields = pb::UnknownFieldSet.MergeFieldFrom(_unknownFields, input);
+            break;
+          case 10: {
+            Id = input.ReadString();
+            break;
+          }
+          case 16: {
+            Calls = input.ReadUInt64();
+            break;
+          }
+          case 29: {
+            TotalMs = input.ReadFloat();
+            break;
+          }
+          case 37: {
+            MaxMs = input.ReadFloat();
+            break;
+          }
+          case 45: {
+            LastMs = input.ReadFloat();
+            break;
+          }
+          case 48: {
+            SlowCalls = input.ReadUInt64();
+            break;
+          }
+          case 58: {
+            MaxContext = input.ReadString();
+            break;
+          }
+        }
+      }
+    #endif
+    }
+
+    #if !GOOGLE_PROTOBUF_REFSTRUCT_COMPATIBILITY_MODE
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    void pb::IBufferMessage.InternalMergeFrom(ref pb::ParseContext input) {
+      uint tag;
+      while ((tag = input.ReadTag()) != 0) {
+      if ((tag & 7) == 4) {
+        // Abort on any end group tag.
+        return;
+      }
+      switch(tag) {
+          default:
+            _unknownFields = pb::UnknownFieldSet.MergeFieldFrom(_unknownFields, ref input);
+            break;
+          case 10: {
+            Id = input.ReadString();
+            break;
+          }
+          case 16: {
+            Calls = input.ReadUInt64();
+            break;
+          }
+          case 29: {
+            TotalMs = input.ReadFloat();
+            break;
+          }
+          case 37: {
+            MaxMs = input.ReadFloat();
+            break;
+          }
+          case 45: {
+            LastMs = input.ReadFloat();
+            break;
+          }
+          case 48: {
+            SlowCalls = input.ReadUInt64();
+            break;
+          }
+          case 58: {
+            MaxContext = input.ReadString();
+            break;
+          }
+        }
+      }
+    }
+    #endif
+
+  }
+
+  [global::System.Diagnostics.DebuggerDisplayAttribute("{ToString(),nq}")]
   public sealed partial class MessageTypeTraffic : pb::IMessage<MessageTypeTraffic>
   #if !GOOGLE_PROTOBUF_REFSTRUCT_COMPATIBILITY_MODE
       , pb::IBufferMessage
@@ -973,7 +1399,7 @@ namespace SuMultiplayer.Protocol.Telemetry {
     [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
     [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
     public static pbr::MessageDescriptor Descriptor {
-      get { return global::SuMultiplayer.Protocol.Telemetry.TelemetryReflection.Descriptor.MessageTypes[2]; }
+      get { return global::SuMultiplayer.Protocol.Telemetry.TelemetryReflection.Descriptor.MessageTypes[3]; }
     }
 
     [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
@@ -1356,7 +1782,7 @@ namespace SuMultiplayer.Protocol.Telemetry {
     [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
     [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
     public static pbr::MessageDescriptor Descriptor {
-      get { return global::SuMultiplayer.Protocol.Telemetry.TelemetryReflection.Descriptor.MessageTypes[3]; }
+      get { return global::SuMultiplayer.Protocol.Telemetry.TelemetryReflection.Descriptor.MessageTypes[4]; }
     }
 
     [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
@@ -1839,7 +2265,7 @@ namespace SuMultiplayer.Protocol.Telemetry {
     [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
     [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
     public static pbr::MessageDescriptor Descriptor {
-      get { return global::SuMultiplayer.Protocol.Telemetry.TelemetryReflection.Descriptor.MessageTypes[4]; }
+      get { return global::SuMultiplayer.Protocol.Telemetry.TelemetryReflection.Descriptor.MessageTypes[5]; }
     }
 
     [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
@@ -2332,7 +2758,7 @@ namespace SuMultiplayer.Protocol.Telemetry {
     [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
     [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
     public static pbr::MessageDescriptor Descriptor {
-      get { return global::SuMultiplayer.Protocol.Telemetry.TelemetryReflection.Descriptor.MessageTypes[5]; }
+      get { return global::SuMultiplayer.Protocol.Telemetry.TelemetryReflection.Descriptor.MessageTypes[6]; }
     }
 
     [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
@@ -2392,6 +2818,7 @@ namespace SuMultiplayer.Protocol.Telemetry {
       hostBatchCaptureFailures_ = other.hostBatchCaptureFailures_;
       requestedSnapshotCaptureFailures_ = other.requestedSnapshotCaptureFailures_;
       hostBatchCaptureChunksFailed_ = other.hostBatchCaptureChunksFailed_;
+      stages_ = other.stages_.Clone();
       _unknownFields = pb::UnknownFieldSet.Clone(other._unknownFields);
     }
 
@@ -2881,6 +3308,17 @@ namespace SuMultiplayer.Protocol.Telemetry {
       }
     }
 
+    /// <summary>Field number for the "stages" field.</summary>
+    public const int StagesFieldNumber = 41;
+    private static readonly pb::FieldCodec<global::SuMultiplayer.Protocol.Telemetry.CircuitStageSample> _repeated_stages_codec
+        = pb::FieldCodec.ForMessage(330, global::SuMultiplayer.Protocol.Telemetry.CircuitStageSample.Parser);
+    private readonly pbc::RepeatedField<global::SuMultiplayer.Protocol.Telemetry.CircuitStageSample> stages_ = new pbc::RepeatedField<global::SuMultiplayer.Protocol.Telemetry.CircuitStageSample>();
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public pbc::RepeatedField<global::SuMultiplayer.Protocol.Telemetry.CircuitStageSample> Stages {
+      get { return stages_; }
+    }
+
     [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
     [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
     public override bool Equals(object other) {
@@ -2936,6 +3374,7 @@ namespace SuMultiplayer.Protocol.Telemetry {
       if (HostBatchCaptureFailures != other.HostBatchCaptureFailures) return false;
       if (RequestedSnapshotCaptureFailures != other.RequestedSnapshotCaptureFailures) return false;
       if (HostBatchCaptureChunksFailed != other.HostBatchCaptureChunksFailed) return false;
+      if(!stages_.Equals(other.stages_)) return false;
       return Equals(_unknownFields, other._unknownFields);
     }
 
@@ -2983,6 +3422,7 @@ namespace SuMultiplayer.Protocol.Telemetry {
       if (HostBatchCaptureFailures != 0UL) hash ^= HostBatchCaptureFailures.GetHashCode();
       if (RequestedSnapshotCaptureFailures != 0UL) hash ^= RequestedSnapshotCaptureFailures.GetHashCode();
       if (HostBatchCaptureChunksFailed != 0UL) hash ^= HostBatchCaptureChunksFailed.GetHashCode();
+      hash ^= stages_.GetHashCode();
       if (_unknownFields != null) {
         hash ^= _unknownFields.GetHashCode();
       }
@@ -3161,6 +3601,7 @@ namespace SuMultiplayer.Protocol.Telemetry {
         output.WriteRawTag(192, 2);
         output.WriteUInt64(HostBatchCaptureChunksFailed);
       }
+      stages_.WriteTo(output, _repeated_stages_codec);
       if (_unknownFields != null) {
         _unknownFields.WriteTo(output);
       }
@@ -3331,6 +3772,7 @@ namespace SuMultiplayer.Protocol.Telemetry {
         output.WriteRawTag(192, 2);
         output.WriteUInt64(HostBatchCaptureChunksFailed);
       }
+      stages_.WriteTo(ref output, _repeated_stages_codec);
       if (_unknownFields != null) {
         _unknownFields.WriteTo(ref output);
       }
@@ -3461,6 +3903,7 @@ namespace SuMultiplayer.Protocol.Telemetry {
       if (HostBatchCaptureChunksFailed != 0UL) {
         size += 2 + pb::CodedOutputStream.ComputeUInt64Size(HostBatchCaptureChunksFailed);
       }
+      size += stages_.CalculateSize(_repeated_stages_codec);
       if (_unknownFields != null) {
         size += _unknownFields.CalculateSize();
       }
@@ -3593,6 +4036,7 @@ namespace SuMultiplayer.Protocol.Telemetry {
       if (other.HostBatchCaptureChunksFailed != 0UL) {
         HostBatchCaptureChunksFailed = other.HostBatchCaptureChunksFailed;
       }
+      stages_.Add(other.stages_);
       _unknownFields = pb::UnknownFieldSet.MergeFrom(_unknownFields, other._unknownFields);
     }
 
@@ -3770,6 +4214,10 @@ namespace SuMultiplayer.Protocol.Telemetry {
           }
           case 320: {
             HostBatchCaptureChunksFailed = input.ReadUInt64();
+            break;
+          }
+          case 330: {
+            stages_.AddEntriesFrom(input, _repeated_stages_codec);
             break;
           }
         }
@@ -3951,6 +4399,10 @@ namespace SuMultiplayer.Protocol.Telemetry {
             HostBatchCaptureChunksFailed = input.ReadUInt64();
             break;
           }
+          case 330: {
+            stages_.AddEntriesFrom(ref input, _repeated_stages_codec);
+            break;
+          }
         }
       }
     }
@@ -3973,7 +4425,7 @@ namespace SuMultiplayer.Protocol.Telemetry {
     [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
     [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
     public static pbr::MessageDescriptor Descriptor {
-      get { return global::SuMultiplayer.Protocol.Telemetry.TelemetryReflection.Descriptor.MessageTypes[6]; }
+      get { return global::SuMultiplayer.Protocol.Telemetry.TelemetryReflection.Descriptor.MessageTypes[7]; }
     }
 
     [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
@@ -4005,6 +4457,7 @@ namespace SuMultiplayer.Protocol.Telemetry {
       applyFailures_ = other.applyFailures_;
       watermarkExpired_ = other.watermarkExpired_;
       snapshotTimeouts_ = other.snapshotTimeouts_;
+      stages_ = other.stages_.Clone();
       _unknownFields = pb::UnknownFieldSet.Clone(other._unknownFields);
     }
 
@@ -4158,6 +4611,17 @@ namespace SuMultiplayer.Protocol.Telemetry {
       }
     }
 
+    /// <summary>Field number for the "stages" field.</summary>
+    public const int StagesFieldNumber = 13;
+    private static readonly pb::FieldCodec<global::SuMultiplayer.Protocol.Telemetry.CircuitStageSample> _repeated_stages_codec
+        = pb::FieldCodec.ForMessage(106, global::SuMultiplayer.Protocol.Telemetry.CircuitStageSample.Parser);
+    private readonly pbc::RepeatedField<global::SuMultiplayer.Protocol.Telemetry.CircuitStageSample> stages_ = new pbc::RepeatedField<global::SuMultiplayer.Protocol.Telemetry.CircuitStageSample>();
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public pbc::RepeatedField<global::SuMultiplayer.Protocol.Telemetry.CircuitStageSample> Stages {
+      get { return stages_; }
+    }
+
     [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
     [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
     public override bool Equals(object other) {
@@ -4185,6 +4649,7 @@ namespace SuMultiplayer.Protocol.Telemetry {
       if (ApplyFailures != other.ApplyFailures) return false;
       if (WatermarkExpired != other.WatermarkExpired) return false;
       if (SnapshotTimeouts != other.SnapshotTimeouts) return false;
+      if(!stages_.Equals(other.stages_)) return false;
       return Equals(_unknownFields, other._unknownFields);
     }
 
@@ -4204,6 +4669,7 @@ namespace SuMultiplayer.Protocol.Telemetry {
       if (ApplyFailures != 0UL) hash ^= ApplyFailures.GetHashCode();
       if (WatermarkExpired != 0UL) hash ^= WatermarkExpired.GetHashCode();
       if (SnapshotTimeouts != 0UL) hash ^= SnapshotTimeouts.GetHashCode();
+      hash ^= stages_.GetHashCode();
       if (_unknownFields != null) {
         hash ^= _unknownFields.GetHashCode();
       }
@@ -4270,6 +4736,7 @@ namespace SuMultiplayer.Protocol.Telemetry {
         output.WriteRawTag(96);
         output.WriteUInt64(SnapshotTimeouts);
       }
+      stages_.WriteTo(output, _repeated_stages_codec);
       if (_unknownFields != null) {
         _unknownFields.WriteTo(output);
       }
@@ -4328,6 +4795,7 @@ namespace SuMultiplayer.Protocol.Telemetry {
         output.WriteRawTag(96);
         output.WriteUInt64(SnapshotTimeouts);
       }
+      stages_.WriteTo(ref output, _repeated_stages_codec);
       if (_unknownFields != null) {
         _unknownFields.WriteTo(ref output);
       }
@@ -4374,6 +4842,7 @@ namespace SuMultiplayer.Protocol.Telemetry {
       if (SnapshotTimeouts != 0UL) {
         size += 1 + pb::CodedOutputStream.ComputeUInt64Size(SnapshotTimeouts);
       }
+      size += stages_.CalculateSize(_repeated_stages_codec);
       if (_unknownFields != null) {
         size += _unknownFields.CalculateSize();
       }
@@ -4422,6 +4891,7 @@ namespace SuMultiplayer.Protocol.Telemetry {
       if (other.SnapshotTimeouts != 0UL) {
         SnapshotTimeouts = other.SnapshotTimeouts;
       }
+      stages_.Add(other.stages_);
       _unknownFields = pb::UnknownFieldSet.MergeFrom(_unknownFields, other._unknownFields);
     }
 
@@ -4487,6 +4957,10 @@ namespace SuMultiplayer.Protocol.Telemetry {
           }
           case 96: {
             SnapshotTimeouts = input.ReadUInt64();
+            break;
+          }
+          case 106: {
+            stages_.AddEntriesFrom(input, _repeated_stages_codec);
             break;
           }
         }
@@ -4556,6 +5030,10 @@ namespace SuMultiplayer.Protocol.Telemetry {
             SnapshotTimeouts = input.ReadUInt64();
             break;
           }
+          case 106: {
+            stages_.AddEntriesFrom(ref input, _repeated_stages_codec);
+            break;
+          }
         }
       }
     }
@@ -4578,7 +5056,7 @@ namespace SuMultiplayer.Protocol.Telemetry {
     [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
     [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
     public static pbr::MessageDescriptor Descriptor {
-      get { return global::SuMultiplayer.Protocol.Telemetry.TelemetryReflection.Descriptor.MessageTypes[7]; }
+      get { return global::SuMultiplayer.Protocol.Telemetry.TelemetryReflection.Descriptor.MessageTypes[8]; }
     }
 
     [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
@@ -5220,7 +5698,7 @@ namespace SuMultiplayer.Protocol.Telemetry {
     [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
     [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
     public static pbr::MessageDescriptor Descriptor {
-      get { return global::SuMultiplayer.Protocol.Telemetry.TelemetryReflection.Descriptor.MessageTypes[8]; }
+      get { return global::SuMultiplayer.Protocol.Telemetry.TelemetryReflection.Descriptor.MessageTypes[9]; }
     }
 
     [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
@@ -5890,7 +6368,7 @@ namespace SuMultiplayer.Protocol.Telemetry {
     [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
     [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
     public static pbr::MessageDescriptor Descriptor {
-      get { return global::SuMultiplayer.Protocol.Telemetry.TelemetryReflection.Descriptor.MessageTypes[9]; }
+      get { return global::SuMultiplayer.Protocol.Telemetry.TelemetryReflection.Descriptor.MessageTypes[10]; }
     }
 
     [global::System.Diagnostics.DebuggerNonUserCodeAttribute]

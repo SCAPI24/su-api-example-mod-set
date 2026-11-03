@@ -461,6 +461,8 @@ namespace SuMultiplayer
             m_circuitWorld = new CircuitWorldEngine(m_terrainModule.Bridge, m_circuitCodec,
                 engineModManager.ModParentField, engineModManager.ModParentMethod,
                 m_circuitPresentation);
+            var clientCircuitProbe = new CircuitProbeRecorder();
+            m_circuitWorld.SetCircuitProbe(clientCircuitProbe);
             m_circuitModule = new CircuitSyncModule(m_circuitWorld, m_circuitPresentation,
                 reconcileSnapshot: m_circuitWorld.ReconcileSnapshot,
                 randomSeed: delegate
@@ -468,6 +470,8 @@ namespace SuMultiplayer
                     return CircuitRandomSequence.SeedFromSessionId(
                         m_terrainModule.CurrentSessionId);
                 });
+            m_circuitModule.SetCircuitProbe(clientCircuitProbe);
+            m_circuitModule.SetHostCircuitProbe(new CircuitProbeRecorder());
             m_terrainModule.SetModuleTickMetricsProvider(m_moduleHost.SnapshotTickMetrics);
             m_terrainModule.SetCircuitTelemetryProvider(m_circuitModule.SnapshotTelemetry);
             m_terrainModule.SetClientCircuitTelemetryProvider(

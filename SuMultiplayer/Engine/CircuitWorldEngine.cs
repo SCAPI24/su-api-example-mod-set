@@ -23,11 +23,14 @@ namespace SuMultiplayer.Engine
         private readonly IModParentField m_parentField;
         private readonly IModParentMethod m_parentMethod;
         private readonly CircuitUseInputSink m_interactionPresentation;
+        private CircuitProbeRecorder m_probe;
         private readonly int m_mainThreadId;
         private Project m_project;
         private bool m_topologyDirty = true;
         private bool m_clientElectricitySeedPending = true;
         private bool m_clientSleepScaleFailureLogged;
+        private string m_lastPumpTrigger = "none";
+        private int m_lastSeededChunks;
         private sealed class AuthoritativeState
         {
             public CircuitElementState State;
@@ -52,6 +55,15 @@ namespace SuMultiplayer.Engine
             m_terrainBridge.ReplicaElectricCellChanged += HandleReplicaElectricCellChanged;
             m_terrainBridge.ReplicaElectricTopologyChanged += HandleReplicaElectricTopologyChanged;
         }
+
+        public void SetCircuitProbe(CircuitProbeRecorder probe) => m_probe = probe;
+        public CircuitProbeRecorder CurrentCircuitProbe => m_probe;
+
+        public int LoadedCellScanCount => checked((int)m_terrainBridge.ResidentCount);
+
+        public string LastPumpTrigger => m_lastPumpTrigger;
+
+        public int LastSeededChunks => m_lastSeededChunks;
 
         public bool IsClientReplica
         {
@@ -354,12 +366,20 @@ namespace SuMultiplayer.Engine
             SubsystemElectricity electricity = project.FindSubsystem<SubsystemElectricity>(false);
             if (electricity == null)
                 return Fail("SubsystemElectricity is unavailable.", out error);
+            long captureStarted = m_probe?.Start() ?? 0;
             if (!m_codec.CaptureChunksBestEffort(electricity, readyChunks, target,
                     chunkErrors, out error))
             {
+                if (m_probe != null)
+                    m_probe.Record("electric-table-capture", captureStarted,
+                        "best-effort", readyChunks.Count, 0, 0, 0, 0);
                 target.Clear();
                 return false;
             }
+            if (m_probe != null)
+                m_probe.Record("electric-table-capture", captureStarted,
+                    "best-effort", readyChunks.Count, 0, 0,
+                    target.Values.Sum(states => states.Count), 0);
             return true;
         }
 
@@ -400,7 +420,7 @@ namespace SuMultiplayer.Engine
             if (electricity == null)
                 return Fail("SubsystemElectricity is unavailable.", out error);
             bool applied = m_codec.Apply(electricity, state, hostStep, out error);
-            if (applied)
+            if (applied && !CircuitStateCodec.IsDisplayElementType(state.ElementType))
             {
                 m_authoritativeStates[GetElementIdentity(state)] = new AuthoritativeState
                 {
@@ -479,36 +499,62 @@ namespace SuMultiplayer.Engine
             int hostStep)
         {
             EnsureMainThread(nameof(ReconcileSnapshot));
+            m_lastPumpTrigger = "full-snapshot-reconcile:" + key;
             if (expected == null) return "Snapshot state list is null.";
             if (!m_terrainBridge.ClientReplica)
                 return "Full snapshot reconciliation is only valid on a client replica.";
 
+            long started = m_probe?.Start() ?? 0;
             Pump();
+            m_probe?.Record("reconcile-pump", started,
+                m_lastPumpTrigger, 1, 0, 0, 0, 0);
             var local = new List<CircuitElementState>();
-            if (!TryCaptureChunkTopology(key, local, out string captureError))
+            started = m_probe?.Start() ?? 0;
+            bool topologyCaptured = TryCaptureChunkTopology(key, local, out string captureError);
+            m_probe?.Record("reconcile-topology-capture", started,
+                "full-snapshot", 1, 0, 0, local.Count, 0);
+            if (!topologyCaptured)
                 return "Client topology capture failed: " + captureError;
 
+            started = m_probe?.Start() ?? 0;
             var localTypes = new Dictionary<string, uint>(local.Count, StringComparer.Ordinal);
             foreach (CircuitElementState state in local)
             {
                 string identity = GetElementIdentity(state);
                 if (!localTypes.TryAdd(identity, state.ElementType))
+                {
+                    m_probe?.Record("reconcile-topology-verify", started,
+                        "full-snapshot", 1, 0, 0, local.Count, 0);
                     return "Client topology contains a duplicate circuit element at " + identity + ".";
+                }
             }
             if (expected.Count != localTypes.Count)
+            {
+                m_probe?.Record("reconcile-topology-verify", started,
+                    "full-snapshot", 1, 0, 0, expected.Count, 0);
                 return "Client topology element count " + localTypes.Count +
                     " does not match host snapshot count " + expected.Count + ".";
+            }
 
             foreach (CircuitElementState state in expected)
             {
                 string identity = GetElementIdentity(state);
                 if (!localTypes.TryGetValue(identity, out uint localType) ||
                     localType != state.ElementType)
+                {
+                    m_probe?.Record("reconcile-topology-verify", started,
+                        "full-snapshot", 1, 0, 0, expected.Count, 0);
                     return "Client topology does not match host snapshot at " + identity + ".";
+                }
             }
+            m_probe?.Record("reconcile-topology-verify", started,
+                "full-snapshot", 1, 0, 0, expected.Count, 0);
+            started = m_probe?.Start() ?? 0;
             RemoveCachedStatesForChunk(key);
             foreach (CircuitElementState state in expected)
                 if (!Apply(state, hostStep, out string applyError)) return applyError;
+            m_probe?.Record("reconcile-state-apply", started,
+                "full-snapshot", 1, 0, 0, expected.Count, 0);
             return null;
         }
 
@@ -568,6 +614,18 @@ namespace SuMultiplayer.Engine
             return m_codec.ComputeCapturedHash(states);
         }
 
+        public void RefreshClientDisplayElements()
+        {
+            EnsureMainThread(nameof(RefreshClientDisplayElements));
+            if (!m_terrainBridge.ClientReplica) return;
+            Project project = GameManager.Project;
+            SubsystemElectricity electricity = project?.FindSubsystem<SubsystemElectricity>(false);
+            if (electricity == null)
+                throw new InvalidOperationException(
+                    "SubsystemElectricity is unavailable while refreshing client display elements.");
+            m_codec.RefreshDisplayElements(electricity);
+        }
+
         public void SetDeterministicRandomSeed(uint seed, bool hostAuthority)
         {
             EnsureMainThread(nameof(SetDeterministicRandomSeed));
@@ -622,6 +680,7 @@ namespace SuMultiplayer.Engine
         {
             EnsureMainThread(nameof(HandleReplicaElectricTopologyChanged));
             m_topologyDirty = true;
+            m_lastPumpTrigger = "terrain-topology-change:" + key;
         }
 
         private void HandleReplicaElectricCellChanged(ChunkKey key, CellEdit edit)
@@ -642,7 +701,10 @@ namespace SuMultiplayer.Engine
                 }
             }
             if (!elementReady)
+            {
                 m_topologyDirty = true;
+                m_lastPumpTrigger = "electric-element-missing:" + key;
+            }
         }
 
 
@@ -727,6 +789,7 @@ namespace SuMultiplayer.Engine
             m_authoritativeStates.Clear();
             m_topologyDirty = true;
             m_clientElectricitySeedPending = true;
+            m_lastPumpTrigger = "client-reset";
         }
 
         public void Pump()
@@ -746,28 +809,42 @@ namespace SuMultiplayer.Engine
                 m_authoritativeStates.Clear();
                 m_topologyDirty = true;
                 m_clientElectricitySeedPending = true;
+                m_lastPumpTrigger = "project-change";
             }
             if (!m_topologyDirty)
-            {
-                RefreshCachedSevenSegmentPresentations(project);
                 return;
-            }
             SubsystemElectricity electricity = project?.FindSubsystem<SubsystemElectricity>(false);
             if (electricity == null) return;
             try
             {
                 bool seededElectricity = true;
                 if (m_clientElectricitySeedPending)
-                    seededElectricity = SeedLoadedElectricityElements(project, electricity);
+                {
+                    long seedStarted = m_probe?.Start() ?? 0;
+                    seededElectricity = SeedLoadedElectricityElements(project, electricity,
+                        out m_lastSeededChunks);
+                    if (m_probe != null)
+                        m_probe.Record("seed-loaded-electricity", seedStarted,
+                            m_lastPumpTrigger, m_lastSeededChunks, 0, 0, 0, 0);
+                }
+                long rebuildStarted = m_probe?.Start() ?? 0;
                 m_parentMethod.InvokeParentMethod(electricity, "UpdateElectricElements",
                     Type.EmptyTypes);
+                if (m_probe != null)
+                    m_probe.Record("topology-rebuild", rebuildStarted, m_lastPumpTrigger,
+                        LoadedCellScanCount, 0, 0, 0, 0);
                 // The engine rebuild schedules newly added elements and their neighbors.
                 // Keep those kicks while replaying cached authoritative voltages.
+                long replayStarted = m_probe?.Start() ?? 0;
                 ReapplyAuthoritativeStates(electricity);
+                if (m_probe != null)
+                    m_probe.Record("authoritative-replay", replayStarted, m_lastPumpTrigger,
+                        LoadedCellScanCount, 0, 0, m_authoritativeStates.Count, 0);
+                m_codec.RefreshDisplayElements(electricity);
                 m_topologyDirty = false;
                 if (seededElectricity)
                     m_clientElectricitySeedPending = false;
-                RefreshCachedSevenSegmentPresentations(project);
+                m_lastPumpTrigger = "none";
             }
             catch (Exception error)
             {
@@ -777,8 +854,9 @@ namespace SuMultiplayer.Engine
         }
 
         private static bool SeedLoadedElectricityElements(Project project,
-            SubsystemElectricity electricity)
+            SubsystemElectricity electricity, out int scannedChunks)
         {
+            scannedChunks = 0;
             SubsystemTerrain terrainSubsystem = project?.FindSubsystem<SubsystemTerrain>(false);
             Game.Terrain terrain = terrainSubsystem?.Terrain;
             Block[] blocks = BlocksManager.Blocks;
@@ -791,6 +869,7 @@ namespace SuMultiplayer.Engine
                 if (chunk == null || !ChunkContentStages.IsContentValid((int)chunk.State))
                     continue;
                 foundValidChunk = true;
+                scannedChunks++;
                 for (int x = chunk.Origin.X; x < chunk.Origin.X + 16; x++)
                     for (int z = chunk.Origin.Y; z < chunk.Origin.Y + 16; z++)
                         for (int y = 0; y < 256; y++)
@@ -803,22 +882,6 @@ namespace SuMultiplayer.Engine
                         }
             }
             return foundValidChunk;
-        }
-
-        private void RefreshCachedSevenSegmentPresentations(Project project)
-        {
-            if (project == null || m_authoritativeStates.Count == 0) return;
-            SubsystemElectricity electricity = project.FindSubsystem<SubsystemElectricity>(false);
-            if (electricity == null) return;
-            uint sevenSegmentType = CircuitStateCodec.SevenSegmentTypeCode;
-            foreach (AuthoritativeState authoritative in m_authoritativeStates.Values)
-            {
-                if (authoritative?.State == null || authoritative.State.ElementType != sevenSegmentType)
-                    continue;
-                if (!m_codec.RefreshSevenSegmentPresentationFromLiveVoltage(electricity,
-                        authoritative.State, out string error))
-                    throw new InvalidOperationException(error);
-            }
         }
 
         private void ReapplyAuthoritativeStates(SubsystemElectricity electricity)
