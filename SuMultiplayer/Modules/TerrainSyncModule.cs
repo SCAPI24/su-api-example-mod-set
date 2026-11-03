@@ -275,6 +275,7 @@ namespace SuMultiplayer.Modules
             public bool IsClient => m_owner.m_clientSync != null;
             public bool IsClientCircuitAttached => m_owner.m_circuitClient?.IsCircuitAttached == true;
             public int LocalClientId => m_owner.m_clientSync?.LocalClientId ?? -1;
+            public int LastRoundTripMs => m_owner.m_clientSync?.RoundTripMs ?? -1;
             public string SessionId => m_owner.CurrentSessionId;
             public long TerrainSequence => m_owner.m_host?.CurrentChangeSequence ??
                 m_owner.m_clientSync?.LastAppliedChangeSequence ?? 0L;

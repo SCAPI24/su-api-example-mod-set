@@ -10,7 +10,7 @@ import "google/protobuf/any.proto";
 message CircuitClock {
   uint32 epoch = 1;
   int32 host_circuit_step = 2;
-  int32 last_event_sequence = 3;
+  int32 last_committed_event_sequence = 3;
   int64 terrain_sequence = 4;
   double total_elapsed_game_time = 5;
   double time_of_day_offset = 6;
@@ -33,9 +33,9 @@ enum CircuitOperation {
 message CircuitEventRequest {
   uint64 request_id = 1;
   int32 client_circuit_step = 2;
-  int32 x = 3;
+  sint32 x = 3;
   int32 y = 4;
-  int32 z = 5;
+  sint32 z = 5;
   uint32 mounting_face = 6;
   CircuitOperation operation = 7;
   uint32 value = 8;
@@ -46,27 +46,34 @@ message CircuitEventRequest {
   float direction_y = 13;
   float direction_z = 14;
   float reach = 15;
+  int32 round_trip_ms = 16;
   bytes ext = 100;
   google.protobuf.Any custom = 101;
 }
 
 message CircuitEvent {
-  uint32 sequence = 1;
+  uint32 operation_sequence = 1;
   int32 host_circuit_step = 2;
-  int32 x = 3;
+  sint32 x = 3;
   int32 y = 4;
-  int32 z = 5;
+  sint32 z = 5;
   uint32 mounting_face = 6;
   CircuitOperation operation = 7;
   uint32 value = 8;
   int64 required_terrain_sequence = 9;
   int64 required_topology_generation = 10;
+  uint32 origin_client_id = 11;
+  uint64 request_id = 12;
+  int32 timeline_generation = 13;
+  bool committed = 14;
+  bool cancelled = 15;
+  uint32 committed_event_sequence = 16;
 }
 
 message CircuitEventBatch {
   uint32 epoch = 1;
   int32 host_circuit_step = 2;
-  uint32 first_sequence = 3;
+  uint32 first_operation_sequence = 3;
   repeated CircuitEvent events = 4;
   bytes ext = 100;
   google.protobuf.Any custom = 101;
@@ -78,9 +85,9 @@ message CircuitScheduledVoltage {
 }
 
 message CircuitElementState {
-  int32 x = 1;
+  sint32 x = 1;
   int32 y = 2;
-  int32 z = 3;
+  sint32 z = 3;
   uint32 mounting_face = 4;
   uint32 element_type = 5;
   sint32 voltage_level = 6;
@@ -102,6 +109,7 @@ message CircuitSnapshotRequest {
   repeated CircuitChunkKey chunks = 3;
   bool replace_scope = 4;
   bool scope_query = 5;
+  bool hash_mismatch = 6;
   bytes ext = 100;
   google.protobuf.Any custom = 101;
 }
@@ -110,25 +118,28 @@ message CircuitSnapshotPart {
   uint32 epoch = 1;
   uint64 snapshot_id = 2;
   int32 host_circuit_step = 3;
-  int32 chunk_x = 4;
-  int32 chunk_z = 5;
+  sint32 chunk_x = 4;
+  sint32 chunk_z = 5;
   uint32 part_index = 6;
   uint32 part_count = 7;
   bool full = 8;
   repeated CircuitElementState elements = 9;
   int64 required_terrain_sequence = 10;
-  int32 last_event_sequence = 11;
+  int32 last_committed_event_sequence = 11;
   int32 timeline_generation = 12;
   int64 required_topology_generation = 13;
+  uint32 chunk_committed_event_sequence = 14;
   bytes ext = 100;
   google.protobuf.Any custom = 101;
 }
 
 message CircuitChunkHash {
-  int32 chunk_x = 1;
-  int32 chunk_z = 2;
+  sint32 chunk_x = 1;
+  sint32 chunk_z = 2;
   uint32 hash = 3;
   int64 topology_generation = 4;
+  int64 terrain_sequence = 5;
+  uint32 chunk_committed_event_sequence = 6;
 }
 
 message CircuitHashReport {
@@ -136,18 +147,25 @@ message CircuitHashReport {
   int32 host_circuit_step = 2;
   int64 terrain_sequence = 3;
   repeated CircuitChunkHash chunks = 4;
-  int32 last_event_sequence = 5;
+  int32 last_committed_event_sequence = 5;
   int32 timeline_generation = 6;
   bytes ext = 100;
   google.protobuf.Any custom = 101;
+}
+
+message CircuitHashCheckpoint {
+  uint32 epoch = 1;
+  int32 host_circuit_step = 2;
+  int32 timeline_generation = 3;
+  repeated CircuitChunkHash chunks = 4;
 }
 
 message CircuitRepairBarrier {
   uint32 epoch = 1;
   uint64 snapshot_id = 2;
   int32 host_circuit_step = 3;
-  int32 chunk_x = 4;
-  int32 chunk_z = 5;
+  sint32 chunk_x = 4;
+  sint32 chunk_z = 5;
   uint32 part_count = 6;
   string reason = 7;
 }
@@ -155,24 +173,26 @@ message CircuitRepairBarrier {
 message CircuitRepairApplied {
   uint32 epoch = 1;
   uint64 snapshot_id = 2;
-  int32 chunk_x = 3;
-  int32 chunk_z = 4;
+  sint32 chunk_x = 3;
+  sint32 chunk_z = 4;
   uint32 state_hash = 5;
   int64 terrain_sequence = 6;
-  int32 last_event_sequence = 7;
+  int32 last_committed_event_sequence = 7;
   int32 timeline_generation = 8;
   int64 topology_generation = 9;
+  int32 client_circuit_step = 10;
+  uint32 chunk_committed_event_sequence = 11;
 }
 
 message CircuitOperationResult {
   uint64 request_id = 1;
   bool accepted = 2;
   string reason = 3;
-  uint32 sequence = 4;
+  uint32 operation_sequence = 4;
   int32 host_circuit_step = 5;
-  int32 x = 6;
+  sint32 x = 6;
   int32 y = 7;
-  int32 z = 8;
+  sint32 z = 8;
   uint32 cell_value = 9;
   uint32 epoch = 10;
   int64 required_terrain_sequence = 11;
@@ -182,8 +202,8 @@ message CircuitOperationResult {
 }
 
 message CircuitChunkKey {
-  int32 x = 1;
-  int32 z = 2;
+  sint32 x = 1;
+  sint32 z = 2;
 }
 
 message CircuitScopeSnapshot {

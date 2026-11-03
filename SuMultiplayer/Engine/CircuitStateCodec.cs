@@ -208,6 +208,49 @@ namespace SuMultiplayer.Engine
             }
         }
 
+        // Source: Mod/SuMultiplayer/Modules/CircuitSyncModule.cs:CircuitSyncModule.ProcessReadySnapshots
+        public bool CaptureElements(SubsystemElectricity subsystem,
+            IList<CircuitElementState> identities, List<CircuitElementState> states,
+            out string error)
+        {
+            if (subsystem == null) throw new ArgumentNullException(nameof(subsystem));
+            if (identities == null) throw new ArgumentNullException(nameof(identities));
+            if (states == null) throw new ArgumentNullException(nameof(states));
+            states.Clear();
+            error = null;
+
+            try
+            {
+                foreach (CircuitElementState identity in identities)
+                {
+                    if (identity == null || identity.MountingFace > 5)
+                        throw new InvalidOperationException("Delta element identity is invalid.");
+                    ElectricElement element = subsystem.GetElectricElement(identity.X,
+                        identity.Y, identity.Z, (int)identity.MountingFace);
+                    if (element == null)
+                        throw new InvalidOperationException("No electric element exists at delta cell face (" +
+                            identity.X + "," + identity.Y + "," + identity.Z + ") face " +
+                            identity.MountingFace + ".");
+                    CircuitElementState state = CaptureElement(subsystem, element,
+                        new CellFace(identity.X, identity.Y, identity.Z,
+                            checked((int)identity.MountingFace)));
+                    if (state.ElementType != identity.ElementType)
+                        throw new InvalidOperationException("Delta element type changed at cell face (" +
+                            identity.X + "," + identity.Y + "," + identity.Z + ") face " +
+                            identity.MountingFace + ".");
+                    states.Add(state);
+                }
+                states.Sort(CompareStates);
+                return true;
+            }
+            catch (Exception ex)
+            {
+                states.Clear();
+                error = "Circuit delta element capture failed: " + ex.Message;
+                return false;
+            }
+        }
+
         public bool CaptureChunkTopologyValues(SubsystemElectricity subsystem, int chunkX,
             int chunkZ, IDictionary<string, int> values, out string error)
         {
@@ -477,6 +520,20 @@ namespace SuMultiplayer.Engine
                     subsystem.WritePersistentVoltage(new Point3(state.X, state.Y, state.Z),
                         counter / 15f * (overflow ? -1f : 1f));
                 }
+                else if (element is DispenserElectricElement)
+                {
+                    // Dispensers are execution/input elements. They have no voltage field
+                    // or client-owned runtime state; the host owns their inventory action.
+                    ValidateOutputVoltages(element, state);
+                }
+                else if (element is SignElectricElement ||
+                    element is GunpowderKegElectricElement ||
+                    element is LightBulbElectricElement ||
+                    element is SoundGeneratorElectricElement)
+                {
+                    // Host-only side-effect elements have no synchronized voltage field.
+                    ValidateOutputVoltages(element, state);
+                }
                 else if (element is BaseDelayGateElectricElement)
                 {
                     SetField(element, "m_voltage", state.VoltageLevel / 15f,
@@ -544,6 +601,55 @@ namespace SuMultiplayer.Engine
             {
                 error = "Circuit state apply failed at (" + state.X + "," + state.Y + "," +
                     state.Z + ") face " + state.MountingFace + ": " + ex.Message;
+                return false;
+            }
+        }
+
+        // Source: Survivalcraft/Game/ButtonElectricElement.cs:ButtonElectricElement.Press
+        // Source: Survivalcraft/Game/SubsystemElectricity.cs:QueueElectricElementForSimulation
+        public bool ApplyOperationEvent(SubsystemElectricity subsystem,
+            CircuitEvent circuitEvent, out string error)
+        {
+            if (subsystem == null) throw new ArgumentNullException(nameof(subsystem));
+            if (circuitEvent == null) throw new ArgumentNullException(nameof(circuitEvent));
+            error = null;
+            try
+            {
+                if (circuitEvent.MountingFace > 5)
+                    throw new InvalidOperationException("Operation mounting face is outside 0..5.");
+                ElectricElement element = subsystem.GetElectricElement(circuitEvent.X,
+                    circuitEvent.Y, circuitEvent.Z, (int)circuitEvent.MountingFace);
+                if (circuitEvent.Operation == CircuitOperation.ButtonPress)
+                {
+                    if (!IsButton(element))
+                        throw new InvalidOperationException(
+                            "Authoritative button operation does not match the live element.");
+                    Type buttonType = GetButtonType(element);
+                    bool wasPressed = GetField<bool>(element, "m_wasPressed", buttonType);
+                    float voltage = GetField<float>(element, "m_voltage", buttonType);
+                    bool canPress = element is ButtonFurnitureElectricElement
+                        ? !ElectricElement.IsSignalHigh(voltage)
+                        : voltage == 0f;
+                    if (!wasPressed && canPress)
+                    {
+                        SetField(element, "m_wasPressed", true, buttonType);
+                        subsystem.QueueElectricElementForSimulation(element,
+                            checked(subsystem.CircuitStep + 1));
+                    }
+                    return true;
+                }
+                if (circuitEvent.Operation != CircuitOperation.Switch &&
+                    circuitEvent.Operation != CircuitOperation.Rotate &&
+                    circuitEvent.Operation != CircuitOperation.FurnitureSwitch)
+                    throw new InvalidOperationException("Unsupported circuit operation " +
+                        circuitEvent.Operation + ".");
+                subsystem.OnElectricElementBlockModified(circuitEvent.X,
+                    circuitEvent.Y, circuitEvent.Z);
+                return true;
+            }
+            catch (Exception ex)
+            {
+                error = "Circuit operation input could not be applied: " + ex.Message;
                 return false;
             }
         }
@@ -817,6 +923,20 @@ namespace SuMultiplayer.Engine
                     (GetField<bool>(element, "m_minusAllowed", typeof(CounterElectricElement)) ? 2 : 0) |
                     (GetField<bool>(element, "m_resetAllowed", typeof(CounterElectricElement)) ? 4 : 0));
             }
+            else if (element is DispenserElectricElement)
+            {
+                // Dispensers have no m_voltage field. Their output is always zero; their
+                // authoritative side effect is synchronized through host terrain/entity
+                // replication, while the client filters this automatic input from solving.
+            }
+            else if (element is SignElectricElement ||
+                element is GunpowderKegElectricElement ||
+                element is LightBulbElectricElement ||
+                element is SoundGeneratorElectricElement)
+            {
+                // These elements are host-side actions or terrain presenters rather than
+                // voltage-state elements. Their effects arrive through authoritative sync.
+            }
             else
             {
                 Type voltageDeclaringType = element is BaseDelayGateElectricElement
@@ -973,7 +1093,9 @@ namespace SuMultiplayer.Engine
             if (element is BatteryElectricElement || element is RealTimeClockElectricElement || element is CounterElectricElement ||
                 IsButton(element) || element is BaseDelayGateElectricElement ||
                 element is SRLatchElectricElement || element is MemoryBankElectricElement ||
-                element is RandomGeneratorElectricElement)
+                element is RandomGeneratorElectricElement || element is DispenserElectricElement ||
+                element is SignElectricElement || element is GunpowderKegElectricElement ||
+                element is LightBulbElectricElement || element is SoundGeneratorElectricElement)
                 return;
             if (FindFieldDeclaringType(type, "m_voltage") == null)
                 throw new InvalidOperationException("Unsupported electric element type " + type.FullName + ".");

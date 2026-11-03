@@ -309,6 +309,19 @@ namespace SuMultiplayer.Engine
             return m_codec.CaptureChunk(electricity, key.X, key.Z, target, out error);
         }
 
+        public bool TryCaptureElements(IList<CircuitElementState> identities,
+            List<CircuitElementState> target, out string error)
+        {
+            EnsureMainThread(nameof(TryCaptureElements));
+            if (identities == null) throw new ArgumentNullException(nameof(identities));
+            if (target == null) throw new ArgumentNullException(nameof(target));
+            Project project = GameManager.Project;
+            SubsystemElectricity electricity = project?.FindSubsystem<SubsystemElectricity>(false);
+            if (electricity == null)
+                return Fail("SubsystemElectricity is unavailable.", out error);
+            return m_codec.CaptureElements(electricity, identities, target, out error);
+        }
+
         public bool TryCaptureChunks(IList<ChunkKey> keys,
             IDictionary<ChunkKey, List<CircuitElementState>> target, out string error)
         {
@@ -429,6 +442,17 @@ namespace SuMultiplayer.Engine
                 };
             }
             return applied;
+        }
+
+        public bool ApplyOperationEvent(CircuitEvent circuitEvent, out string error)
+        {
+            EnsureMainThread(nameof(ApplyOperationEvent));
+            if (circuitEvent == null) throw new ArgumentNullException(nameof(circuitEvent));
+            SubsystemElectricity electricity = GameManager.Project?
+                .FindSubsystem<SubsystemElectricity>(false);
+            if (electricity == null)
+                return Fail("SubsystemElectricity is unavailable.", out error);
+            return m_codec.ApplyOperationEvent(electricity, circuitEvent, out error);
         }
 
         public bool AlignClientCircuitStep(int hostStep, bool restoreAuthoritativeStates,
@@ -781,6 +805,16 @@ namespace SuMultiplayer.Engine
                     (item.Value.State.X >> 4) == key.X &&
                     (item.Value.State.Z >> 4) == key.Z).ToArray())
                 m_authoritativeStates.Remove(pair.Key);
+        }
+
+        public void MarkClientCircuitTopologyDirty(ChunkKey key)
+        {
+            EnsureMainThread(nameof(MarkClientCircuitTopologyDirty));
+            if (!m_terrainBridge.ClientReplica)
+                throw new InvalidOperationException(
+                    "Client circuit topology cannot be dirtied on the host.");
+            m_topologyDirty = true;
+            m_lastPumpTrigger = "circuit-operation-topology:" + key;
         }
 
         public void ResetClientCircuitState()

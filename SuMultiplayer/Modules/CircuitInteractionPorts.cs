@@ -61,6 +61,7 @@ namespace SuMultiplayer.Modules
         bool IsClient { get; }
         bool IsClientCircuitAttached { get; }
         int LocalClientId { get; }
+        int LastRoundTripMs { get; }
         string SessionId { get; }
         long TerrainSequence { get; }
         long TerrainSequenceForChunk(ChunkKey key);
@@ -102,12 +103,15 @@ namespace SuMultiplayer.Modules
         bool AreElementsReady(IList<CircuitElementState> states);
         bool TryCaptureChunk(ChunkKey key, List<CircuitElementState> target,
             out string error);
+        bool TryCaptureElements(IList<CircuitElementState> identities,
+            List<CircuitElementState> target, out string error);
         bool TryCaptureChunks(IList<ChunkKey> keys,
             IDictionary<ChunkKey, List<CircuitElementState>> target, out string error);
         bool TryCaptureChunksBestEffort(IList<ChunkKey> keys,
             IDictionary<ChunkKey, List<CircuitElementState>> target,
             IDictionary<ChunkKey, string> chunkErrors, out string error);
         bool Apply(CircuitElementState state, int hostStep, out string error);
+        bool ApplyOperationEvent(CircuitEvent circuitEvent, out string error);
         void RefreshClientDisplayElements();
         bool AlignClientCircuitStep(int hostStep, bool restoreAuthoritativeStates,
             out string error);
@@ -126,6 +130,7 @@ namespace SuMultiplayer.Modules
         bool IsElectricTopologyChange(int oldValue, int newValue, int x, int y, int z);
         bool IsElectricTopologyCell(ChunkKey key, CellEdit edit);
         void ClearAuthoritativeStatesForChunk(ChunkKey key);
+        void MarkClientCircuitTopologyDirty(ChunkKey key);
         void ResetClientCircuitState();
         int CopyLoadedChunks(List<ChunkKey> target);
         string DescribeDiagnostics();

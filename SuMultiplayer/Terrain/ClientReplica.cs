@@ -22,6 +22,10 @@ namespace SuMultiplayer.Terrain
         private static int s_clientSimulationEnabled;
         private static int s_clientHostStep;
         private static int s_clientAccelerated;
+        private static int s_clientStepBarrier = int.MaxValue;
+        private static Func<int, bool> s_clientStepGate;
+        private static Action<int> s_clientStepCompleted;
+        private static Func<int, bool> s_hostStepBoundary;
 
         public static bool IsPaused => Volatile.Read(ref s_paused) != 0;
 
@@ -30,8 +34,40 @@ namespace SuMultiplayer.Terrain
 
         public static int ClientHostStep => Volatile.Read(ref s_clientHostStep);
 
+        public static int ClientSimulationTargetStep => Math.Min(ClientHostStep,
+            Volatile.Read(ref s_clientStepBarrier));
+
         public static bool ClientAccelerated =>
             Volatile.Read(ref s_clientAccelerated) != 0;
+
+        public static void SetClientStepGate(Func<int, bool> gate) =>
+            Volatile.Write(ref s_clientStepGate, gate);
+
+        public static bool BeforeClientCircuitStep(int currentStep)
+        {
+            Func<int, bool> gate = Volatile.Read(ref s_clientStepGate);
+            return gate == null || gate(currentStep);
+        }
+
+        public static void SetClientStepCompleted(Action<int> callback) =>
+            Volatile.Write(ref s_clientStepCompleted, callback);
+
+        public static void ClientCircuitStepCompleted(int step)
+        {
+            Volatile.Read(ref s_clientStepCompleted)?.Invoke(step);
+        }
+
+        public static void SetHostStepBoundary(Func<int, bool> callback) =>
+            Volatile.Write(ref s_hostStepBoundary, callback);
+
+        public static bool HostStepBoundaryEnabled =>
+            Volatile.Read(ref s_hostStepBoundary) != null;
+
+        public static bool BeforeHostCircuitStep(int nextStep)
+        {
+            Func<int, bool> callback = Volatile.Read(ref s_hostStepBoundary);
+            return callback == null || callback(nextStep);
+        }
 
         public static void Set(bool paused) =>
             Volatile.Write(ref s_paused, paused ? 1 : 0);
@@ -45,10 +81,17 @@ namespace SuMultiplayer.Terrain
             Volatile.Write(ref s_clientSimulationEnabled, enabled ? 1 : 0);
         }
 
+        public static void SetClientStepBarrier(int step) =>
+            Volatile.Write(ref s_clientStepBarrier, step);
+
+        public static void ClearClientStepBarrier() =>
+            Volatile.Write(ref s_clientStepBarrier, int.MaxValue);
+
         public static void ClearClientClock()
         {
             Volatile.Write(ref s_clientSimulationEnabled, 0);
             Volatile.Write(ref s_clientHostStep, 0);
+            Volatile.Write(ref s_clientStepBarrier, int.MaxValue);
             Volatile.Write(ref s_clientAccelerated, 0);
             Volatile.Write(ref s_paused, 0);
         }

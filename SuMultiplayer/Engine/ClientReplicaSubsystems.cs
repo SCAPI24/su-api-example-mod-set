@@ -1703,7 +1703,7 @@ namespace SuMultiplayer.Engine
                     CircuitSimulationPauseSignal.IsPaused ||
                     CircuitSimulationPauseSignal.ClientAccelerated)
                     return;
-                int targetStep = CircuitSimulationPauseSignal.ClientHostStep;
+                int targetStep = CircuitSimulationPauseSignal.ClientSimulationTargetStep;
                 if (CircuitStep >= targetStep) return;
                 if (!(SubsystemTerrain is SuSubsystemTerrain terrain))
                     throw new InvalidOperationException(
@@ -1722,6 +1722,7 @@ namespace SuMultiplayer.Engine
                 return;
             }
             if (CircuitSimulationPauseSignal.IsPaused) return;
+            if (!CircuitSimulationPauseSignal.BeforeHostCircuitStep(CircuitStep + 1)) return;
             if (!ReplicaGates.Allow(SubsystemTerrain, ReplicaMutationSource.Electricity)) return;
             base.Update(dt);
         }
@@ -1735,41 +1736,107 @@ namespace SuMultiplayer.Engine
                 throw new InvalidOperationException(
                     "Client circuit input authority requires the electricity element table.");
             var suppressed = new List<ElectricElement>();
-            foreach (ElectricElement element in new List<ElectricElement>(elements.Keys))
+            var elementSnapshot = new List<ElectricElement>();
+            try
+            {
+                while (CircuitStep < m_clientCircuitTargetStep)
+                {
+                    // Boundary callbacks may inspect or reconcile topology, so they must
+                    // always run with the complete element table.
+                    RestoreClientAutomaticInputs(this, elements, suppressed);
+                    if (!CircuitSimulationPauseSignal.BeforeClientCircuitStep(CircuitStep))
+                        return;
+                    int stepLimit = CircuitSimulationPauseSignal.ClientSimulationTargetStep;
+                    if (CircuitStep >= stepLimit) return;
+                    int stepBudget = Math.Min(m_clientCircuitTargetStep - CircuitStep,
+                        stepLimit - CircuitStep);
+                    int stepBeforeUpdate = CircuitStep;
+                    SuppressClientAutomaticInputs(elements, elementSnapshot, suppressed);
+                    try
+                    {
+                        base.Update(stepBudget >= 10 ? 0.1f : 0.01f);
+                    }
+                    finally
+                    {
+                        // Step-boundary callbacks capture topology and apply authority state.
+                        // Restore the table before those callbacks, then suppress again only
+                        // around the next native solver update.
+                        RestoreClientAutomaticInputs(this, elements, suppressed);
+                    }
+                    int stepsAdvanced = CircuitStep - stepBeforeUpdate;
+                    if (stepsAdvanced == 0) return;
+                    if (stepsAdvanced > stepBudget)
+                        throw new InvalidOperationException(
+                            "Client circuit solver advanced across a gated host circuit step.");
+                    CircuitSimulationPauseSignal.ClientCircuitStepCompleted(CircuitStep);
+                    if (!CircuitSimulationPauseSignal.ClientSimulationEnabled ||
+                        CircuitSimulationPauseSignal.IsPaused ||
+                        CircuitSimulationPauseSignal.ClientAccelerated)
+                        return;
+                }
+            }
+            finally
+            {
+                RestoreClientAutomaticInputs(this, elements, suppressed);
+            }
+        }
+
+        private static void SuppressClientAutomaticInputs(
+            Dictionary<ElectricElement, bool> elements,
+            List<ElectricElement> elementSnapshot,
+            List<ElectricElement> suppressed)
+        {
+            elementSnapshot.Clear();
+            elementSnapshot.AddRange(elements.Keys);
+            foreach (ElectricElement element in elementSnapshot)
             {
                 if (!IsClientAutomaticInput(element)) continue;
                 elements.Remove(element);
                 suppressed.Add(element);
             }
-            try
+        }
+
+        private static void RestoreClientAutomaticInputs(
+            SubsystemElectricity electricity,
+            Dictionary<ElectricElement, bool> elements,
+            List<ElectricElement> suppressed)
+        {
+            foreach (ElectricElement element in suppressed)
             {
-                while (CircuitStep < m_clientCircuitTargetStep)
+                if (element.CellFaces.Count == 0) continue;
+                bool stillRegistered = true;
+                foreach (CellFace cellFace in element.CellFaces)
                 {
-                    int stepBudget = m_clientCircuitTargetStep - CircuitStep;
-                    int stepBeforeUpdate = CircuitStep;
-                    base.Update(stepBudget >= 10 ? 0.1f : 0.01f);
-                    int stepsAdvanced = CircuitStep - stepBeforeUpdate;
-                    if (stepsAdvanced == 0) return;
-                    if (stepsAdvanced > stepBudget)
-                        throw new InvalidOperationException(
-                            "Client circuit solver advanced beyond the latest host circuit step.");
+                    if (ReferenceEquals(electricity.GetElectricElement(cellFace.X,
+                            cellFace.Y, cellFace.Z, cellFace.Face), element)) continue;
+                    stillRegistered = false;
+                    break;
                 }
+                if (stillRegistered) elements[element] = true;
             }
-            finally
-            {
-                foreach (ElectricElement element in suppressed)
-                    elements[element] = true;
-            }
+            suppressed.Clear();
         }
 
         private static bool IsClientAutomaticInput(ElectricElement element) =>
+            element is SwitchElectricElement ||
+            element is SwitchFurnitureElectricElement ||
             element is PressurePlateElectricElement ||
             element is MotionDetectorElectricElement ||
             element is PhotodiodeElectricElement ||
             element is TargetElectricElement ||
             element is DispenserElectricElement ||
             element is SignElectricElement ||
-            element is FurnitureElectricElement ||
+            element is DoorElectricElement ||
+            element is FenceGateElectricElement ||
+            element is TrapDoorElectricElement ||
+            element is GunpowderKegElectricElement ||
+            element is SoundGeneratorElectricElement ||
+            element is ChristmasTreeElectricElement ||
+            element is LightBulbElectricElement ||
+            element is HygrometerElectricElement ||
+            element is ThermometerElectricElement ||
+            element is FurnitureElectricElement &&
+                !(element is ButtonFurnitureElectricElement) ||
             element is PistonElectricElement;
     }
 

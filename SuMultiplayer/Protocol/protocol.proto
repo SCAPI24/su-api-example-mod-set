@@ -275,6 +275,7 @@ enum MessageType {
   CIRCUIT_TICKET_REQUEST = 143;
   CIRCUIT_TICKET_RESPONSE = 144;
   CIRCUIT_SCOPE_SNAPSHOT = 147;
+  CIRCUIT_HASH_CHECKPOINT = 148;
 
   // Multiplayer chat (chat.proto), append-only: 82..84 are new ids, no
   // existing id is renumbered.

@@ -348,8 +348,7 @@ namespace SuMultiplayer.Engine
             m_authoritativeValues[key] = authoritativeCellValue;
             if (m_pending.TryGetValue(key, out List<PendingOperation> operations))
             {
-                operations.Clear();
-                ApplyOrForget(key, operations, authoritativeCellValue);
+                ApplyPresentation(key, authoritativeCellValue, operations);
             }
             else
             {

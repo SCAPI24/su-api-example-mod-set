@@ -25,113 +25,127 @@ namespace SuMultiplayer.Protocol.Circuit {
       byte[] descriptorData = global::System.Convert.FromBase64String(
           string.Concat(
             "Cg1jaXJjdWl0LnByb3RvEgxzdW1wLmNpcmN1aXQaGWdvb2dsZS9wcm90b2J1",
-            "Zi9hbnkucHJvdG8itgIKDENpcmN1aXRDbG9jaxINCgVlcG9jaBgBIAEoDRIZ",
-            "ChFob3N0X2NpcmN1aXRfc3RlcBgCIAEoBRIbChNsYXN0X2V2ZW50X3NlcXVl",
-            "bmNlGAMgASgFEhgKEHRlcnJhaW5fc2VxdWVuY2UYBCABKAMSHwoXdG90YWxf",
-            "ZWxhcHNlZF9nYW1lX3RpbWUYBSABKAESGgoSdGltZV9vZl9kYXlfb2Zmc2V0",
-            "GAYgASgBEhsKE3RpbWVsaW5lX2dlbmVyYXRpb24YByABKAUSDgoGcGF1c2Vk",
-            "GAggASgIEhMKC3JhbmRvbV9zZWVkGAkgASgNEhMKC2FjY2VsZXJhdGVkGAog",
-            "ASgIEgsKA2V4dBhkIAEoDBIkCgZjdXN0b20YZSABKAsyFC5nb29nbGUucHJv",
-            "dG9idWYuQW55Iu4CChNDaXJjdWl0RXZlbnRSZXF1ZXN0EhIKCnJlcXVlc3Rf",
-            "aWQYASABKAQSGwoTY2xpZW50X2NpcmN1aXRfc3RlcBgCIAEoBRIJCgF4GAMg",
-            "ASgFEgkKAXkYBCABKAUSCQoBehgFIAEoBRIVCg1tb3VudGluZ19mYWNlGAYg",
-            "ASgNEjEKCW9wZXJhdGlvbhgHIAEoDjIeLnN1bXAuY2lyY3VpdC5DaXJjdWl0",
-            "T3BlcmF0aW9uEg0KBXZhbHVlGAggASgNEg0KBXJheV94GAkgASgCEg0KBXJh",
-            "eV95GAogASgCEg0KBXJheV96GAsgASgCEhMKC2RpcmVjdGlvbl94GAwgASgC",
-            "EhMKC2RpcmVjdGlvbl95GA0gASgCEhMKC2RpcmVjdGlvbl96GA4gASgCEg0K",
-            "BXJlYWNoGA8gASgCEgsKA2V4dBhkIAEoDBIkCgZjdXN0b20YZSABKAsyFC5n",
-            "b29nbGUucHJvdG9idWYuQW55Iv4BCgxDaXJjdWl0RXZlbnQSEAoIc2VxdWVu",
-            "Y2UYASABKA0SGQoRaG9zdF9jaXJjdWl0X3N0ZXAYAiABKAUSCQoBeBgDIAEo",
-            "BRIJCgF5GAQgASgFEgkKAXoYBSABKAUSFQoNbW91bnRpbmdfZmFjZRgGIAEo",
-            "DRIxCglvcGVyYXRpb24YByABKA4yHi5zdW1wLmNpcmN1aXQuQ2lyY3VpdE9w",
-            "ZXJhdGlvbhINCgV2YWx1ZRgIIAEoDRIhChlyZXF1aXJlZF90ZXJyYWluX3Nl",
-            "cXVlbmNlGAkgASgDEiQKHHJlcXVpcmVkX3RvcG9sb2d5X2dlbmVyYXRpb24Y",
-            "CiABKAMitAEKEUNpcmN1aXRFdmVudEJhdGNoEg0KBWVwb2NoGAEgASgNEhkK",
-            "EWhvc3RfY2lyY3VpdF9zdGVwGAIgASgFEhYKDmZpcnN0X3NlcXVlbmNlGAMg",
-            "ASgNEioKBmV2ZW50cxgEIAMoCzIaLnN1bXAuY2lyY3VpdC5DaXJjdWl0RXZl",
-            "bnQSCwoDZXh0GGQgASgMEiQKBmN1c3RvbRhlIAEoCzIULmdvb2dsZS5wcm90",
-            "b2J1Zi5BbnkiSQoXQ2lyY3VpdFNjaGVkdWxlZFZvbHRhZ2USFwoPcmVtYWlu",
-            "aW5nX3N0ZXBzGAEgASgNEhUKDXZvbHRhZ2VfbGV2ZWwYAiABKBEiqwMKE0Np",
-            "cmN1aXRFbGVtZW50U3RhdGUSCQoBeBgBIAEoBRIJCgF5GAIgASgFEgkKAXoY",
-            "AyABKAUSFQoNbW91bnRpbmdfZmFjZRgEIAEoDRIUCgxlbGVtZW50X3R5cGUY",
-            "BSABKA0SFQoNdm9sdGFnZV9sZXZlbBgGIAEoERINCgVmbGFncxgHIAEoDRIf",
-            "ChdhdXhpbGlhcnlfdm9sdGFnZV9sZXZlbBgIIAEoERIVCg1ydW50aW1lX3N0",
-            "YXRlGAkgASgSEhcKD2F1eGlsaWFyeV9zdGF0ZRgKIAEoEhIdChVuZXh0X3Np",
-            "bXVsYXRpb25fc3RlcHMYCyABKA0SQQoSc2NoZWR1bGVkX3ZvbHRhZ2VzGAwg",
-            "AygLMiUuc3VtcC5jaXJjdWl0LkNpcmN1aXRTY2hlZHVsZWRWb2x0YWdlEh0K",
-            "FW91dHB1dF92b2x0YWdlX2xldmVscxgNIAMoERIUCgxidXR0b25fcGhhc2UY",
-            "DiABKA0SHgoWYnV0dG9uX3JlbWFpbmluZ19zdGVwcxgPIAEoDRIYChByZWxh",
-            "dGVkX3NlcXVlbmNlGBAgASgNIskBChZDaXJjdWl0U25hcHNob3RSZXF1ZXN0",
-            "Eg0KBWVwb2NoGAEgASgNEhIKCnJlcXVlc3RfaWQYAiABKAQSLQoGY2h1bmtz",
-            "GAMgAygLMh0uc3VtcC5jaXJjdWl0LkNpcmN1aXRDaHVua0tleRIVCg1yZXBs",
-            "YWNlX3Njb3BlGAQgASgIEhMKC3Njb3BlX3F1ZXJ5GAUgASgIEgsKA2V4dBhk",
-            "IAEoDBIkCgZjdXN0b20YZSABKAsyFC5nb29nbGUucHJvdG9idWYuQW55IpcD",
-            "ChNDaXJjdWl0U25hcHNob3RQYXJ0Eg0KBWVwb2NoGAEgASgNEhMKC3NuYXBz",
-            "aG90X2lkGAIgASgEEhkKEWhvc3RfY2lyY3VpdF9zdGVwGAMgASgFEg8KB2No",
-            "dW5rX3gYBCABKAUSDwoHY2h1bmtfehgFIAEoBRISCgpwYXJ0X2luZGV4GAYg",
-            "ASgNEhIKCnBhcnRfY291bnQYByABKA0SDAoEZnVsbBgIIAEoCBIzCghlbGVt",
-            "ZW50cxgJIAMoCzIhLnN1bXAuY2lyY3VpdC5DaXJjdWl0RWxlbWVudFN0YXRl",
-            "EiEKGXJlcXVpcmVkX3RlcnJhaW5fc2VxdWVuY2UYCiABKAMSGwoTbGFzdF9l",
-            "dmVudF9zZXF1ZW5jZRgLIAEoBRIbChN0aW1lbGluZV9nZW5lcmF0aW9uGAwg",
-            "ASgFEiQKHHJlcXVpcmVkX3RvcG9sb2d5X2dlbmVyYXRpb24YDSABKAMSCwoD",
-            "ZXh0GGQgASgMEiQKBmN1c3RvbRhlIAEoCzIULmdvb2dsZS5wcm90b2J1Zi5B",
-            "bnkiXwoQQ2lyY3VpdENodW5rSGFzaBIPCgdjaHVua194GAEgASgFEg8KB2No",
-            "dW5rX3oYAiABKAUSDAoEaGFzaBgDIAEoDRIbChN0b3BvbG9neV9nZW5lcmF0",
-            "aW9uGAQgASgDIvQBChFDaXJjdWl0SGFzaFJlcG9ydBINCgVlcG9jaBgBIAEo",
-            "DRIZChFob3N0X2NpcmN1aXRfc3RlcBgCIAEoBRIYChB0ZXJyYWluX3NlcXVl",
-            "bmNlGAMgASgDEi4KBmNodW5rcxgEIAMoCzIeLnN1bXAuY2lyY3VpdC5DaXJj",
-            "dWl0Q2h1bmtIYXNoEhsKE2xhc3RfZXZlbnRfc2VxdWVuY2UYBSABKAUSGwoT",
-            "dGltZWxpbmVfZ2VuZXJhdGlvbhgGIAEoBRILCgNleHQYZCABKAwSJAoGY3Vz",
-            "dG9tGGUgASgLMhQuZ29vZ2xlLnByb3RvYnVmLkFueSKbAQoUQ2lyY3VpdFJl",
+            "Zi9hbnkucHJvdG8iwAIKDENpcmN1aXRDbG9jaxINCgVlcG9jaBgBIAEoDRIZ",
+            "ChFob3N0X2NpcmN1aXRfc3RlcBgCIAEoBRIlCh1sYXN0X2NvbW1pdHRlZF9l",
+            "dmVudF9zZXF1ZW5jZRgDIAEoBRIYChB0ZXJyYWluX3NlcXVlbmNlGAQgASgD",
+            "Eh8KF3RvdGFsX2VsYXBzZWRfZ2FtZV90aW1lGAUgASgBEhoKEnRpbWVfb2Zf",
+            "ZGF5X29mZnNldBgGIAEoARIbChN0aW1lbGluZV9nZW5lcmF0aW9uGAcgASgF",
+            "Eg4KBnBhdXNlZBgIIAEoCBITCgtyYW5kb21fc2VlZBgJIAEoDRITCgthY2Nl",
+            "bGVyYXRlZBgKIAEoCBILCgNleHQYZCABKAwSJAoGY3VzdG9tGGUgASgLMhQu",
+            "Z29vZ2xlLnByb3RvYnVmLkFueSKFAwoTQ2lyY3VpdEV2ZW50UmVxdWVzdBIS",
+            "CgpyZXF1ZXN0X2lkGAEgASgEEhsKE2NsaWVudF9jaXJjdWl0X3N0ZXAYAiAB",
+            "KAUSCQoBeBgDIAEoERIJCgF5GAQgASgFEgkKAXoYBSABKBESFQoNbW91bnRp",
+            "bmdfZmFjZRgGIAEoDRIxCglvcGVyYXRpb24YByABKA4yHi5zdW1wLmNpcmN1",
+            "aXQuQ2lyY3VpdE9wZXJhdGlvbhINCgV2YWx1ZRgIIAEoDRINCgVyYXlfeBgJ",
+            "IAEoAhINCgVyYXlfeRgKIAEoAhINCgVyYXlfehgLIAEoAhITCgtkaXJlY3Rp",
+            "b25feBgMIAEoAhITCgtkaXJlY3Rpb25feRgNIAEoAhITCgtkaXJlY3Rpb25f",
+            "ehgOIAEoAhINCgVyZWFjaBgPIAEoAhIVCg1yb3VuZF90cmlwX21zGBAgASgF",
+            "EgsKA2V4dBhkIAEoDBIkCgZjdXN0b20YZSABKAsyFC5nb29nbGUucHJvdG9i",
+            "dWYuQW55IpsDCgxDaXJjdWl0RXZlbnQSGgoSb3BlcmF0aW9uX3NlcXVlbmNl",
+            "GAEgASgNEhkKEWhvc3RfY2lyY3VpdF9zdGVwGAIgASgFEgkKAXgYAyABKBES",
+            "CQoBeRgEIAEoBRIJCgF6GAUgASgREhUKDW1vdW50aW5nX2ZhY2UYBiABKA0S",
+            "MQoJb3BlcmF0aW9uGAcgASgOMh4uc3VtcC5jaXJjdWl0LkNpcmN1aXRPcGVy",
+            "YXRpb24SDQoFdmFsdWUYCCABKA0SIQoZcmVxdWlyZWRfdGVycmFpbl9zZXF1",
+            "ZW5jZRgJIAEoAxIkChxyZXF1aXJlZF90b3BvbG9neV9nZW5lcmF0aW9uGAog",
+            "ASgDEhgKEG9yaWdpbl9jbGllbnRfaWQYCyABKA0SEgoKcmVxdWVzdF9pZBgM",
+            "IAEoBBIbChN0aW1lbGluZV9nZW5lcmF0aW9uGA0gASgFEhEKCWNvbW1pdHRl",
+            "ZBgOIAEoCBIRCgljYW5jZWxsZWQYDyABKAgSIAoYY29tbWl0dGVkX2V2ZW50",
+            "X3NlcXVlbmNlGBAgASgNIr4BChFDaXJjdWl0RXZlbnRCYXRjaBINCgVlcG9j",
+            "aBgBIAEoDRIZChFob3N0X2NpcmN1aXRfc3RlcBgCIAEoBRIgChhmaXJzdF9v",
+            "cGVyYXRpb25fc2VxdWVuY2UYAyABKA0SKgoGZXZlbnRzGAQgAygLMhouc3Vt",
+            "cC5jaXJjdWl0LkNpcmN1aXRFdmVudBILCgNleHQYZCABKAwSJAoGY3VzdG9t",
+            "GGUgASgLMhQuZ29vZ2xlLnByb3RvYnVmLkFueSJJChdDaXJjdWl0U2NoZWR1",
+            "bGVkVm9sdGFnZRIXCg9yZW1haW5pbmdfc3RlcHMYASABKA0SFQoNdm9sdGFn",
+            "ZV9sZXZlbBgCIAEoESKrAwoTQ2lyY3VpdEVsZW1lbnRTdGF0ZRIJCgF4GAEg",
+            "ASgREgkKAXkYAiABKAUSCQoBehgDIAEoERIVCg1tb3VudGluZ19mYWNlGAQg",
+            "ASgNEhQKDGVsZW1lbnRfdHlwZRgFIAEoDRIVCg12b2x0YWdlX2xldmVsGAYg",
+            "ASgREg0KBWZsYWdzGAcgASgNEh8KF2F1eGlsaWFyeV92b2x0YWdlX2xldmVs",
+            "GAggASgREhUKDXJ1bnRpbWVfc3RhdGUYCSABKBISFwoPYXV4aWxpYXJ5X3N0",
+            "YXRlGAogASgSEh0KFW5leHRfc2ltdWxhdGlvbl9zdGVwcxgLIAEoDRJBChJz",
+            "Y2hlZHVsZWRfdm9sdGFnZXMYDCADKAsyJS5zdW1wLmNpcmN1aXQuQ2lyY3Vp",
+            "dFNjaGVkdWxlZFZvbHRhZ2USHQoVb3V0cHV0X3ZvbHRhZ2VfbGV2ZWxzGA0g",
+            "AygREhQKDGJ1dHRvbl9waGFzZRgOIAEoDRIeChZidXR0b25fcmVtYWluaW5n",
+            "X3N0ZXBzGA8gASgNEhgKEHJlbGF0ZWRfc2VxdWVuY2UYECABKA0i4AEKFkNp",
+            "cmN1aXRTbmFwc2hvdFJlcXVlc3QSDQoFZXBvY2gYASABKA0SEgoKcmVxdWVz",
+            "dF9pZBgCIAEoBBItCgZjaHVua3MYAyADKAsyHS5zdW1wLmNpcmN1aXQuQ2ly",
+            "Y3VpdENodW5rS2V5EhUKDXJlcGxhY2Vfc2NvcGUYBCABKAgSEwoLc2NvcGVf",
+            "cXVlcnkYBSABKAgSFQoNaGFzaF9taXNtYXRjaBgGIAEoCBILCgNleHQYZCAB",
+            "KAwSJAoGY3VzdG9tGGUgASgLMhQuZ29vZ2xlLnByb3RvYnVmLkFueSLJAwoT",
+            "Q2lyY3VpdFNuYXBzaG90UGFydBINCgVlcG9jaBgBIAEoDRITCgtzbmFwc2hv",
+            "dF9pZBgCIAEoBBIZChFob3N0X2NpcmN1aXRfc3RlcBgDIAEoBRIPCgdjaHVu",
+            "a194GAQgASgREg8KB2NodW5rX3oYBSABKBESEgoKcGFydF9pbmRleBgGIAEo",
+            "DRISCgpwYXJ0X2NvdW50GAcgASgNEgwKBGZ1bGwYCCABKAgSMwoIZWxlbWVu",
+            "dHMYCSADKAsyIS5zdW1wLmNpcmN1aXQuQ2lyY3VpdEVsZW1lbnRTdGF0ZRIh",
+            "ChlyZXF1aXJlZF90ZXJyYWluX3NlcXVlbmNlGAogASgDEiUKHWxhc3RfY29t",
+            "bWl0dGVkX2V2ZW50X3NlcXVlbmNlGAsgASgFEhsKE3RpbWVsaW5lX2dlbmVy",
+            "YXRpb24YDCABKAUSJAoccmVxdWlyZWRfdG9wb2xvZ3lfZ2VuZXJhdGlvbhgN",
+            "IAEoAxImCh5jaHVua19jb21taXR0ZWRfZXZlbnRfc2VxdWVuY2UYDiABKA0S",
+            "CwoDZXh0GGQgASgMEiQKBmN1c3RvbRhlIAEoCzIULmdvb2dsZS5wcm90b2J1",
+            "Zi5BbnkioQEKEENpcmN1aXRDaHVua0hhc2gSDwoHY2h1bmtfeBgBIAEoERIP",
+            "CgdjaHVua196GAIgASgREgwKBGhhc2gYAyABKA0SGwoTdG9wb2xvZ3lfZ2Vu",
+            "ZXJhdGlvbhgEIAEoAxIYChB0ZXJyYWluX3NlcXVlbmNlGAUgASgDEiYKHmNo",
+            "dW5rX2NvbW1pdHRlZF9ldmVudF9zZXF1ZW5jZRgGIAEoDSL+AQoRQ2lyY3Vp",
+            "dEhhc2hSZXBvcnQSDQoFZXBvY2gYASABKA0SGQoRaG9zdF9jaXJjdWl0X3N0",
+            "ZXAYAiABKAUSGAoQdGVycmFpbl9zZXF1ZW5jZRgDIAEoAxIuCgZjaHVua3MY",
+            "BCADKAsyHi5zdW1wLmNpcmN1aXQuQ2lyY3VpdENodW5rSGFzaBIlCh1sYXN0",
+            "X2NvbW1pdHRlZF9ldmVudF9zZXF1ZW5jZRgFIAEoBRIbChN0aW1lbGluZV9n",
+            "ZW5lcmF0aW9uGAYgASgFEgsKA2V4dBhkIAEoDBIkCgZjdXN0b20YZSABKAsy",
+            "FC5nb29nbGUucHJvdG9idWYuQW55Io4BChVDaXJjdWl0SGFzaENoZWNrcG9p",
+            "bnQSDQoFZXBvY2gYASABKA0SGQoRaG9zdF9jaXJjdWl0X3N0ZXAYAiABKAUS",
+            "GwoTdGltZWxpbmVfZ2VuZXJhdGlvbhgDIAEoBRIuCgZjaHVua3MYBCADKAsy",
+            "Hi5zdW1wLmNpcmN1aXQuQ2lyY3VpdENodW5rSGFzaCKbAQoUQ2lyY3VpdFJl",
             "cGFpckJhcnJpZXISDQoFZXBvY2gYASABKA0SEwoLc25hcHNob3RfaWQYAiAB",
             "KAQSGQoRaG9zdF9jaXJjdWl0X3N0ZXAYAyABKAUSDwoHY2h1bmtfeBgEIAEo",
-            "BRIPCgdjaHVua196GAUgASgFEhIKCnBhcnRfY291bnQYBiABKA0SDgoGcmVh",
-            "c29uGAcgASgJIuEBChRDaXJjdWl0UmVwYWlyQXBwbGllZBINCgVlcG9jaBgB",
-            "IAEoDRITCgtzbmFwc2hvdF9pZBgCIAEoBBIPCgdjaHVua194GAMgASgFEg8K",
-            "B2NodW5rX3oYBCABKAUSEgoKc3RhdGVfaGFzaBgFIAEoDRIYChB0ZXJyYWlu",
-            "X3NlcXVlbmNlGAYgASgDEhsKE2xhc3RfZXZlbnRfc2VxdWVuY2UYByABKAUS",
-            "GwoTdGltZWxpbmVfZ2VuZXJhdGlvbhgIIAEoBRIbChN0b3BvbG9neV9nZW5l",
-            "cmF0aW9uGAkgASgDIr0CChZDaXJjdWl0T3BlcmF0aW9uUmVzdWx0EhIKCnJl",
-            "cXVlc3RfaWQYASABKAQSEAoIYWNjZXB0ZWQYAiABKAgSDgoGcmVhc29uGAMg",
-            "ASgJEhAKCHNlcXVlbmNlGAQgASgNEhkKEWhvc3RfY2lyY3VpdF9zdGVwGAUg",
-            "ASgFEgkKAXgYBiABKAUSCQoBeRgHIAEoBRIJCgF6GAggASgFEhIKCmNlbGxf",
-            "dmFsdWUYCSABKA0SDQoFZXBvY2gYCiABKA0SIQoZcmVxdWlyZWRfdGVycmFp",
-            "bl9zZXF1ZW5jZRgLIAEoAxIbChN0aW1lbGluZV9nZW5lcmF0aW9uGAwgASgF",
-            "EhYKDmhhc19jZWxsX3ZhbHVlGA0gASgIEiQKHHJlcXVpcmVkX3RvcG9sb2d5",
-            "X2dlbmVyYXRpb24YDiABKAMiJwoPQ2lyY3VpdENodW5rS2V5EgkKAXgYASAB",
-            "KAUSCQoBehgCIAEoBSLDAQoUQ2lyY3VpdFNjb3BlU25hcHNob3QSDQoFZXBv",
-            "Y2gYASABKA0SEgoKcmVxdWVzdF9pZBgCIAEoBBItCgZjaHVua3MYAyADKAsy",
-            "HS5zdW1wLmNpcmN1aXQuQ2lyY3VpdENodW5rS2V5EjYKCnRvcG9sb2dpZXMY",
-            "BCADKAsyIi5zdW1wLmNpcmN1aXQuQ2lyY3VpdENodW5rVG9wb2xvZ3kSIQoZ",
-            "cmVxdWlyZWRfdGVycmFpbl9zZXF1ZW5jZRgFIAEoAyKFAQoUQ2lyY3VpdENo",
-            "dW5rVG9wb2xvZ3kSKgoDa2V5GAEgASgLMh0uc3VtcC5jaXJjdWl0LkNpcmN1",
-            "aXRDaHVua0tleRISCgpnZW5lcmF0aW9uGAIgASgDEhgKEHRlcnJhaW5fc2Vx",
-            "dWVuY2UYAyABKAMSEwoLaGFzX2NpcmN1aXQYBCABKAgiNwoOQ2lyY3VpdFBh",
-            "eWxvYWQSFAoMbWVzc2FnZV90eXBlGAEgASgNEg8KB3BheWxvYWQYAiABKAwi",
-            "bAoQQ2lyY3VpdFN5bmNCYXRjaBINCgVlcG9jaBgBIAEoDRIZChFob3N0X2Np",
-            "cmN1aXRfc3RlcBgCIAEoBRIuCghwYXlsb2FkcxgDIAMoCzIcLnN1bXAuY2ly",
-            "Y3VpdC5DaXJjdWl0UGF5bG9hZCq9AQoQQ2lyY3VpdE9wZXJhdGlvbhIhCh1D",
-            "SVJDVUlUX09QRVJBVElPTl9VTlNQRUNJRklFRBAAEiIKHkNJUkNVSVRfT1BF",
-            "UkFUSU9OX0JVVFRPTl9QUkVTUxABEhwKGENJUkNVSVRfT1BFUkFUSU9OX1NX",
-            "SVRDSBACEhwKGENJUkNVSVRfT1BFUkFUSU9OX1JPVEFURRADEiYKIkNJUkNV",
-            "SVRfT1BFUkFUSU9OX0ZVUk5JVFVSRV9TV0lUQ0gQBEIjSAGqAh5TdU11bHRp",
-            "cGxheWVyLlByb3RvY29sLkNpcmN1aXRiBnByb3RvMw=="));
+            "ERIPCgdjaHVua196GAUgASgREhIKCnBhcnRfY291bnQYBiABKA0SDgoGcmVh",
+            "c29uGAcgASgJIrACChRDaXJjdWl0UmVwYWlyQXBwbGllZBINCgVlcG9jaBgB",
+            "IAEoDRITCgtzbmFwc2hvdF9pZBgCIAEoBBIPCgdjaHVua194GAMgASgREg8K",
+            "B2NodW5rX3oYBCABKBESEgoKc3RhdGVfaGFzaBgFIAEoDRIYChB0ZXJyYWlu",
+            "X3NlcXVlbmNlGAYgASgDEiUKHWxhc3RfY29tbWl0dGVkX2V2ZW50X3NlcXVl",
+            "bmNlGAcgASgFEhsKE3RpbWVsaW5lX2dlbmVyYXRpb24YCCABKAUSGwoTdG9w",
+            "b2xvZ3lfZ2VuZXJhdGlvbhgJIAEoAxIbChNjbGllbnRfY2lyY3VpdF9zdGVw",
+            "GAogASgFEiYKHmNodW5rX2NvbW1pdHRlZF9ldmVudF9zZXF1ZW5jZRgLIAEo",
+            "DSLHAgoWQ2lyY3VpdE9wZXJhdGlvblJlc3VsdBISCgpyZXF1ZXN0X2lkGAEg",
+            "ASgEEhAKCGFjY2VwdGVkGAIgASgIEg4KBnJlYXNvbhgDIAEoCRIaChJvcGVy",
+            "YXRpb25fc2VxdWVuY2UYBCABKA0SGQoRaG9zdF9jaXJjdWl0X3N0ZXAYBSAB",
+            "KAUSCQoBeBgGIAEoERIJCgF5GAcgASgFEgkKAXoYCCABKBESEgoKY2VsbF92",
+            "YWx1ZRgJIAEoDRINCgVlcG9jaBgKIAEoDRIhChlyZXF1aXJlZF90ZXJyYWlu",
+            "X3NlcXVlbmNlGAsgASgDEhsKE3RpbWVsaW5lX2dlbmVyYXRpb24YDCABKAUS",
+            "FgoOaGFzX2NlbGxfdmFsdWUYDSABKAgSJAoccmVxdWlyZWRfdG9wb2xvZ3lf",
+            "Z2VuZXJhdGlvbhgOIAEoAyInCg9DaXJjdWl0Q2h1bmtLZXkSCQoBeBgBIAEo",
+            "ERIJCgF6GAIgASgRIsMBChRDaXJjdWl0U2NvcGVTbmFwc2hvdBINCgVlcG9j",
+            "aBgBIAEoDRISCgpyZXF1ZXN0X2lkGAIgASgEEi0KBmNodW5rcxgDIAMoCzId",
+            "LnN1bXAuY2lyY3VpdC5DaXJjdWl0Q2h1bmtLZXkSNgoKdG9wb2xvZ2llcxgE",
+            "IAMoCzIiLnN1bXAuY2lyY3VpdC5DaXJjdWl0Q2h1bmtUb3BvbG9neRIhChly",
+            "ZXF1aXJlZF90ZXJyYWluX3NlcXVlbmNlGAUgASgDIoUBChRDaXJjdWl0Q2h1",
+            "bmtUb3BvbG9neRIqCgNrZXkYASABKAsyHS5zdW1wLmNpcmN1aXQuQ2lyY3Vp",
+            "dENodW5rS2V5EhIKCmdlbmVyYXRpb24YAiABKAMSGAoQdGVycmFpbl9zZXF1",
+            "ZW5jZRgDIAEoAxITCgtoYXNfY2lyY3VpdBgEIAEoCCI3Cg5DaXJjdWl0UGF5",
+            "bG9hZBIUCgxtZXNzYWdlX3R5cGUYASABKA0SDwoHcGF5bG9hZBgCIAEoDCJs",
+            "ChBDaXJjdWl0U3luY0JhdGNoEg0KBWVwb2NoGAEgASgNEhkKEWhvc3RfY2ly",
+            "Y3VpdF9zdGVwGAIgASgFEi4KCHBheWxvYWRzGAMgAygLMhwuc3VtcC5jaXJj",
+            "dWl0LkNpcmN1aXRQYXlsb2FkKr0BChBDaXJjdWl0T3BlcmF0aW9uEiEKHUNJ",
+            "UkNVSVRfT1BFUkFUSU9OX1VOU1BFQ0lGSUVEEAASIgoeQ0lSQ1VJVF9PUEVS",
+            "QVRJT05fQlVUVE9OX1BSRVNTEAESHAoYQ0lSQ1VJVF9PUEVSQVRJT05fU1dJ",
+            "VENIEAISHAoYQ0lSQ1VJVF9PUEVSQVRJT05fUk9UQVRFEAMSJgoiQ0lSQ1VJ",
+            "VF9PUEVSQVRJT05fRlVSTklUVVJFX1NXSVRDSBAEQiNIAaoCHlN1TXVsdGlw",
+            "bGF5ZXIuUHJvdG9jb2wuQ2lyY3VpdGIGcHJvdG8z"));
       descriptor = pbr::FileDescriptor.FromGeneratedCode(descriptorData,
           new pbr::FileDescriptor[] { global::Google.Protobuf.WellKnownTypes.AnyReflection.Descriptor, },
           new pbr::GeneratedClrTypeInfo(new[] {typeof(global::SuMultiplayer.Protocol.Circuit.CircuitOperation), }, null, new pbr::GeneratedClrTypeInfo[] {
-            new pbr::GeneratedClrTypeInfo(typeof(global::SuMultiplayer.Protocol.Circuit.CircuitClock), global::SuMultiplayer.Protocol.Circuit.CircuitClock.Parser, new[]{ "Epoch", "HostCircuitStep", "LastEventSequence", "TerrainSequence", "TotalElapsedGameTime", "TimeOfDayOffset", "TimelineGeneration", "Paused", "RandomSeed", "Accelerated", "Ext", "Custom" }, null, null, null, null),
-            new pbr::GeneratedClrTypeInfo(typeof(global::SuMultiplayer.Protocol.Circuit.CircuitEventRequest), global::SuMultiplayer.Protocol.Circuit.CircuitEventRequest.Parser, new[]{ "RequestId", "ClientCircuitStep", "X", "Y", "Z", "MountingFace", "Operation", "Value", "RayX", "RayY", "RayZ", "DirectionX", "DirectionY", "DirectionZ", "Reach", "Ext", "Custom" }, null, null, null, null),
-            new pbr::GeneratedClrTypeInfo(typeof(global::SuMultiplayer.Protocol.Circuit.CircuitEvent), global::SuMultiplayer.Protocol.Circuit.CircuitEvent.Parser, new[]{ "Sequence", "HostCircuitStep", "X", "Y", "Z", "MountingFace", "Operation", "Value", "RequiredTerrainSequence", "RequiredTopologyGeneration" }, null, null, null, null),
-            new pbr::GeneratedClrTypeInfo(typeof(global::SuMultiplayer.Protocol.Circuit.CircuitEventBatch), global::SuMultiplayer.Protocol.Circuit.CircuitEventBatch.Parser, new[]{ "Epoch", "HostCircuitStep", "FirstSequence", "Events", "Ext", "Custom" }, null, null, null, null),
+            new pbr::GeneratedClrTypeInfo(typeof(global::SuMultiplayer.Protocol.Circuit.CircuitClock), global::SuMultiplayer.Protocol.Circuit.CircuitClock.Parser, new[]{ "Epoch", "HostCircuitStep", "LastCommittedEventSequence", "TerrainSequence", "TotalElapsedGameTime", "TimeOfDayOffset", "TimelineGeneration", "Paused", "RandomSeed", "Accelerated", "Ext", "Custom" }, null, null, null, null),
+            new pbr::GeneratedClrTypeInfo(typeof(global::SuMultiplayer.Protocol.Circuit.CircuitEventRequest), global::SuMultiplayer.Protocol.Circuit.CircuitEventRequest.Parser, new[]{ "RequestId", "ClientCircuitStep", "X", "Y", "Z", "MountingFace", "Operation", "Value", "RayX", "RayY", "RayZ", "DirectionX", "DirectionY", "DirectionZ", "Reach", "RoundTripMs", "Ext", "Custom" }, null, null, null, null),
+            new pbr::GeneratedClrTypeInfo(typeof(global::SuMultiplayer.Protocol.Circuit.CircuitEvent), global::SuMultiplayer.Protocol.Circuit.CircuitEvent.Parser, new[]{ "OperationSequence", "HostCircuitStep", "X", "Y", "Z", "MountingFace", "Operation", "Value", "RequiredTerrainSequence", "RequiredTopologyGeneration", "OriginClientId", "RequestId", "TimelineGeneration", "Committed", "Cancelled", "CommittedEventSequence" }, null, null, null, null),
+            new pbr::GeneratedClrTypeInfo(typeof(global::SuMultiplayer.Protocol.Circuit.CircuitEventBatch), global::SuMultiplayer.Protocol.Circuit.CircuitEventBatch.Parser, new[]{ "Epoch", "HostCircuitStep", "FirstOperationSequence", "Events", "Ext", "Custom" }, null, null, null, null),
             new pbr::GeneratedClrTypeInfo(typeof(global::SuMultiplayer.Protocol.Circuit.CircuitScheduledVoltage), global::SuMultiplayer.Protocol.Circuit.CircuitScheduledVoltage.Parser, new[]{ "RemainingSteps", "VoltageLevel" }, null, null, null, null),
             new pbr::GeneratedClrTypeInfo(typeof(global::SuMultiplayer.Protocol.Circuit.CircuitElementState), global::SuMultiplayer.Protocol.Circuit.CircuitElementState.Parser, new[]{ "X", "Y", "Z", "MountingFace", "ElementType", "VoltageLevel", "Flags", "AuxiliaryVoltageLevel", "RuntimeState", "AuxiliaryState", "NextSimulationSteps", "ScheduledVoltages", "OutputVoltageLevels", "ButtonPhase", "ButtonRemainingSteps", "RelatedSequence" }, null, null, null, null),
-            new pbr::GeneratedClrTypeInfo(typeof(global::SuMultiplayer.Protocol.Circuit.CircuitSnapshotRequest), global::SuMultiplayer.Protocol.Circuit.CircuitSnapshotRequest.Parser, new[]{ "Epoch", "RequestId", "Chunks", "ReplaceScope", "ScopeQuery", "Ext", "Custom" }, null, null, null, null),
-            new pbr::GeneratedClrTypeInfo(typeof(global::SuMultiplayer.Protocol.Circuit.CircuitSnapshotPart), global::SuMultiplayer.Protocol.Circuit.CircuitSnapshotPart.Parser, new[]{ "Epoch", "SnapshotId", "HostCircuitStep", "ChunkX", "ChunkZ", "PartIndex", "PartCount", "Full", "Elements", "RequiredTerrainSequence", "LastEventSequence", "TimelineGeneration", "RequiredTopologyGeneration", "Ext", "Custom" }, null, null, null, null),
-            new pbr::GeneratedClrTypeInfo(typeof(global::SuMultiplayer.Protocol.Circuit.CircuitChunkHash), global::SuMultiplayer.Protocol.Circuit.CircuitChunkHash.Parser, new[]{ "ChunkX", "ChunkZ", "Hash", "TopologyGeneration" }, null, null, null, null),
-            new pbr::GeneratedClrTypeInfo(typeof(global::SuMultiplayer.Protocol.Circuit.CircuitHashReport), global::SuMultiplayer.Protocol.Circuit.CircuitHashReport.Parser, new[]{ "Epoch", "HostCircuitStep", "TerrainSequence", "Chunks", "LastEventSequence", "TimelineGeneration", "Ext", "Custom" }, null, null, null, null),
+            new pbr::GeneratedClrTypeInfo(typeof(global::SuMultiplayer.Protocol.Circuit.CircuitSnapshotRequest), global::SuMultiplayer.Protocol.Circuit.CircuitSnapshotRequest.Parser, new[]{ "Epoch", "RequestId", "Chunks", "ReplaceScope", "ScopeQuery", "HashMismatch", "Ext", "Custom" }, null, null, null, null),
+            new pbr::GeneratedClrTypeInfo(typeof(global::SuMultiplayer.Protocol.Circuit.CircuitSnapshotPart), global::SuMultiplayer.Protocol.Circuit.CircuitSnapshotPart.Parser, new[]{ "Epoch", "SnapshotId", "HostCircuitStep", "ChunkX", "ChunkZ", "PartIndex", "PartCount", "Full", "Elements", "RequiredTerrainSequence", "LastCommittedEventSequence", "TimelineGeneration", "RequiredTopologyGeneration", "ChunkCommittedEventSequence", "Ext", "Custom" }, null, null, null, null),
+            new pbr::GeneratedClrTypeInfo(typeof(global::SuMultiplayer.Protocol.Circuit.CircuitChunkHash), global::SuMultiplayer.Protocol.Circuit.CircuitChunkHash.Parser, new[]{ "ChunkX", "ChunkZ", "Hash", "TopologyGeneration", "TerrainSequence", "ChunkCommittedEventSequence" }, null, null, null, null),
+            new pbr::GeneratedClrTypeInfo(typeof(global::SuMultiplayer.Protocol.Circuit.CircuitHashReport), global::SuMultiplayer.Protocol.Circuit.CircuitHashReport.Parser, new[]{ "Epoch", "HostCircuitStep", "TerrainSequence", "Chunks", "LastCommittedEventSequence", "TimelineGeneration", "Ext", "Custom" }, null, null, null, null),
+            new pbr::GeneratedClrTypeInfo(typeof(global::SuMultiplayer.Protocol.Circuit.CircuitHashCheckpoint), global::SuMultiplayer.Protocol.Circuit.CircuitHashCheckpoint.Parser, new[]{ "Epoch", "HostCircuitStep", "TimelineGeneration", "Chunks" }, null, null, null, null),
             new pbr::GeneratedClrTypeInfo(typeof(global::SuMultiplayer.Protocol.Circuit.CircuitRepairBarrier), global::SuMultiplayer.Protocol.Circuit.CircuitRepairBarrier.Parser, new[]{ "Epoch", "SnapshotId", "HostCircuitStep", "ChunkX", "ChunkZ", "PartCount", "Reason" }, null, null, null, null),
-            new pbr::GeneratedClrTypeInfo(typeof(global::SuMultiplayer.Protocol.Circuit.CircuitRepairApplied), global::SuMultiplayer.Protocol.Circuit.CircuitRepairApplied.Parser, new[]{ "Epoch", "SnapshotId", "ChunkX", "ChunkZ", "StateHash", "TerrainSequence", "LastEventSequence", "TimelineGeneration", "TopologyGeneration" }, null, null, null, null),
-            new pbr::GeneratedClrTypeInfo(typeof(global::SuMultiplayer.Protocol.Circuit.CircuitOperationResult), global::SuMultiplayer.Protocol.Circuit.CircuitOperationResult.Parser, new[]{ "RequestId", "Accepted", "Reason", "Sequence", "HostCircuitStep", "X", "Y", "Z", "CellValue", "Epoch", "RequiredTerrainSequence", "TimelineGeneration", "HasCellValue", "RequiredTopologyGeneration" }, null, null, null, null),
+            new pbr::GeneratedClrTypeInfo(typeof(global::SuMultiplayer.Protocol.Circuit.CircuitRepairApplied), global::SuMultiplayer.Protocol.Circuit.CircuitRepairApplied.Parser, new[]{ "Epoch", "SnapshotId", "ChunkX", "ChunkZ", "StateHash", "TerrainSequence", "LastCommittedEventSequence", "TimelineGeneration", "TopologyGeneration", "ClientCircuitStep", "ChunkCommittedEventSequence" }, null, null, null, null),
+            new pbr::GeneratedClrTypeInfo(typeof(global::SuMultiplayer.Protocol.Circuit.CircuitOperationResult), global::SuMultiplayer.Protocol.Circuit.CircuitOperationResult.Parser, new[]{ "RequestId", "Accepted", "Reason", "OperationSequence", "HostCircuitStep", "X", "Y", "Z", "CellValue", "Epoch", "RequiredTerrainSequence", "TimelineGeneration", "HasCellValue", "RequiredTopologyGeneration" }, null, null, null, null),
             new pbr::GeneratedClrTypeInfo(typeof(global::SuMultiplayer.Protocol.Circuit.CircuitChunkKey), global::SuMultiplayer.Protocol.Circuit.CircuitChunkKey.Parser, new[]{ "X", "Z" }, null, null, null, null),
             new pbr::GeneratedClrTypeInfo(typeof(global::SuMultiplayer.Protocol.Circuit.CircuitScopeSnapshot), global::SuMultiplayer.Protocol.Circuit.CircuitScopeSnapshot.Parser, new[]{ "Epoch", "RequestId", "Chunks", "Topologies", "RequiredTerrainSequence" }, null, null, null, null),
             new pbr::GeneratedClrTypeInfo(typeof(global::SuMultiplayer.Protocol.Circuit.CircuitChunkTopology), global::SuMultiplayer.Protocol.Circuit.CircuitChunkTopology.Parser, new[]{ "Key", "Generation", "TerrainSequence", "HasCircuit" }, null, null, null, null),
@@ -191,7 +205,7 @@ namespace SuMultiplayer.Protocol.Circuit {
     public CircuitClock(CircuitClock other) : this() {
       epoch_ = other.epoch_;
       hostCircuitStep_ = other.hostCircuitStep_;
-      lastEventSequence_ = other.lastEventSequence_;
+      lastCommittedEventSequence_ = other.lastCommittedEventSequence_;
       terrainSequence_ = other.terrainSequence_;
       totalElapsedGameTime_ = other.totalElapsedGameTime_;
       timeOfDayOffset_ = other.timeOfDayOffset_;
@@ -234,15 +248,15 @@ namespace SuMultiplayer.Protocol.Circuit {
       }
     }
 
-    /// <summary>Field number for the "last_event_sequence" field.</summary>
-    public const int LastEventSequenceFieldNumber = 3;
-    private int lastEventSequence_;
+    /// <summary>Field number for the "last_committed_event_sequence" field.</summary>
+    public const int LastCommittedEventSequenceFieldNumber = 3;
+    private int lastCommittedEventSequence_;
     [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
     [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
-    public int LastEventSequence {
-      get { return lastEventSequence_; }
+    public int LastCommittedEventSequence {
+      get { return lastCommittedEventSequence_; }
       set {
-        lastEventSequence_ = value;
+        lastCommittedEventSequence_ = value;
       }
     }
 
@@ -371,7 +385,7 @@ namespace SuMultiplayer.Protocol.Circuit {
       }
       if (Epoch != other.Epoch) return false;
       if (HostCircuitStep != other.HostCircuitStep) return false;
-      if (LastEventSequence != other.LastEventSequence) return false;
+      if (LastCommittedEventSequence != other.LastCommittedEventSequence) return false;
       if (TerrainSequence != other.TerrainSequence) return false;
       if (!pbc::ProtobufEqualityComparers.BitwiseDoubleEqualityComparer.Equals(TotalElapsedGameTime, other.TotalElapsedGameTime)) return false;
       if (!pbc::ProtobufEqualityComparers.BitwiseDoubleEqualityComparer.Equals(TimeOfDayOffset, other.TimeOfDayOffset)) return false;
@@ -390,7 +404,7 @@ namespace SuMultiplayer.Protocol.Circuit {
       int hash = 1;
       if (Epoch != 0) hash ^= Epoch.GetHashCode();
       if (HostCircuitStep != 0) hash ^= HostCircuitStep.GetHashCode();
-      if (LastEventSequence != 0) hash ^= LastEventSequence.GetHashCode();
+      if (LastCommittedEventSequence != 0) hash ^= LastCommittedEventSequence.GetHashCode();
       if (TerrainSequence != 0L) hash ^= TerrainSequence.GetHashCode();
       if (TotalElapsedGameTime != 0D) hash ^= pbc::ProtobufEqualityComparers.BitwiseDoubleEqualityComparer.GetHashCode(TotalElapsedGameTime);
       if (TimeOfDayOffset != 0D) hash ^= pbc::ProtobufEqualityComparers.BitwiseDoubleEqualityComparer.GetHashCode(TimeOfDayOffset);
@@ -426,9 +440,9 @@ namespace SuMultiplayer.Protocol.Circuit {
         output.WriteRawTag(16);
         output.WriteInt32(HostCircuitStep);
       }
-      if (LastEventSequence != 0) {
+      if (LastCommittedEventSequence != 0) {
         output.WriteRawTag(24);
-        output.WriteInt32(LastEventSequence);
+        output.WriteInt32(LastCommittedEventSequence);
       }
       if (TerrainSequence != 0L) {
         output.WriteRawTag(32);
@@ -484,9 +498,9 @@ namespace SuMultiplayer.Protocol.Circuit {
         output.WriteRawTag(16);
         output.WriteInt32(HostCircuitStep);
       }
-      if (LastEventSequence != 0) {
+      if (LastCommittedEventSequence != 0) {
         output.WriteRawTag(24);
-        output.WriteInt32(LastEventSequence);
+        output.WriteInt32(LastCommittedEventSequence);
       }
       if (TerrainSequence != 0L) {
         output.WriteRawTag(32);
@@ -540,8 +554,8 @@ namespace SuMultiplayer.Protocol.Circuit {
       if (HostCircuitStep != 0) {
         size += 1 + pb::CodedOutputStream.ComputeInt32Size(HostCircuitStep);
       }
-      if (LastEventSequence != 0) {
-        size += 1 + pb::CodedOutputStream.ComputeInt32Size(LastEventSequence);
+      if (LastCommittedEventSequence != 0) {
+        size += 1 + pb::CodedOutputStream.ComputeInt32Size(LastCommittedEventSequence);
       }
       if (TerrainSequence != 0L) {
         size += 1 + pb::CodedOutputStream.ComputeInt64Size(TerrainSequence);
@@ -588,8 +602,8 @@ namespace SuMultiplayer.Protocol.Circuit {
       if (other.HostCircuitStep != 0) {
         HostCircuitStep = other.HostCircuitStep;
       }
-      if (other.LastEventSequence != 0) {
-        LastEventSequence = other.LastEventSequence;
+      if (other.LastCommittedEventSequence != 0) {
+        LastCommittedEventSequence = other.LastCommittedEventSequence;
       }
       if (other.TerrainSequence != 0L) {
         TerrainSequence = other.TerrainSequence;
@@ -649,7 +663,7 @@ namespace SuMultiplayer.Protocol.Circuit {
             break;
           }
           case 24: {
-            LastEventSequence = input.ReadInt32();
+            LastCommittedEventSequence = input.ReadInt32();
             break;
           }
           case 32: {
@@ -719,7 +733,7 @@ namespace SuMultiplayer.Protocol.Circuit {
             break;
           }
           case 24: {
-            LastEventSequence = input.ReadInt32();
+            LastCommittedEventSequence = input.ReadInt32();
             break;
           }
           case 32: {
@@ -818,6 +832,7 @@ namespace SuMultiplayer.Protocol.Circuit {
       directionY_ = other.directionY_;
       directionZ_ = other.directionZ_;
       reach_ = other.reach_;
+      roundTripMs_ = other.roundTripMs_;
       ext_ = other.ext_;
       custom_ = other.custom_ != null ? other.custom_.Clone() : null;
       _unknownFields = pb::UnknownFieldSet.Clone(other._unknownFields);
@@ -1009,6 +1024,18 @@ namespace SuMultiplayer.Protocol.Circuit {
       }
     }
 
+    /// <summary>Field number for the "round_trip_ms" field.</summary>
+    public const int RoundTripMsFieldNumber = 16;
+    private int roundTripMs_;
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public int RoundTripMs {
+      get { return roundTripMs_; }
+      set {
+        roundTripMs_ = value;
+      }
+    }
+
     /// <summary>Field number for the "ext" field.</summary>
     public const int ExtFieldNumber = 100;
     private pb::ByteString ext_ = pb::ByteString.Empty;
@@ -1063,6 +1090,7 @@ namespace SuMultiplayer.Protocol.Circuit {
       if (!pbc::ProtobufEqualityComparers.BitwiseSingleEqualityComparer.Equals(DirectionY, other.DirectionY)) return false;
       if (!pbc::ProtobufEqualityComparers.BitwiseSingleEqualityComparer.Equals(DirectionZ, other.DirectionZ)) return false;
       if (!pbc::ProtobufEqualityComparers.BitwiseSingleEqualityComparer.Equals(Reach, other.Reach)) return false;
+      if (RoundTripMs != other.RoundTripMs) return false;
       if (Ext != other.Ext) return false;
       if (!object.Equals(Custom, other.Custom)) return false;
       return Equals(_unknownFields, other._unknownFields);
@@ -1087,6 +1115,7 @@ namespace SuMultiplayer.Protocol.Circuit {
       if (DirectionY != 0F) hash ^= pbc::ProtobufEqualityComparers.BitwiseSingleEqualityComparer.GetHashCode(DirectionY);
       if (DirectionZ != 0F) hash ^= pbc::ProtobufEqualityComparers.BitwiseSingleEqualityComparer.GetHashCode(DirectionZ);
       if (Reach != 0F) hash ^= pbc::ProtobufEqualityComparers.BitwiseSingleEqualityComparer.GetHashCode(Reach);
+      if (RoundTripMs != 0) hash ^= RoundTripMs.GetHashCode();
       if (Ext.Length != 0) hash ^= Ext.GetHashCode();
       if (custom_ != null) hash ^= Custom.GetHashCode();
       if (_unknownFields != null) {
@@ -1117,7 +1146,7 @@ namespace SuMultiplayer.Protocol.Circuit {
       }
       if (X != 0) {
         output.WriteRawTag(24);
-        output.WriteInt32(X);
+        output.WriteSInt32(X);
       }
       if (Y != 0) {
         output.WriteRawTag(32);
@@ -1125,7 +1154,7 @@ namespace SuMultiplayer.Protocol.Circuit {
       }
       if (Z != 0) {
         output.WriteRawTag(40);
-        output.WriteInt32(Z);
+        output.WriteSInt32(Z);
       }
       if (MountingFace != 0) {
         output.WriteRawTag(48);
@@ -1166,6 +1195,10 @@ namespace SuMultiplayer.Protocol.Circuit {
       if (Reach != 0F) {
         output.WriteRawTag(125);
         output.WriteFloat(Reach);
+      }
+      if (RoundTripMs != 0) {
+        output.WriteRawTag(128, 1);
+        output.WriteInt32(RoundTripMs);
       }
       if (Ext.Length != 0) {
         output.WriteRawTag(162, 6);
@@ -1195,7 +1228,7 @@ namespace SuMultiplayer.Protocol.Circuit {
       }
       if (X != 0) {
         output.WriteRawTag(24);
-        output.WriteInt32(X);
+        output.WriteSInt32(X);
       }
       if (Y != 0) {
         output.WriteRawTag(32);
@@ -1203,7 +1236,7 @@ namespace SuMultiplayer.Protocol.Circuit {
       }
       if (Z != 0) {
         output.WriteRawTag(40);
-        output.WriteInt32(Z);
+        output.WriteSInt32(Z);
       }
       if (MountingFace != 0) {
         output.WriteRawTag(48);
@@ -1245,6 +1278,10 @@ namespace SuMultiplayer.Protocol.Circuit {
         output.WriteRawTag(125);
         output.WriteFloat(Reach);
       }
+      if (RoundTripMs != 0) {
+        output.WriteRawTag(128, 1);
+        output.WriteInt32(RoundTripMs);
+      }
       if (Ext.Length != 0) {
         output.WriteRawTag(162, 6);
         output.WriteBytes(Ext);
@@ -1270,13 +1307,13 @@ namespace SuMultiplayer.Protocol.Circuit {
         size += 1 + pb::CodedOutputStream.ComputeInt32Size(ClientCircuitStep);
       }
       if (X != 0) {
-        size += 1 + pb::CodedOutputStream.ComputeInt32Size(X);
+        size += 1 + pb::CodedOutputStream.ComputeSInt32Size(X);
       }
       if (Y != 0) {
         size += 1 + pb::CodedOutputStream.ComputeInt32Size(Y);
       }
       if (Z != 0) {
-        size += 1 + pb::CodedOutputStream.ComputeInt32Size(Z);
+        size += 1 + pb::CodedOutputStream.ComputeSInt32Size(Z);
       }
       if (MountingFace != 0) {
         size += 1 + pb::CodedOutputStream.ComputeUInt32Size(MountingFace);
@@ -1307,6 +1344,9 @@ namespace SuMultiplayer.Protocol.Circuit {
       }
       if (Reach != 0F) {
         size += 1 + 4;
+      }
+      if (RoundTripMs != 0) {
+        size += 2 + pb::CodedOutputStream.ComputeInt32Size(RoundTripMs);
       }
       if (Ext.Length != 0) {
         size += 2 + pb::CodedOutputStream.ComputeBytesSize(Ext);
@@ -1371,6 +1411,9 @@ namespace SuMultiplayer.Protocol.Circuit {
       if (other.Reach != 0F) {
         Reach = other.Reach;
       }
+      if (other.RoundTripMs != 0) {
+        RoundTripMs = other.RoundTripMs;
+      }
       if (other.Ext.Length != 0) {
         Ext = other.Ext;
       }
@@ -1408,7 +1451,7 @@ namespace SuMultiplayer.Protocol.Circuit {
             break;
           }
           case 24: {
-            X = input.ReadInt32();
+            X = input.ReadSInt32();
             break;
           }
           case 32: {
@@ -1416,7 +1459,7 @@ namespace SuMultiplayer.Protocol.Circuit {
             break;
           }
           case 40: {
-            Z = input.ReadInt32();
+            Z = input.ReadSInt32();
             break;
           }
           case 48: {
@@ -1457,6 +1500,10 @@ namespace SuMultiplayer.Protocol.Circuit {
           }
           case 125: {
             Reach = input.ReadFloat();
+            break;
+          }
+          case 128: {
+            RoundTripMs = input.ReadInt32();
             break;
           }
           case 802: {
@@ -1498,7 +1545,7 @@ namespace SuMultiplayer.Protocol.Circuit {
             break;
           }
           case 24: {
-            X = input.ReadInt32();
+            X = input.ReadSInt32();
             break;
           }
           case 32: {
@@ -1506,7 +1553,7 @@ namespace SuMultiplayer.Protocol.Circuit {
             break;
           }
           case 40: {
-            Z = input.ReadInt32();
+            Z = input.ReadSInt32();
             break;
           }
           case 48: {
@@ -1547,6 +1594,10 @@ namespace SuMultiplayer.Protocol.Circuit {
           }
           case 125: {
             Reach = input.ReadFloat();
+            break;
+          }
+          case 128: {
+            RoundTripMs = input.ReadInt32();
             break;
           }
           case 802: {
@@ -1602,7 +1653,7 @@ namespace SuMultiplayer.Protocol.Circuit {
     [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
     [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
     public CircuitEvent(CircuitEvent other) : this() {
-      sequence_ = other.sequence_;
+      operationSequence_ = other.operationSequence_;
       hostCircuitStep_ = other.hostCircuitStep_;
       x_ = other.x_;
       y_ = other.y_;
@@ -1612,6 +1663,12 @@ namespace SuMultiplayer.Protocol.Circuit {
       value_ = other.value_;
       requiredTerrainSequence_ = other.requiredTerrainSequence_;
       requiredTopologyGeneration_ = other.requiredTopologyGeneration_;
+      originClientId_ = other.originClientId_;
+      requestId_ = other.requestId_;
+      timelineGeneration_ = other.timelineGeneration_;
+      committed_ = other.committed_;
+      cancelled_ = other.cancelled_;
+      committedEventSequence_ = other.committedEventSequence_;
       _unknownFields = pb::UnknownFieldSet.Clone(other._unknownFields);
     }
 
@@ -1621,15 +1678,15 @@ namespace SuMultiplayer.Protocol.Circuit {
       return new CircuitEvent(this);
     }
 
-    /// <summary>Field number for the "sequence" field.</summary>
-    public const int SequenceFieldNumber = 1;
-    private uint sequence_;
+    /// <summary>Field number for the "operation_sequence" field.</summary>
+    public const int OperationSequenceFieldNumber = 1;
+    private uint operationSequence_;
     [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
     [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
-    public uint Sequence {
-      get { return sequence_; }
+    public uint OperationSequence {
+      get { return operationSequence_; }
       set {
-        sequence_ = value;
+        operationSequence_ = value;
       }
     }
 
@@ -1741,6 +1798,78 @@ namespace SuMultiplayer.Protocol.Circuit {
       }
     }
 
+    /// <summary>Field number for the "origin_client_id" field.</summary>
+    public const int OriginClientIdFieldNumber = 11;
+    private uint originClientId_;
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public uint OriginClientId {
+      get { return originClientId_; }
+      set {
+        originClientId_ = value;
+      }
+    }
+
+    /// <summary>Field number for the "request_id" field.</summary>
+    public const int RequestIdFieldNumber = 12;
+    private ulong requestId_;
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public ulong RequestId {
+      get { return requestId_; }
+      set {
+        requestId_ = value;
+      }
+    }
+
+    /// <summary>Field number for the "timeline_generation" field.</summary>
+    public const int TimelineGenerationFieldNumber = 13;
+    private int timelineGeneration_;
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public int TimelineGeneration {
+      get { return timelineGeneration_; }
+      set {
+        timelineGeneration_ = value;
+      }
+    }
+
+    /// <summary>Field number for the "committed" field.</summary>
+    public const int CommittedFieldNumber = 14;
+    private bool committed_;
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public bool Committed {
+      get { return committed_; }
+      set {
+        committed_ = value;
+      }
+    }
+
+    /// <summary>Field number for the "cancelled" field.</summary>
+    public const int CancelledFieldNumber = 15;
+    private bool cancelled_;
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public bool Cancelled {
+      get { return cancelled_; }
+      set {
+        cancelled_ = value;
+      }
+    }
+
+    /// <summary>Field number for the "committed_event_sequence" field.</summary>
+    public const int CommittedEventSequenceFieldNumber = 16;
+    private uint committedEventSequence_;
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public uint CommittedEventSequence {
+      get { return committedEventSequence_; }
+      set {
+        committedEventSequence_ = value;
+      }
+    }
+
     [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
     [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
     public override bool Equals(object other) {
@@ -1756,7 +1885,7 @@ namespace SuMultiplayer.Protocol.Circuit {
       if (ReferenceEquals(other, this)) {
         return true;
       }
-      if (Sequence != other.Sequence) return false;
+      if (OperationSequence != other.OperationSequence) return false;
       if (HostCircuitStep != other.HostCircuitStep) return false;
       if (X != other.X) return false;
       if (Y != other.Y) return false;
@@ -1766,6 +1895,12 @@ namespace SuMultiplayer.Protocol.Circuit {
       if (Value != other.Value) return false;
       if (RequiredTerrainSequence != other.RequiredTerrainSequence) return false;
       if (RequiredTopologyGeneration != other.RequiredTopologyGeneration) return false;
+      if (OriginClientId != other.OriginClientId) return false;
+      if (RequestId != other.RequestId) return false;
+      if (TimelineGeneration != other.TimelineGeneration) return false;
+      if (Committed != other.Committed) return false;
+      if (Cancelled != other.Cancelled) return false;
+      if (CommittedEventSequence != other.CommittedEventSequence) return false;
       return Equals(_unknownFields, other._unknownFields);
     }
 
@@ -1773,7 +1908,7 @@ namespace SuMultiplayer.Protocol.Circuit {
     [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
     public override int GetHashCode() {
       int hash = 1;
-      if (Sequence != 0) hash ^= Sequence.GetHashCode();
+      if (OperationSequence != 0) hash ^= OperationSequence.GetHashCode();
       if (HostCircuitStep != 0) hash ^= HostCircuitStep.GetHashCode();
       if (X != 0) hash ^= X.GetHashCode();
       if (Y != 0) hash ^= Y.GetHashCode();
@@ -1783,6 +1918,12 @@ namespace SuMultiplayer.Protocol.Circuit {
       if (Value != 0) hash ^= Value.GetHashCode();
       if (RequiredTerrainSequence != 0L) hash ^= RequiredTerrainSequence.GetHashCode();
       if (RequiredTopologyGeneration != 0L) hash ^= RequiredTopologyGeneration.GetHashCode();
+      if (OriginClientId != 0) hash ^= OriginClientId.GetHashCode();
+      if (RequestId != 0UL) hash ^= RequestId.GetHashCode();
+      if (TimelineGeneration != 0) hash ^= TimelineGeneration.GetHashCode();
+      if (Committed != false) hash ^= Committed.GetHashCode();
+      if (Cancelled != false) hash ^= Cancelled.GetHashCode();
+      if (CommittedEventSequence != 0) hash ^= CommittedEventSequence.GetHashCode();
       if (_unknownFields != null) {
         hash ^= _unknownFields.GetHashCode();
       }
@@ -1801,9 +1942,9 @@ namespace SuMultiplayer.Protocol.Circuit {
     #if !GOOGLE_PROTOBUF_REFSTRUCT_COMPATIBILITY_MODE
       output.WriteRawMessage(this);
     #else
-      if (Sequence != 0) {
+      if (OperationSequence != 0) {
         output.WriteRawTag(8);
-        output.WriteUInt32(Sequence);
+        output.WriteUInt32(OperationSequence);
       }
       if (HostCircuitStep != 0) {
         output.WriteRawTag(16);
@@ -1811,7 +1952,7 @@ namespace SuMultiplayer.Protocol.Circuit {
       }
       if (X != 0) {
         output.WriteRawTag(24);
-        output.WriteInt32(X);
+        output.WriteSInt32(X);
       }
       if (Y != 0) {
         output.WriteRawTag(32);
@@ -1819,7 +1960,7 @@ namespace SuMultiplayer.Protocol.Circuit {
       }
       if (Z != 0) {
         output.WriteRawTag(40);
-        output.WriteInt32(Z);
+        output.WriteSInt32(Z);
       }
       if (MountingFace != 0) {
         output.WriteRawTag(48);
@@ -1840,6 +1981,30 @@ namespace SuMultiplayer.Protocol.Circuit {
       if (RequiredTopologyGeneration != 0L) {
         output.WriteRawTag(80);
         output.WriteInt64(RequiredTopologyGeneration);
+      }
+      if (OriginClientId != 0) {
+        output.WriteRawTag(88);
+        output.WriteUInt32(OriginClientId);
+      }
+      if (RequestId != 0UL) {
+        output.WriteRawTag(96);
+        output.WriteUInt64(RequestId);
+      }
+      if (TimelineGeneration != 0) {
+        output.WriteRawTag(104);
+        output.WriteInt32(TimelineGeneration);
+      }
+      if (Committed != false) {
+        output.WriteRawTag(112);
+        output.WriteBool(Committed);
+      }
+      if (Cancelled != false) {
+        output.WriteRawTag(120);
+        output.WriteBool(Cancelled);
+      }
+      if (CommittedEventSequence != 0) {
+        output.WriteRawTag(128, 1);
+        output.WriteUInt32(CommittedEventSequence);
       }
       if (_unknownFields != null) {
         _unknownFields.WriteTo(output);
@@ -1851,9 +2016,9 @@ namespace SuMultiplayer.Protocol.Circuit {
     [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
     [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
     void pb::IBufferMessage.InternalWriteTo(ref pb::WriteContext output) {
-      if (Sequence != 0) {
+      if (OperationSequence != 0) {
         output.WriteRawTag(8);
-        output.WriteUInt32(Sequence);
+        output.WriteUInt32(OperationSequence);
       }
       if (HostCircuitStep != 0) {
         output.WriteRawTag(16);
@@ -1861,7 +2026,7 @@ namespace SuMultiplayer.Protocol.Circuit {
       }
       if (X != 0) {
         output.WriteRawTag(24);
-        output.WriteInt32(X);
+        output.WriteSInt32(X);
       }
       if (Y != 0) {
         output.WriteRawTag(32);
@@ -1869,7 +2034,7 @@ namespace SuMultiplayer.Protocol.Circuit {
       }
       if (Z != 0) {
         output.WriteRawTag(40);
-        output.WriteInt32(Z);
+        output.WriteSInt32(Z);
       }
       if (MountingFace != 0) {
         output.WriteRawTag(48);
@@ -1891,6 +2056,30 @@ namespace SuMultiplayer.Protocol.Circuit {
         output.WriteRawTag(80);
         output.WriteInt64(RequiredTopologyGeneration);
       }
+      if (OriginClientId != 0) {
+        output.WriteRawTag(88);
+        output.WriteUInt32(OriginClientId);
+      }
+      if (RequestId != 0UL) {
+        output.WriteRawTag(96);
+        output.WriteUInt64(RequestId);
+      }
+      if (TimelineGeneration != 0) {
+        output.WriteRawTag(104);
+        output.WriteInt32(TimelineGeneration);
+      }
+      if (Committed != false) {
+        output.WriteRawTag(112);
+        output.WriteBool(Committed);
+      }
+      if (Cancelled != false) {
+        output.WriteRawTag(120);
+        output.WriteBool(Cancelled);
+      }
+      if (CommittedEventSequence != 0) {
+        output.WriteRawTag(128, 1);
+        output.WriteUInt32(CommittedEventSequence);
+      }
       if (_unknownFields != null) {
         _unknownFields.WriteTo(ref output);
       }
@@ -1901,20 +2090,20 @@ namespace SuMultiplayer.Protocol.Circuit {
     [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
     public int CalculateSize() {
       int size = 0;
-      if (Sequence != 0) {
-        size += 1 + pb::CodedOutputStream.ComputeUInt32Size(Sequence);
+      if (OperationSequence != 0) {
+        size += 1 + pb::CodedOutputStream.ComputeUInt32Size(OperationSequence);
       }
       if (HostCircuitStep != 0) {
         size += 1 + pb::CodedOutputStream.ComputeInt32Size(HostCircuitStep);
       }
       if (X != 0) {
-        size += 1 + pb::CodedOutputStream.ComputeInt32Size(X);
+        size += 1 + pb::CodedOutputStream.ComputeSInt32Size(X);
       }
       if (Y != 0) {
         size += 1 + pb::CodedOutputStream.ComputeInt32Size(Y);
       }
       if (Z != 0) {
-        size += 1 + pb::CodedOutputStream.ComputeInt32Size(Z);
+        size += 1 + pb::CodedOutputStream.ComputeSInt32Size(Z);
       }
       if (MountingFace != 0) {
         size += 1 + pb::CodedOutputStream.ComputeUInt32Size(MountingFace);
@@ -1931,6 +2120,24 @@ namespace SuMultiplayer.Protocol.Circuit {
       if (RequiredTopologyGeneration != 0L) {
         size += 1 + pb::CodedOutputStream.ComputeInt64Size(RequiredTopologyGeneration);
       }
+      if (OriginClientId != 0) {
+        size += 1 + pb::CodedOutputStream.ComputeUInt32Size(OriginClientId);
+      }
+      if (RequestId != 0UL) {
+        size += 1 + pb::CodedOutputStream.ComputeUInt64Size(RequestId);
+      }
+      if (TimelineGeneration != 0) {
+        size += 1 + pb::CodedOutputStream.ComputeInt32Size(TimelineGeneration);
+      }
+      if (Committed != false) {
+        size += 1 + 1;
+      }
+      if (Cancelled != false) {
+        size += 1 + 1;
+      }
+      if (CommittedEventSequence != 0) {
+        size += 2 + pb::CodedOutputStream.ComputeUInt32Size(CommittedEventSequence);
+      }
       if (_unknownFields != null) {
         size += _unknownFields.CalculateSize();
       }
@@ -1943,8 +2150,8 @@ namespace SuMultiplayer.Protocol.Circuit {
       if (other == null) {
         return;
       }
-      if (other.Sequence != 0) {
-        Sequence = other.Sequence;
+      if (other.OperationSequence != 0) {
+        OperationSequence = other.OperationSequence;
       }
       if (other.HostCircuitStep != 0) {
         HostCircuitStep = other.HostCircuitStep;
@@ -1973,6 +2180,24 @@ namespace SuMultiplayer.Protocol.Circuit {
       if (other.RequiredTopologyGeneration != 0L) {
         RequiredTopologyGeneration = other.RequiredTopologyGeneration;
       }
+      if (other.OriginClientId != 0) {
+        OriginClientId = other.OriginClientId;
+      }
+      if (other.RequestId != 0UL) {
+        RequestId = other.RequestId;
+      }
+      if (other.TimelineGeneration != 0) {
+        TimelineGeneration = other.TimelineGeneration;
+      }
+      if (other.Committed != false) {
+        Committed = other.Committed;
+      }
+      if (other.Cancelled != false) {
+        Cancelled = other.Cancelled;
+      }
+      if (other.CommittedEventSequence != 0) {
+        CommittedEventSequence = other.CommittedEventSequence;
+      }
       _unknownFields = pb::UnknownFieldSet.MergeFrom(_unknownFields, other._unknownFields);
     }
 
@@ -1993,7 +2218,7 @@ namespace SuMultiplayer.Protocol.Circuit {
             _unknownFields = pb::UnknownFieldSet.MergeFieldFrom(_unknownFields, input);
             break;
           case 8: {
-            Sequence = input.ReadUInt32();
+            OperationSequence = input.ReadUInt32();
             break;
           }
           case 16: {
@@ -2001,7 +2226,7 @@ namespace SuMultiplayer.Protocol.Circuit {
             break;
           }
           case 24: {
-            X = input.ReadInt32();
+            X = input.ReadSInt32();
             break;
           }
           case 32: {
@@ -2009,7 +2234,7 @@ namespace SuMultiplayer.Protocol.Circuit {
             break;
           }
           case 40: {
-            Z = input.ReadInt32();
+            Z = input.ReadSInt32();
             break;
           }
           case 48: {
@@ -2030,6 +2255,30 @@ namespace SuMultiplayer.Protocol.Circuit {
           }
           case 80: {
             RequiredTopologyGeneration = input.ReadInt64();
+            break;
+          }
+          case 88: {
+            OriginClientId = input.ReadUInt32();
+            break;
+          }
+          case 96: {
+            RequestId = input.ReadUInt64();
+            break;
+          }
+          case 104: {
+            TimelineGeneration = input.ReadInt32();
+            break;
+          }
+          case 112: {
+            Committed = input.ReadBool();
+            break;
+          }
+          case 120: {
+            Cancelled = input.ReadBool();
+            break;
+          }
+          case 128: {
+            CommittedEventSequence = input.ReadUInt32();
             break;
           }
         }
@@ -2052,7 +2301,7 @@ namespace SuMultiplayer.Protocol.Circuit {
             _unknownFields = pb::UnknownFieldSet.MergeFieldFrom(_unknownFields, ref input);
             break;
           case 8: {
-            Sequence = input.ReadUInt32();
+            OperationSequence = input.ReadUInt32();
             break;
           }
           case 16: {
@@ -2060,7 +2309,7 @@ namespace SuMultiplayer.Protocol.Circuit {
             break;
           }
           case 24: {
-            X = input.ReadInt32();
+            X = input.ReadSInt32();
             break;
           }
           case 32: {
@@ -2068,7 +2317,7 @@ namespace SuMultiplayer.Protocol.Circuit {
             break;
           }
           case 40: {
-            Z = input.ReadInt32();
+            Z = input.ReadSInt32();
             break;
           }
           case 48: {
@@ -2089,6 +2338,30 @@ namespace SuMultiplayer.Protocol.Circuit {
           }
           case 80: {
             RequiredTopologyGeneration = input.ReadInt64();
+            break;
+          }
+          case 88: {
+            OriginClientId = input.ReadUInt32();
+            break;
+          }
+          case 96: {
+            RequestId = input.ReadUInt64();
+            break;
+          }
+          case 104: {
+            TimelineGeneration = input.ReadInt32();
+            break;
+          }
+          case 112: {
+            Committed = input.ReadBool();
+            break;
+          }
+          case 120: {
+            Cancelled = input.ReadBool();
+            break;
+          }
+          case 128: {
+            CommittedEventSequence = input.ReadUInt32();
             break;
           }
         }
@@ -2135,7 +2408,7 @@ namespace SuMultiplayer.Protocol.Circuit {
     public CircuitEventBatch(CircuitEventBatch other) : this() {
       epoch_ = other.epoch_;
       hostCircuitStep_ = other.hostCircuitStep_;
-      firstSequence_ = other.firstSequence_;
+      firstOperationSequence_ = other.firstOperationSequence_;
       events_ = other.events_.Clone();
       ext_ = other.ext_;
       custom_ = other.custom_ != null ? other.custom_.Clone() : null;
@@ -2172,15 +2445,15 @@ namespace SuMultiplayer.Protocol.Circuit {
       }
     }
 
-    /// <summary>Field number for the "first_sequence" field.</summary>
-    public const int FirstSequenceFieldNumber = 3;
-    private uint firstSequence_;
+    /// <summary>Field number for the "first_operation_sequence" field.</summary>
+    public const int FirstOperationSequenceFieldNumber = 3;
+    private uint firstOperationSequence_;
     [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
     [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
-    public uint FirstSequence {
-      get { return firstSequence_; }
+    public uint FirstOperationSequence {
+      get { return firstOperationSequence_; }
       set {
-        firstSequence_ = value;
+        firstOperationSequence_ = value;
       }
     }
 
@@ -2236,7 +2509,7 @@ namespace SuMultiplayer.Protocol.Circuit {
       }
       if (Epoch != other.Epoch) return false;
       if (HostCircuitStep != other.HostCircuitStep) return false;
-      if (FirstSequence != other.FirstSequence) return false;
+      if (FirstOperationSequence != other.FirstOperationSequence) return false;
       if(!events_.Equals(other.events_)) return false;
       if (Ext != other.Ext) return false;
       if (!object.Equals(Custom, other.Custom)) return false;
@@ -2249,7 +2522,7 @@ namespace SuMultiplayer.Protocol.Circuit {
       int hash = 1;
       if (Epoch != 0) hash ^= Epoch.GetHashCode();
       if (HostCircuitStep != 0) hash ^= HostCircuitStep.GetHashCode();
-      if (FirstSequence != 0) hash ^= FirstSequence.GetHashCode();
+      if (FirstOperationSequence != 0) hash ^= FirstOperationSequence.GetHashCode();
       hash ^= events_.GetHashCode();
       if (Ext.Length != 0) hash ^= Ext.GetHashCode();
       if (custom_ != null) hash ^= Custom.GetHashCode();
@@ -2279,9 +2552,9 @@ namespace SuMultiplayer.Protocol.Circuit {
         output.WriteRawTag(16);
         output.WriteInt32(HostCircuitStep);
       }
-      if (FirstSequence != 0) {
+      if (FirstOperationSequence != 0) {
         output.WriteRawTag(24);
-        output.WriteUInt32(FirstSequence);
+        output.WriteUInt32(FirstOperationSequence);
       }
       events_.WriteTo(output, _repeated_events_codec);
       if (Ext.Length != 0) {
@@ -2310,9 +2583,9 @@ namespace SuMultiplayer.Protocol.Circuit {
         output.WriteRawTag(16);
         output.WriteInt32(HostCircuitStep);
       }
-      if (FirstSequence != 0) {
+      if (FirstOperationSequence != 0) {
         output.WriteRawTag(24);
-        output.WriteUInt32(FirstSequence);
+        output.WriteUInt32(FirstOperationSequence);
       }
       events_.WriteTo(ref output, _repeated_events_codec);
       if (Ext.Length != 0) {
@@ -2339,8 +2612,8 @@ namespace SuMultiplayer.Protocol.Circuit {
       if (HostCircuitStep != 0) {
         size += 1 + pb::CodedOutputStream.ComputeInt32Size(HostCircuitStep);
       }
-      if (FirstSequence != 0) {
-        size += 1 + pb::CodedOutputStream.ComputeUInt32Size(FirstSequence);
+      if (FirstOperationSequence != 0) {
+        size += 1 + pb::CodedOutputStream.ComputeUInt32Size(FirstOperationSequence);
       }
       size += events_.CalculateSize(_repeated_events_codec);
       if (Ext.Length != 0) {
@@ -2367,8 +2640,8 @@ namespace SuMultiplayer.Protocol.Circuit {
       if (other.HostCircuitStep != 0) {
         HostCircuitStep = other.HostCircuitStep;
       }
-      if (other.FirstSequence != 0) {
-        FirstSequence = other.FirstSequence;
+      if (other.FirstOperationSequence != 0) {
+        FirstOperationSequence = other.FirstOperationSequence;
       }
       events_.Add(other.events_);
       if (other.Ext.Length != 0) {
@@ -2408,7 +2681,7 @@ namespace SuMultiplayer.Protocol.Circuit {
             break;
           }
           case 24: {
-            FirstSequence = input.ReadUInt32();
+            FirstOperationSequence = input.ReadUInt32();
             break;
           }
           case 34: {
@@ -2454,7 +2727,7 @@ namespace SuMultiplayer.Protocol.Circuit {
             break;
           }
           case 24: {
-            FirstSequence = input.ReadUInt32();
+            FirstOperationSequence = input.ReadUInt32();
             break;
           }
           case 34: {
@@ -3038,7 +3311,7 @@ namespace SuMultiplayer.Protocol.Circuit {
     #else
       if (X != 0) {
         output.WriteRawTag(8);
-        output.WriteInt32(X);
+        output.WriteSInt32(X);
       }
       if (Y != 0) {
         output.WriteRawTag(16);
@@ -3046,7 +3319,7 @@ namespace SuMultiplayer.Protocol.Circuit {
       }
       if (Z != 0) {
         output.WriteRawTag(24);
-        output.WriteInt32(Z);
+        output.WriteSInt32(Z);
       }
       if (MountingFace != 0) {
         output.WriteRawTag(32);
@@ -3106,7 +3379,7 @@ namespace SuMultiplayer.Protocol.Circuit {
     void pb::IBufferMessage.InternalWriteTo(ref pb::WriteContext output) {
       if (X != 0) {
         output.WriteRawTag(8);
-        output.WriteInt32(X);
+        output.WriteSInt32(X);
       }
       if (Y != 0) {
         output.WriteRawTag(16);
@@ -3114,7 +3387,7 @@ namespace SuMultiplayer.Protocol.Circuit {
       }
       if (Z != 0) {
         output.WriteRawTag(24);
-        output.WriteInt32(Z);
+        output.WriteSInt32(Z);
       }
       if (MountingFace != 0) {
         output.WriteRawTag(32);
@@ -3173,13 +3446,13 @@ namespace SuMultiplayer.Protocol.Circuit {
     public int CalculateSize() {
       int size = 0;
       if (X != 0) {
-        size += 1 + pb::CodedOutputStream.ComputeInt32Size(X);
+        size += 1 + pb::CodedOutputStream.ComputeSInt32Size(X);
       }
       if (Y != 0) {
         size += 1 + pb::CodedOutputStream.ComputeInt32Size(Y);
       }
       if (Z != 0) {
-        size += 1 + pb::CodedOutputStream.ComputeInt32Size(Z);
+        size += 1 + pb::CodedOutputStream.ComputeSInt32Size(Z);
       }
       if (MountingFace != 0) {
         size += 1 + pb::CodedOutputStream.ComputeUInt32Size(MountingFace);
@@ -3292,7 +3565,7 @@ namespace SuMultiplayer.Protocol.Circuit {
             _unknownFields = pb::UnknownFieldSet.MergeFieldFrom(_unknownFields, input);
             break;
           case 8: {
-            X = input.ReadInt32();
+            X = input.ReadSInt32();
             break;
           }
           case 16: {
@@ -3300,7 +3573,7 @@ namespace SuMultiplayer.Protocol.Circuit {
             break;
           }
           case 24: {
-            Z = input.ReadInt32();
+            Z = input.ReadSInt32();
             break;
           }
           case 32: {
@@ -3376,7 +3649,7 @@ namespace SuMultiplayer.Protocol.Circuit {
             _unknownFields = pb::UnknownFieldSet.MergeFieldFrom(_unknownFields, ref input);
             break;
           case 8: {
-            X = input.ReadInt32();
+            X = input.ReadSInt32();
             break;
           }
           case 16: {
@@ -3384,7 +3657,7 @@ namespace SuMultiplayer.Protocol.Circuit {
             break;
           }
           case 24: {
-            Z = input.ReadInt32();
+            Z = input.ReadSInt32();
             break;
           }
           case 32: {
@@ -3487,6 +3760,7 @@ namespace SuMultiplayer.Protocol.Circuit {
       chunks_ = other.chunks_.Clone();
       replaceScope_ = other.replaceScope_;
       scopeQuery_ = other.scopeQuery_;
+      hashMismatch_ = other.hashMismatch_;
       ext_ = other.ext_;
       custom_ = other.custom_ != null ? other.custom_.Clone() : null;
       _unknownFields = pb::UnknownFieldSet.Clone(other._unknownFields);
@@ -3557,6 +3831,18 @@ namespace SuMultiplayer.Protocol.Circuit {
       }
     }
 
+    /// <summary>Field number for the "hash_mismatch" field.</summary>
+    public const int HashMismatchFieldNumber = 6;
+    private bool hashMismatch_;
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public bool HashMismatch {
+      get { return hashMismatch_; }
+      set {
+        hashMismatch_ = value;
+      }
+    }
+
     /// <summary>Field number for the "ext" field.</summary>
     public const int ExtFieldNumber = 100;
     private pb::ByteString ext_ = pb::ByteString.Empty;
@@ -3601,6 +3887,7 @@ namespace SuMultiplayer.Protocol.Circuit {
       if(!chunks_.Equals(other.chunks_)) return false;
       if (ReplaceScope != other.ReplaceScope) return false;
       if (ScopeQuery != other.ScopeQuery) return false;
+      if (HashMismatch != other.HashMismatch) return false;
       if (Ext != other.Ext) return false;
       if (!object.Equals(Custom, other.Custom)) return false;
       return Equals(_unknownFields, other._unknownFields);
@@ -3615,6 +3902,7 @@ namespace SuMultiplayer.Protocol.Circuit {
       hash ^= chunks_.GetHashCode();
       if (ReplaceScope != false) hash ^= ReplaceScope.GetHashCode();
       if (ScopeQuery != false) hash ^= ScopeQuery.GetHashCode();
+      if (HashMismatch != false) hash ^= HashMismatch.GetHashCode();
       if (Ext.Length != 0) hash ^= Ext.GetHashCode();
       if (custom_ != null) hash ^= Custom.GetHashCode();
       if (_unknownFields != null) {
@@ -3652,6 +3940,10 @@ namespace SuMultiplayer.Protocol.Circuit {
         output.WriteRawTag(40);
         output.WriteBool(ScopeQuery);
       }
+      if (HashMismatch != false) {
+        output.WriteRawTag(48);
+        output.WriteBool(HashMismatch);
+      }
       if (Ext.Length != 0) {
         output.WriteRawTag(162, 6);
         output.WriteBytes(Ext);
@@ -3687,6 +3979,10 @@ namespace SuMultiplayer.Protocol.Circuit {
         output.WriteRawTag(40);
         output.WriteBool(ScopeQuery);
       }
+      if (HashMismatch != false) {
+        output.WriteRawTag(48);
+        output.WriteBool(HashMismatch);
+      }
       if (Ext.Length != 0) {
         output.WriteRawTag(162, 6);
         output.WriteBytes(Ext);
@@ -3716,6 +4012,9 @@ namespace SuMultiplayer.Protocol.Circuit {
         size += 1 + 1;
       }
       if (ScopeQuery != false) {
+        size += 1 + 1;
+      }
+      if (HashMismatch != false) {
         size += 1 + 1;
       }
       if (Ext.Length != 0) {
@@ -3748,6 +4047,9 @@ namespace SuMultiplayer.Protocol.Circuit {
       }
       if (other.ScopeQuery != false) {
         ScopeQuery = other.ScopeQuery;
+      }
+      if (other.HashMismatch != false) {
+        HashMismatch = other.HashMismatch;
       }
       if (other.Ext.Length != 0) {
         Ext = other.Ext;
@@ -3795,6 +4097,10 @@ namespace SuMultiplayer.Protocol.Circuit {
           }
           case 40: {
             ScopeQuery = input.ReadBool();
+            break;
+          }
+          case 48: {
+            HashMismatch = input.ReadBool();
             break;
           }
           case 802: {
@@ -3845,6 +4151,10 @@ namespace SuMultiplayer.Protocol.Circuit {
           }
           case 40: {
             ScopeQuery = input.ReadBool();
+            break;
+          }
+          case 48: {
+            HashMismatch = input.ReadBool();
             break;
           }
           case 802: {
@@ -3910,9 +4220,10 @@ namespace SuMultiplayer.Protocol.Circuit {
       full_ = other.full_;
       elements_ = other.elements_.Clone();
       requiredTerrainSequence_ = other.requiredTerrainSequence_;
-      lastEventSequence_ = other.lastEventSequence_;
+      lastCommittedEventSequence_ = other.lastCommittedEventSequence_;
       timelineGeneration_ = other.timelineGeneration_;
       requiredTopologyGeneration_ = other.requiredTopologyGeneration_;
+      chunkCommittedEventSequence_ = other.chunkCommittedEventSequence_;
       ext_ = other.ext_;
       custom_ = other.custom_ != null ? other.custom_.Clone() : null;
       _unknownFields = pb::UnknownFieldSet.Clone(other._unknownFields);
@@ -4043,15 +4354,15 @@ namespace SuMultiplayer.Protocol.Circuit {
       }
     }
 
-    /// <summary>Field number for the "last_event_sequence" field.</summary>
-    public const int LastEventSequenceFieldNumber = 11;
-    private int lastEventSequence_;
+    /// <summary>Field number for the "last_committed_event_sequence" field.</summary>
+    public const int LastCommittedEventSequenceFieldNumber = 11;
+    private int lastCommittedEventSequence_;
     [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
     [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
-    public int LastEventSequence {
-      get { return lastEventSequence_; }
+    public int LastCommittedEventSequence {
+      get { return lastCommittedEventSequence_; }
       set {
-        lastEventSequence_ = value;
+        lastCommittedEventSequence_ = value;
       }
     }
 
@@ -4076,6 +4387,18 @@ namespace SuMultiplayer.Protocol.Circuit {
       get { return requiredTopologyGeneration_; }
       set {
         requiredTopologyGeneration_ = value;
+      }
+    }
+
+    /// <summary>Field number for the "chunk_committed_event_sequence" field.</summary>
+    public const int ChunkCommittedEventSequenceFieldNumber = 14;
+    private uint chunkCommittedEventSequence_;
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public uint ChunkCommittedEventSequence {
+      get { return chunkCommittedEventSequence_; }
+      set {
+        chunkCommittedEventSequence_ = value;
       }
     }
 
@@ -4128,9 +4451,10 @@ namespace SuMultiplayer.Protocol.Circuit {
       if (Full != other.Full) return false;
       if(!elements_.Equals(other.elements_)) return false;
       if (RequiredTerrainSequence != other.RequiredTerrainSequence) return false;
-      if (LastEventSequence != other.LastEventSequence) return false;
+      if (LastCommittedEventSequence != other.LastCommittedEventSequence) return false;
       if (TimelineGeneration != other.TimelineGeneration) return false;
       if (RequiredTopologyGeneration != other.RequiredTopologyGeneration) return false;
+      if (ChunkCommittedEventSequence != other.ChunkCommittedEventSequence) return false;
       if (Ext != other.Ext) return false;
       if (!object.Equals(Custom, other.Custom)) return false;
       return Equals(_unknownFields, other._unknownFields);
@@ -4150,9 +4474,10 @@ namespace SuMultiplayer.Protocol.Circuit {
       if (Full != false) hash ^= Full.GetHashCode();
       hash ^= elements_.GetHashCode();
       if (RequiredTerrainSequence != 0L) hash ^= RequiredTerrainSequence.GetHashCode();
-      if (LastEventSequence != 0) hash ^= LastEventSequence.GetHashCode();
+      if (LastCommittedEventSequence != 0) hash ^= LastCommittedEventSequence.GetHashCode();
       if (TimelineGeneration != 0) hash ^= TimelineGeneration.GetHashCode();
       if (RequiredTopologyGeneration != 0L) hash ^= RequiredTopologyGeneration.GetHashCode();
+      if (ChunkCommittedEventSequence != 0) hash ^= ChunkCommittedEventSequence.GetHashCode();
       if (Ext.Length != 0) hash ^= Ext.GetHashCode();
       if (custom_ != null) hash ^= Custom.GetHashCode();
       if (_unknownFields != null) {
@@ -4187,11 +4512,11 @@ namespace SuMultiplayer.Protocol.Circuit {
       }
       if (ChunkX != 0) {
         output.WriteRawTag(32);
-        output.WriteInt32(ChunkX);
+        output.WriteSInt32(ChunkX);
       }
       if (ChunkZ != 0) {
         output.WriteRawTag(40);
-        output.WriteInt32(ChunkZ);
+        output.WriteSInt32(ChunkZ);
       }
       if (PartIndex != 0) {
         output.WriteRawTag(48);
@@ -4210,9 +4535,9 @@ namespace SuMultiplayer.Protocol.Circuit {
         output.WriteRawTag(80);
         output.WriteInt64(RequiredTerrainSequence);
       }
-      if (LastEventSequence != 0) {
+      if (LastCommittedEventSequence != 0) {
         output.WriteRawTag(88);
-        output.WriteInt32(LastEventSequence);
+        output.WriteInt32(LastCommittedEventSequence);
       }
       if (TimelineGeneration != 0) {
         output.WriteRawTag(96);
@@ -4221,6 +4546,10 @@ namespace SuMultiplayer.Protocol.Circuit {
       if (RequiredTopologyGeneration != 0L) {
         output.WriteRawTag(104);
         output.WriteInt64(RequiredTopologyGeneration);
+      }
+      if (ChunkCommittedEventSequence != 0) {
+        output.WriteRawTag(112);
+        output.WriteUInt32(ChunkCommittedEventSequence);
       }
       if (Ext.Length != 0) {
         output.WriteRawTag(162, 6);
@@ -4254,11 +4583,11 @@ namespace SuMultiplayer.Protocol.Circuit {
       }
       if (ChunkX != 0) {
         output.WriteRawTag(32);
-        output.WriteInt32(ChunkX);
+        output.WriteSInt32(ChunkX);
       }
       if (ChunkZ != 0) {
         output.WriteRawTag(40);
-        output.WriteInt32(ChunkZ);
+        output.WriteSInt32(ChunkZ);
       }
       if (PartIndex != 0) {
         output.WriteRawTag(48);
@@ -4277,9 +4606,9 @@ namespace SuMultiplayer.Protocol.Circuit {
         output.WriteRawTag(80);
         output.WriteInt64(RequiredTerrainSequence);
       }
-      if (LastEventSequence != 0) {
+      if (LastCommittedEventSequence != 0) {
         output.WriteRawTag(88);
-        output.WriteInt32(LastEventSequence);
+        output.WriteInt32(LastCommittedEventSequence);
       }
       if (TimelineGeneration != 0) {
         output.WriteRawTag(96);
@@ -4288,6 +4617,10 @@ namespace SuMultiplayer.Protocol.Circuit {
       if (RequiredTopologyGeneration != 0L) {
         output.WriteRawTag(104);
         output.WriteInt64(RequiredTopologyGeneration);
+      }
+      if (ChunkCommittedEventSequence != 0) {
+        output.WriteRawTag(112);
+        output.WriteUInt32(ChunkCommittedEventSequence);
       }
       if (Ext.Length != 0) {
         output.WriteRawTag(162, 6);
@@ -4317,10 +4650,10 @@ namespace SuMultiplayer.Protocol.Circuit {
         size += 1 + pb::CodedOutputStream.ComputeInt32Size(HostCircuitStep);
       }
       if (ChunkX != 0) {
-        size += 1 + pb::CodedOutputStream.ComputeInt32Size(ChunkX);
+        size += 1 + pb::CodedOutputStream.ComputeSInt32Size(ChunkX);
       }
       if (ChunkZ != 0) {
-        size += 1 + pb::CodedOutputStream.ComputeInt32Size(ChunkZ);
+        size += 1 + pb::CodedOutputStream.ComputeSInt32Size(ChunkZ);
       }
       if (PartIndex != 0) {
         size += 1 + pb::CodedOutputStream.ComputeUInt32Size(PartIndex);
@@ -4335,14 +4668,17 @@ namespace SuMultiplayer.Protocol.Circuit {
       if (RequiredTerrainSequence != 0L) {
         size += 1 + pb::CodedOutputStream.ComputeInt64Size(RequiredTerrainSequence);
       }
-      if (LastEventSequence != 0) {
-        size += 1 + pb::CodedOutputStream.ComputeInt32Size(LastEventSequence);
+      if (LastCommittedEventSequence != 0) {
+        size += 1 + pb::CodedOutputStream.ComputeInt32Size(LastCommittedEventSequence);
       }
       if (TimelineGeneration != 0) {
         size += 1 + pb::CodedOutputStream.ComputeInt32Size(TimelineGeneration);
       }
       if (RequiredTopologyGeneration != 0L) {
         size += 1 + pb::CodedOutputStream.ComputeInt64Size(RequiredTopologyGeneration);
+      }
+      if (ChunkCommittedEventSequence != 0) {
+        size += 1 + pb::CodedOutputStream.ComputeUInt32Size(ChunkCommittedEventSequence);
       }
       if (Ext.Length != 0) {
         size += 2 + pb::CodedOutputStream.ComputeBytesSize(Ext);
@@ -4390,14 +4726,17 @@ namespace SuMultiplayer.Protocol.Circuit {
       if (other.RequiredTerrainSequence != 0L) {
         RequiredTerrainSequence = other.RequiredTerrainSequence;
       }
-      if (other.LastEventSequence != 0) {
-        LastEventSequence = other.LastEventSequence;
+      if (other.LastCommittedEventSequence != 0) {
+        LastCommittedEventSequence = other.LastCommittedEventSequence;
       }
       if (other.TimelineGeneration != 0) {
         TimelineGeneration = other.TimelineGeneration;
       }
       if (other.RequiredTopologyGeneration != 0L) {
         RequiredTopologyGeneration = other.RequiredTopologyGeneration;
+      }
+      if (other.ChunkCommittedEventSequence != 0) {
+        ChunkCommittedEventSequence = other.ChunkCommittedEventSequence;
       }
       if (other.Ext.Length != 0) {
         Ext = other.Ext;
@@ -4440,11 +4779,11 @@ namespace SuMultiplayer.Protocol.Circuit {
             break;
           }
           case 32: {
-            ChunkX = input.ReadInt32();
+            ChunkX = input.ReadSInt32();
             break;
           }
           case 40: {
-            ChunkZ = input.ReadInt32();
+            ChunkZ = input.ReadSInt32();
             break;
           }
           case 48: {
@@ -4468,7 +4807,7 @@ namespace SuMultiplayer.Protocol.Circuit {
             break;
           }
           case 88: {
-            LastEventSequence = input.ReadInt32();
+            LastCommittedEventSequence = input.ReadInt32();
             break;
           }
           case 96: {
@@ -4477,6 +4816,10 @@ namespace SuMultiplayer.Protocol.Circuit {
           }
           case 104: {
             RequiredTopologyGeneration = input.ReadInt64();
+            break;
+          }
+          case 112: {
+            ChunkCommittedEventSequence = input.ReadUInt32();
             break;
           }
           case 802: {
@@ -4522,11 +4865,11 @@ namespace SuMultiplayer.Protocol.Circuit {
             break;
           }
           case 32: {
-            ChunkX = input.ReadInt32();
+            ChunkX = input.ReadSInt32();
             break;
           }
           case 40: {
-            ChunkZ = input.ReadInt32();
+            ChunkZ = input.ReadSInt32();
             break;
           }
           case 48: {
@@ -4550,7 +4893,7 @@ namespace SuMultiplayer.Protocol.Circuit {
             break;
           }
           case 88: {
-            LastEventSequence = input.ReadInt32();
+            LastCommittedEventSequence = input.ReadInt32();
             break;
           }
           case 96: {
@@ -4559,6 +4902,10 @@ namespace SuMultiplayer.Protocol.Circuit {
           }
           case 104: {
             RequiredTopologyGeneration = input.ReadInt64();
+            break;
+          }
+          case 112: {
+            ChunkCommittedEventSequence = input.ReadUInt32();
             break;
           }
           case 802: {
@@ -4618,6 +4965,8 @@ namespace SuMultiplayer.Protocol.Circuit {
       chunkZ_ = other.chunkZ_;
       hash_ = other.hash_;
       topologyGeneration_ = other.topologyGeneration_;
+      terrainSequence_ = other.terrainSequence_;
+      chunkCommittedEventSequence_ = other.chunkCommittedEventSequence_;
       _unknownFields = pb::UnknownFieldSet.Clone(other._unknownFields);
     }
 
@@ -4675,6 +5024,30 @@ namespace SuMultiplayer.Protocol.Circuit {
       }
     }
 
+    /// <summary>Field number for the "terrain_sequence" field.</summary>
+    public const int TerrainSequenceFieldNumber = 5;
+    private long terrainSequence_;
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public long TerrainSequence {
+      get { return terrainSequence_; }
+      set {
+        terrainSequence_ = value;
+      }
+    }
+
+    /// <summary>Field number for the "chunk_committed_event_sequence" field.</summary>
+    public const int ChunkCommittedEventSequenceFieldNumber = 6;
+    private uint chunkCommittedEventSequence_;
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public uint ChunkCommittedEventSequence {
+      get { return chunkCommittedEventSequence_; }
+      set {
+        chunkCommittedEventSequence_ = value;
+      }
+    }
+
     [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
     [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
     public override bool Equals(object other) {
@@ -4694,6 +5067,8 @@ namespace SuMultiplayer.Protocol.Circuit {
       if (ChunkZ != other.ChunkZ) return false;
       if (Hash != other.Hash) return false;
       if (TopologyGeneration != other.TopologyGeneration) return false;
+      if (TerrainSequence != other.TerrainSequence) return false;
+      if (ChunkCommittedEventSequence != other.ChunkCommittedEventSequence) return false;
       return Equals(_unknownFields, other._unknownFields);
     }
 
@@ -4705,6 +5080,8 @@ namespace SuMultiplayer.Protocol.Circuit {
       if (ChunkZ != 0) hash ^= ChunkZ.GetHashCode();
       if (Hash != 0) hash ^= Hash.GetHashCode();
       if (TopologyGeneration != 0L) hash ^= TopologyGeneration.GetHashCode();
+      if (TerrainSequence != 0L) hash ^= TerrainSequence.GetHashCode();
+      if (ChunkCommittedEventSequence != 0) hash ^= ChunkCommittedEventSequence.GetHashCode();
       if (_unknownFields != null) {
         hash ^= _unknownFields.GetHashCode();
       }
@@ -4725,11 +5102,11 @@ namespace SuMultiplayer.Protocol.Circuit {
     #else
       if (ChunkX != 0) {
         output.WriteRawTag(8);
-        output.WriteInt32(ChunkX);
+        output.WriteSInt32(ChunkX);
       }
       if (ChunkZ != 0) {
         output.WriteRawTag(16);
-        output.WriteInt32(ChunkZ);
+        output.WriteSInt32(ChunkZ);
       }
       if (Hash != 0) {
         output.WriteRawTag(24);
@@ -4738,6 +5115,14 @@ namespace SuMultiplayer.Protocol.Circuit {
       if (TopologyGeneration != 0L) {
         output.WriteRawTag(32);
         output.WriteInt64(TopologyGeneration);
+      }
+      if (TerrainSequence != 0L) {
+        output.WriteRawTag(40);
+        output.WriteInt64(TerrainSequence);
+      }
+      if (ChunkCommittedEventSequence != 0) {
+        output.WriteRawTag(48);
+        output.WriteUInt32(ChunkCommittedEventSequence);
       }
       if (_unknownFields != null) {
         _unknownFields.WriteTo(output);
@@ -4751,11 +5136,11 @@ namespace SuMultiplayer.Protocol.Circuit {
     void pb::IBufferMessage.InternalWriteTo(ref pb::WriteContext output) {
       if (ChunkX != 0) {
         output.WriteRawTag(8);
-        output.WriteInt32(ChunkX);
+        output.WriteSInt32(ChunkX);
       }
       if (ChunkZ != 0) {
         output.WriteRawTag(16);
-        output.WriteInt32(ChunkZ);
+        output.WriteSInt32(ChunkZ);
       }
       if (Hash != 0) {
         output.WriteRawTag(24);
@@ -4764,6 +5149,14 @@ namespace SuMultiplayer.Protocol.Circuit {
       if (TopologyGeneration != 0L) {
         output.WriteRawTag(32);
         output.WriteInt64(TopologyGeneration);
+      }
+      if (TerrainSequence != 0L) {
+        output.WriteRawTag(40);
+        output.WriteInt64(TerrainSequence);
+      }
+      if (ChunkCommittedEventSequence != 0) {
+        output.WriteRawTag(48);
+        output.WriteUInt32(ChunkCommittedEventSequence);
       }
       if (_unknownFields != null) {
         _unknownFields.WriteTo(ref output);
@@ -4776,16 +5169,22 @@ namespace SuMultiplayer.Protocol.Circuit {
     public int CalculateSize() {
       int size = 0;
       if (ChunkX != 0) {
-        size += 1 + pb::CodedOutputStream.ComputeInt32Size(ChunkX);
+        size += 1 + pb::CodedOutputStream.ComputeSInt32Size(ChunkX);
       }
       if (ChunkZ != 0) {
-        size += 1 + pb::CodedOutputStream.ComputeInt32Size(ChunkZ);
+        size += 1 + pb::CodedOutputStream.ComputeSInt32Size(ChunkZ);
       }
       if (Hash != 0) {
         size += 1 + pb::CodedOutputStream.ComputeUInt32Size(Hash);
       }
       if (TopologyGeneration != 0L) {
         size += 1 + pb::CodedOutputStream.ComputeInt64Size(TopologyGeneration);
+      }
+      if (TerrainSequence != 0L) {
+        size += 1 + pb::CodedOutputStream.ComputeInt64Size(TerrainSequence);
+      }
+      if (ChunkCommittedEventSequence != 0) {
+        size += 1 + pb::CodedOutputStream.ComputeUInt32Size(ChunkCommittedEventSequence);
       }
       if (_unknownFields != null) {
         size += _unknownFields.CalculateSize();
@@ -4811,6 +5210,12 @@ namespace SuMultiplayer.Protocol.Circuit {
       if (other.TopologyGeneration != 0L) {
         TopologyGeneration = other.TopologyGeneration;
       }
+      if (other.TerrainSequence != 0L) {
+        TerrainSequence = other.TerrainSequence;
+      }
+      if (other.ChunkCommittedEventSequence != 0) {
+        ChunkCommittedEventSequence = other.ChunkCommittedEventSequence;
+      }
       _unknownFields = pb::UnknownFieldSet.MergeFrom(_unknownFields, other._unknownFields);
     }
 
@@ -4831,11 +5236,11 @@ namespace SuMultiplayer.Protocol.Circuit {
             _unknownFields = pb::UnknownFieldSet.MergeFieldFrom(_unknownFields, input);
             break;
           case 8: {
-            ChunkX = input.ReadInt32();
+            ChunkX = input.ReadSInt32();
             break;
           }
           case 16: {
-            ChunkZ = input.ReadInt32();
+            ChunkZ = input.ReadSInt32();
             break;
           }
           case 24: {
@@ -4844,6 +5249,14 @@ namespace SuMultiplayer.Protocol.Circuit {
           }
           case 32: {
             TopologyGeneration = input.ReadInt64();
+            break;
+          }
+          case 40: {
+            TerrainSequence = input.ReadInt64();
+            break;
+          }
+          case 48: {
+            ChunkCommittedEventSequence = input.ReadUInt32();
             break;
           }
         }
@@ -4866,11 +5279,11 @@ namespace SuMultiplayer.Protocol.Circuit {
             _unknownFields = pb::UnknownFieldSet.MergeFieldFrom(_unknownFields, ref input);
             break;
           case 8: {
-            ChunkX = input.ReadInt32();
+            ChunkX = input.ReadSInt32();
             break;
           }
           case 16: {
-            ChunkZ = input.ReadInt32();
+            ChunkZ = input.ReadSInt32();
             break;
           }
           case 24: {
@@ -4879,6 +5292,14 @@ namespace SuMultiplayer.Protocol.Circuit {
           }
           case 32: {
             TopologyGeneration = input.ReadInt64();
+            break;
+          }
+          case 40: {
+            TerrainSequence = input.ReadInt64();
+            break;
+          }
+          case 48: {
+            ChunkCommittedEventSequence = input.ReadUInt32();
             break;
           }
         }
@@ -4927,7 +5348,7 @@ namespace SuMultiplayer.Protocol.Circuit {
       hostCircuitStep_ = other.hostCircuitStep_;
       terrainSequence_ = other.terrainSequence_;
       chunks_ = other.chunks_.Clone();
-      lastEventSequence_ = other.lastEventSequence_;
+      lastCommittedEventSequence_ = other.lastCommittedEventSequence_;
       timelineGeneration_ = other.timelineGeneration_;
       ext_ = other.ext_;
       custom_ = other.custom_ != null ? other.custom_.Clone() : null;
@@ -4987,15 +5408,15 @@ namespace SuMultiplayer.Protocol.Circuit {
       get { return chunks_; }
     }
 
-    /// <summary>Field number for the "last_event_sequence" field.</summary>
-    public const int LastEventSequenceFieldNumber = 5;
-    private int lastEventSequence_;
+    /// <summary>Field number for the "last_committed_event_sequence" field.</summary>
+    public const int LastCommittedEventSequenceFieldNumber = 5;
+    private int lastCommittedEventSequence_;
     [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
     [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
-    public int LastEventSequence {
-      get { return lastEventSequence_; }
+    public int LastCommittedEventSequence {
+      get { return lastCommittedEventSequence_; }
       set {
-        lastEventSequence_ = value;
+        lastCommittedEventSequence_ = value;
       }
     }
 
@@ -5054,7 +5475,7 @@ namespace SuMultiplayer.Protocol.Circuit {
       if (HostCircuitStep != other.HostCircuitStep) return false;
       if (TerrainSequence != other.TerrainSequence) return false;
       if(!chunks_.Equals(other.chunks_)) return false;
-      if (LastEventSequence != other.LastEventSequence) return false;
+      if (LastCommittedEventSequence != other.LastCommittedEventSequence) return false;
       if (TimelineGeneration != other.TimelineGeneration) return false;
       if (Ext != other.Ext) return false;
       if (!object.Equals(Custom, other.Custom)) return false;
@@ -5069,7 +5490,7 @@ namespace SuMultiplayer.Protocol.Circuit {
       if (HostCircuitStep != 0) hash ^= HostCircuitStep.GetHashCode();
       if (TerrainSequence != 0L) hash ^= TerrainSequence.GetHashCode();
       hash ^= chunks_.GetHashCode();
-      if (LastEventSequence != 0) hash ^= LastEventSequence.GetHashCode();
+      if (LastCommittedEventSequence != 0) hash ^= LastCommittedEventSequence.GetHashCode();
       if (TimelineGeneration != 0) hash ^= TimelineGeneration.GetHashCode();
       if (Ext.Length != 0) hash ^= Ext.GetHashCode();
       if (custom_ != null) hash ^= Custom.GetHashCode();
@@ -5104,9 +5525,9 @@ namespace SuMultiplayer.Protocol.Circuit {
         output.WriteInt64(TerrainSequence);
       }
       chunks_.WriteTo(output, _repeated_chunks_codec);
-      if (LastEventSequence != 0) {
+      if (LastCommittedEventSequence != 0) {
         output.WriteRawTag(40);
-        output.WriteInt32(LastEventSequence);
+        output.WriteInt32(LastCommittedEventSequence);
       }
       if (TimelineGeneration != 0) {
         output.WriteRawTag(48);
@@ -5143,9 +5564,9 @@ namespace SuMultiplayer.Protocol.Circuit {
         output.WriteInt64(TerrainSequence);
       }
       chunks_.WriteTo(ref output, _repeated_chunks_codec);
-      if (LastEventSequence != 0) {
+      if (LastCommittedEventSequence != 0) {
         output.WriteRawTag(40);
-        output.WriteInt32(LastEventSequence);
+        output.WriteInt32(LastCommittedEventSequence);
       }
       if (TimelineGeneration != 0) {
         output.WriteRawTag(48);
@@ -5179,8 +5600,8 @@ namespace SuMultiplayer.Protocol.Circuit {
         size += 1 + pb::CodedOutputStream.ComputeInt64Size(TerrainSequence);
       }
       size += chunks_.CalculateSize(_repeated_chunks_codec);
-      if (LastEventSequence != 0) {
-        size += 1 + pb::CodedOutputStream.ComputeInt32Size(LastEventSequence);
+      if (LastCommittedEventSequence != 0) {
+        size += 1 + pb::CodedOutputStream.ComputeInt32Size(LastCommittedEventSequence);
       }
       if (TimelineGeneration != 0) {
         size += 1 + pb::CodedOutputStream.ComputeInt32Size(TimelineGeneration);
@@ -5213,8 +5634,8 @@ namespace SuMultiplayer.Protocol.Circuit {
         TerrainSequence = other.TerrainSequence;
       }
       chunks_.Add(other.chunks_);
-      if (other.LastEventSequence != 0) {
-        LastEventSequence = other.LastEventSequence;
+      if (other.LastCommittedEventSequence != 0) {
+        LastCommittedEventSequence = other.LastCommittedEventSequence;
       }
       if (other.TimelineGeneration != 0) {
         TimelineGeneration = other.TimelineGeneration;
@@ -5264,7 +5685,7 @@ namespace SuMultiplayer.Protocol.Circuit {
             break;
           }
           case 40: {
-            LastEventSequence = input.ReadInt32();
+            LastCommittedEventSequence = input.ReadInt32();
             break;
           }
           case 48: {
@@ -5318,7 +5739,7 @@ namespace SuMultiplayer.Protocol.Circuit {
             break;
           }
           case 40: {
-            LastEventSequence = input.ReadInt32();
+            LastCommittedEventSequence = input.ReadInt32();
             break;
           }
           case 48: {
@@ -5344,6 +5765,304 @@ namespace SuMultiplayer.Protocol.Circuit {
   }
 
   [global::System.Diagnostics.DebuggerDisplayAttribute("{ToString(),nq}")]
+  public sealed partial class CircuitHashCheckpoint : pb::IMessage<CircuitHashCheckpoint>
+  #if !GOOGLE_PROTOBUF_REFSTRUCT_COMPATIBILITY_MODE
+      , pb::IBufferMessage
+  #endif
+  {
+    private static readonly pb::MessageParser<CircuitHashCheckpoint> _parser = new pb::MessageParser<CircuitHashCheckpoint>(() => new CircuitHashCheckpoint());
+    private pb::UnknownFieldSet _unknownFields;
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public static pb::MessageParser<CircuitHashCheckpoint> Parser { get { return _parser; } }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public static pbr::MessageDescriptor Descriptor {
+      get { return global::SuMultiplayer.Protocol.Circuit.CircuitReflection.Descriptor.MessageTypes[10]; }
+    }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    pbr::MessageDescriptor pb::IMessage.Descriptor {
+      get { return Descriptor; }
+    }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public CircuitHashCheckpoint() {
+      OnConstruction();
+    }
+
+    partial void OnConstruction();
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public CircuitHashCheckpoint(CircuitHashCheckpoint other) : this() {
+      epoch_ = other.epoch_;
+      hostCircuitStep_ = other.hostCircuitStep_;
+      timelineGeneration_ = other.timelineGeneration_;
+      chunks_ = other.chunks_.Clone();
+      _unknownFields = pb::UnknownFieldSet.Clone(other._unknownFields);
+    }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public CircuitHashCheckpoint Clone() {
+      return new CircuitHashCheckpoint(this);
+    }
+
+    /// <summary>Field number for the "epoch" field.</summary>
+    public const int EpochFieldNumber = 1;
+    private uint epoch_;
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public uint Epoch {
+      get { return epoch_; }
+      set {
+        epoch_ = value;
+      }
+    }
+
+    /// <summary>Field number for the "host_circuit_step" field.</summary>
+    public const int HostCircuitStepFieldNumber = 2;
+    private int hostCircuitStep_;
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public int HostCircuitStep {
+      get { return hostCircuitStep_; }
+      set {
+        hostCircuitStep_ = value;
+      }
+    }
+
+    /// <summary>Field number for the "timeline_generation" field.</summary>
+    public const int TimelineGenerationFieldNumber = 3;
+    private int timelineGeneration_;
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public int TimelineGeneration {
+      get { return timelineGeneration_; }
+      set {
+        timelineGeneration_ = value;
+      }
+    }
+
+    /// <summary>Field number for the "chunks" field.</summary>
+    public const int ChunksFieldNumber = 4;
+    private static readonly pb::FieldCodec<global::SuMultiplayer.Protocol.Circuit.CircuitChunkHash> _repeated_chunks_codec
+        = pb::FieldCodec.ForMessage(34, global::SuMultiplayer.Protocol.Circuit.CircuitChunkHash.Parser);
+    private readonly pbc::RepeatedField<global::SuMultiplayer.Protocol.Circuit.CircuitChunkHash> chunks_ = new pbc::RepeatedField<global::SuMultiplayer.Protocol.Circuit.CircuitChunkHash>();
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public pbc::RepeatedField<global::SuMultiplayer.Protocol.Circuit.CircuitChunkHash> Chunks {
+      get { return chunks_; }
+    }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public override bool Equals(object other) {
+      return Equals(other as CircuitHashCheckpoint);
+    }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public bool Equals(CircuitHashCheckpoint other) {
+      if (ReferenceEquals(other, null)) {
+        return false;
+      }
+      if (ReferenceEquals(other, this)) {
+        return true;
+      }
+      if (Epoch != other.Epoch) return false;
+      if (HostCircuitStep != other.HostCircuitStep) return false;
+      if (TimelineGeneration != other.TimelineGeneration) return false;
+      if(!chunks_.Equals(other.chunks_)) return false;
+      return Equals(_unknownFields, other._unknownFields);
+    }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public override int GetHashCode() {
+      int hash = 1;
+      if (Epoch != 0) hash ^= Epoch.GetHashCode();
+      if (HostCircuitStep != 0) hash ^= HostCircuitStep.GetHashCode();
+      if (TimelineGeneration != 0) hash ^= TimelineGeneration.GetHashCode();
+      hash ^= chunks_.GetHashCode();
+      if (_unknownFields != null) {
+        hash ^= _unknownFields.GetHashCode();
+      }
+      return hash;
+    }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public override string ToString() {
+      return pb::JsonFormatter.ToDiagnosticString(this);
+    }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public void WriteTo(pb::CodedOutputStream output) {
+    #if !GOOGLE_PROTOBUF_REFSTRUCT_COMPATIBILITY_MODE
+      output.WriteRawMessage(this);
+    #else
+      if (Epoch != 0) {
+        output.WriteRawTag(8);
+        output.WriteUInt32(Epoch);
+      }
+      if (HostCircuitStep != 0) {
+        output.WriteRawTag(16);
+        output.WriteInt32(HostCircuitStep);
+      }
+      if (TimelineGeneration != 0) {
+        output.WriteRawTag(24);
+        output.WriteInt32(TimelineGeneration);
+      }
+      chunks_.WriteTo(output, _repeated_chunks_codec);
+      if (_unknownFields != null) {
+        _unknownFields.WriteTo(output);
+      }
+    #endif
+    }
+
+    #if !GOOGLE_PROTOBUF_REFSTRUCT_COMPATIBILITY_MODE
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    void pb::IBufferMessage.InternalWriteTo(ref pb::WriteContext output) {
+      if (Epoch != 0) {
+        output.WriteRawTag(8);
+        output.WriteUInt32(Epoch);
+      }
+      if (HostCircuitStep != 0) {
+        output.WriteRawTag(16);
+        output.WriteInt32(HostCircuitStep);
+      }
+      if (TimelineGeneration != 0) {
+        output.WriteRawTag(24);
+        output.WriteInt32(TimelineGeneration);
+      }
+      chunks_.WriteTo(ref output, _repeated_chunks_codec);
+      if (_unknownFields != null) {
+        _unknownFields.WriteTo(ref output);
+      }
+    }
+    #endif
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public int CalculateSize() {
+      int size = 0;
+      if (Epoch != 0) {
+        size += 1 + pb::CodedOutputStream.ComputeUInt32Size(Epoch);
+      }
+      if (HostCircuitStep != 0) {
+        size += 1 + pb::CodedOutputStream.ComputeInt32Size(HostCircuitStep);
+      }
+      if (TimelineGeneration != 0) {
+        size += 1 + pb::CodedOutputStream.ComputeInt32Size(TimelineGeneration);
+      }
+      size += chunks_.CalculateSize(_repeated_chunks_codec);
+      if (_unknownFields != null) {
+        size += _unknownFields.CalculateSize();
+      }
+      return size;
+    }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public void MergeFrom(CircuitHashCheckpoint other) {
+      if (other == null) {
+        return;
+      }
+      if (other.Epoch != 0) {
+        Epoch = other.Epoch;
+      }
+      if (other.HostCircuitStep != 0) {
+        HostCircuitStep = other.HostCircuitStep;
+      }
+      if (other.TimelineGeneration != 0) {
+        TimelineGeneration = other.TimelineGeneration;
+      }
+      chunks_.Add(other.chunks_);
+      _unknownFields = pb::UnknownFieldSet.MergeFrom(_unknownFields, other._unknownFields);
+    }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public void MergeFrom(pb::CodedInputStream input) {
+    #if !GOOGLE_PROTOBUF_REFSTRUCT_COMPATIBILITY_MODE
+      input.ReadRawMessage(this);
+    #else
+      uint tag;
+      while ((tag = input.ReadTag()) != 0) {
+      if ((tag & 7) == 4) {
+        // Abort on any end group tag.
+        return;
+      }
+      switch(tag) {
+          default:
+            _unknownFields = pb::UnknownFieldSet.MergeFieldFrom(_unknownFields, input);
+            break;
+          case 8: {
+            Epoch = input.ReadUInt32();
+            break;
+          }
+          case 16: {
+            HostCircuitStep = input.ReadInt32();
+            break;
+          }
+          case 24: {
+            TimelineGeneration = input.ReadInt32();
+            break;
+          }
+          case 34: {
+            chunks_.AddEntriesFrom(input, _repeated_chunks_codec);
+            break;
+          }
+        }
+      }
+    #endif
+    }
+
+    #if !GOOGLE_PROTOBUF_REFSTRUCT_COMPATIBILITY_MODE
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    void pb::IBufferMessage.InternalMergeFrom(ref pb::ParseContext input) {
+      uint tag;
+      while ((tag = input.ReadTag()) != 0) {
+      if ((tag & 7) == 4) {
+        // Abort on any end group tag.
+        return;
+      }
+      switch(tag) {
+          default:
+            _unknownFields = pb::UnknownFieldSet.MergeFieldFrom(_unknownFields, ref input);
+            break;
+          case 8: {
+            Epoch = input.ReadUInt32();
+            break;
+          }
+          case 16: {
+            HostCircuitStep = input.ReadInt32();
+            break;
+          }
+          case 24: {
+            TimelineGeneration = input.ReadInt32();
+            break;
+          }
+          case 34: {
+            chunks_.AddEntriesFrom(ref input, _repeated_chunks_codec);
+            break;
+          }
+        }
+      }
+    }
+    #endif
+
+  }
+
+  [global::System.Diagnostics.DebuggerDisplayAttribute("{ToString(),nq}")]
   public sealed partial class CircuitRepairBarrier : pb::IMessage<CircuitRepairBarrier>
   #if !GOOGLE_PROTOBUF_REFSTRUCT_COMPATIBILITY_MODE
       , pb::IBufferMessage
@@ -5358,7 +6077,7 @@ namespace SuMultiplayer.Protocol.Circuit {
     [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
     [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
     public static pbr::MessageDescriptor Descriptor {
-      get { return global::SuMultiplayer.Protocol.Circuit.CircuitReflection.Descriptor.MessageTypes[10]; }
+      get { return global::SuMultiplayer.Protocol.Circuit.CircuitReflection.Descriptor.MessageTypes[11]; }
     }
 
     [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
@@ -5546,11 +6265,11 @@ namespace SuMultiplayer.Protocol.Circuit {
       }
       if (ChunkX != 0) {
         output.WriteRawTag(32);
-        output.WriteInt32(ChunkX);
+        output.WriteSInt32(ChunkX);
       }
       if (ChunkZ != 0) {
         output.WriteRawTag(40);
-        output.WriteInt32(ChunkZ);
+        output.WriteSInt32(ChunkZ);
       }
       if (PartCount != 0) {
         output.WriteRawTag(48);
@@ -5584,11 +6303,11 @@ namespace SuMultiplayer.Protocol.Circuit {
       }
       if (ChunkX != 0) {
         output.WriteRawTag(32);
-        output.WriteInt32(ChunkX);
+        output.WriteSInt32(ChunkX);
       }
       if (ChunkZ != 0) {
         output.WriteRawTag(40);
-        output.WriteInt32(ChunkZ);
+        output.WriteSInt32(ChunkZ);
       }
       if (PartCount != 0) {
         output.WriteRawTag(48);
@@ -5618,10 +6337,10 @@ namespace SuMultiplayer.Protocol.Circuit {
         size += 1 + pb::CodedOutputStream.ComputeInt32Size(HostCircuitStep);
       }
       if (ChunkX != 0) {
-        size += 1 + pb::CodedOutputStream.ComputeInt32Size(ChunkX);
+        size += 1 + pb::CodedOutputStream.ComputeSInt32Size(ChunkX);
       }
       if (ChunkZ != 0) {
-        size += 1 + pb::CodedOutputStream.ComputeInt32Size(ChunkZ);
+        size += 1 + pb::CodedOutputStream.ComputeSInt32Size(ChunkZ);
       }
       if (PartCount != 0) {
         size += 1 + pb::CodedOutputStream.ComputeUInt32Size(PartCount);
@@ -5694,11 +6413,11 @@ namespace SuMultiplayer.Protocol.Circuit {
             break;
           }
           case 32: {
-            ChunkX = input.ReadInt32();
+            ChunkX = input.ReadSInt32();
             break;
           }
           case 40: {
-            ChunkZ = input.ReadInt32();
+            ChunkZ = input.ReadSInt32();
             break;
           }
           case 48: {
@@ -5741,11 +6460,11 @@ namespace SuMultiplayer.Protocol.Circuit {
             break;
           }
           case 32: {
-            ChunkX = input.ReadInt32();
+            ChunkX = input.ReadSInt32();
             break;
           }
           case 40: {
-            ChunkZ = input.ReadInt32();
+            ChunkZ = input.ReadSInt32();
             break;
           }
           case 48: {
@@ -5778,7 +6497,7 @@ namespace SuMultiplayer.Protocol.Circuit {
     [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
     [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
     public static pbr::MessageDescriptor Descriptor {
-      get { return global::SuMultiplayer.Protocol.Circuit.CircuitReflection.Descriptor.MessageTypes[11]; }
+      get { return global::SuMultiplayer.Protocol.Circuit.CircuitReflection.Descriptor.MessageTypes[12]; }
     }
 
     [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
@@ -5804,9 +6523,11 @@ namespace SuMultiplayer.Protocol.Circuit {
       chunkZ_ = other.chunkZ_;
       stateHash_ = other.stateHash_;
       terrainSequence_ = other.terrainSequence_;
-      lastEventSequence_ = other.lastEventSequence_;
+      lastCommittedEventSequence_ = other.lastCommittedEventSequence_;
       timelineGeneration_ = other.timelineGeneration_;
       topologyGeneration_ = other.topologyGeneration_;
+      clientCircuitStep_ = other.clientCircuitStep_;
+      chunkCommittedEventSequence_ = other.chunkCommittedEventSequence_;
       _unknownFields = pb::UnknownFieldSet.Clone(other._unknownFields);
     }
 
@@ -5888,15 +6609,15 @@ namespace SuMultiplayer.Protocol.Circuit {
       }
     }
 
-    /// <summary>Field number for the "last_event_sequence" field.</summary>
-    public const int LastEventSequenceFieldNumber = 7;
-    private int lastEventSequence_;
+    /// <summary>Field number for the "last_committed_event_sequence" field.</summary>
+    public const int LastCommittedEventSequenceFieldNumber = 7;
+    private int lastCommittedEventSequence_;
     [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
     [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
-    public int LastEventSequence {
-      get { return lastEventSequence_; }
+    public int LastCommittedEventSequence {
+      get { return lastCommittedEventSequence_; }
       set {
-        lastEventSequence_ = value;
+        lastCommittedEventSequence_ = value;
       }
     }
 
@@ -5924,6 +6645,30 @@ namespace SuMultiplayer.Protocol.Circuit {
       }
     }
 
+    /// <summary>Field number for the "client_circuit_step" field.</summary>
+    public const int ClientCircuitStepFieldNumber = 10;
+    private int clientCircuitStep_;
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public int ClientCircuitStep {
+      get { return clientCircuitStep_; }
+      set {
+        clientCircuitStep_ = value;
+      }
+    }
+
+    /// <summary>Field number for the "chunk_committed_event_sequence" field.</summary>
+    public const int ChunkCommittedEventSequenceFieldNumber = 11;
+    private uint chunkCommittedEventSequence_;
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public uint ChunkCommittedEventSequence {
+      get { return chunkCommittedEventSequence_; }
+      set {
+        chunkCommittedEventSequence_ = value;
+      }
+    }
+
     [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
     [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
     public override bool Equals(object other) {
@@ -5945,9 +6690,11 @@ namespace SuMultiplayer.Protocol.Circuit {
       if (ChunkZ != other.ChunkZ) return false;
       if (StateHash != other.StateHash) return false;
       if (TerrainSequence != other.TerrainSequence) return false;
-      if (LastEventSequence != other.LastEventSequence) return false;
+      if (LastCommittedEventSequence != other.LastCommittedEventSequence) return false;
       if (TimelineGeneration != other.TimelineGeneration) return false;
       if (TopologyGeneration != other.TopologyGeneration) return false;
+      if (ClientCircuitStep != other.ClientCircuitStep) return false;
+      if (ChunkCommittedEventSequence != other.ChunkCommittedEventSequence) return false;
       return Equals(_unknownFields, other._unknownFields);
     }
 
@@ -5961,9 +6708,11 @@ namespace SuMultiplayer.Protocol.Circuit {
       if (ChunkZ != 0) hash ^= ChunkZ.GetHashCode();
       if (StateHash != 0) hash ^= StateHash.GetHashCode();
       if (TerrainSequence != 0L) hash ^= TerrainSequence.GetHashCode();
-      if (LastEventSequence != 0) hash ^= LastEventSequence.GetHashCode();
+      if (LastCommittedEventSequence != 0) hash ^= LastCommittedEventSequence.GetHashCode();
       if (TimelineGeneration != 0) hash ^= TimelineGeneration.GetHashCode();
       if (TopologyGeneration != 0L) hash ^= TopologyGeneration.GetHashCode();
+      if (ClientCircuitStep != 0) hash ^= ClientCircuitStep.GetHashCode();
+      if (ChunkCommittedEventSequence != 0) hash ^= ChunkCommittedEventSequence.GetHashCode();
       if (_unknownFields != null) {
         hash ^= _unknownFields.GetHashCode();
       }
@@ -5992,11 +6741,11 @@ namespace SuMultiplayer.Protocol.Circuit {
       }
       if (ChunkX != 0) {
         output.WriteRawTag(24);
-        output.WriteInt32(ChunkX);
+        output.WriteSInt32(ChunkX);
       }
       if (ChunkZ != 0) {
         output.WriteRawTag(32);
-        output.WriteInt32(ChunkZ);
+        output.WriteSInt32(ChunkZ);
       }
       if (StateHash != 0) {
         output.WriteRawTag(40);
@@ -6006,9 +6755,9 @@ namespace SuMultiplayer.Protocol.Circuit {
         output.WriteRawTag(48);
         output.WriteInt64(TerrainSequence);
       }
-      if (LastEventSequence != 0) {
+      if (LastCommittedEventSequence != 0) {
         output.WriteRawTag(56);
-        output.WriteInt32(LastEventSequence);
+        output.WriteInt32(LastCommittedEventSequence);
       }
       if (TimelineGeneration != 0) {
         output.WriteRawTag(64);
@@ -6017,6 +6766,14 @@ namespace SuMultiplayer.Protocol.Circuit {
       if (TopologyGeneration != 0L) {
         output.WriteRawTag(72);
         output.WriteInt64(TopologyGeneration);
+      }
+      if (ClientCircuitStep != 0) {
+        output.WriteRawTag(80);
+        output.WriteInt32(ClientCircuitStep);
+      }
+      if (ChunkCommittedEventSequence != 0) {
+        output.WriteRawTag(88);
+        output.WriteUInt32(ChunkCommittedEventSequence);
       }
       if (_unknownFields != null) {
         _unknownFields.WriteTo(output);
@@ -6038,11 +6795,11 @@ namespace SuMultiplayer.Protocol.Circuit {
       }
       if (ChunkX != 0) {
         output.WriteRawTag(24);
-        output.WriteInt32(ChunkX);
+        output.WriteSInt32(ChunkX);
       }
       if (ChunkZ != 0) {
         output.WriteRawTag(32);
-        output.WriteInt32(ChunkZ);
+        output.WriteSInt32(ChunkZ);
       }
       if (StateHash != 0) {
         output.WriteRawTag(40);
@@ -6052,9 +6809,9 @@ namespace SuMultiplayer.Protocol.Circuit {
         output.WriteRawTag(48);
         output.WriteInt64(TerrainSequence);
       }
-      if (LastEventSequence != 0) {
+      if (LastCommittedEventSequence != 0) {
         output.WriteRawTag(56);
-        output.WriteInt32(LastEventSequence);
+        output.WriteInt32(LastCommittedEventSequence);
       }
       if (TimelineGeneration != 0) {
         output.WriteRawTag(64);
@@ -6063,6 +6820,14 @@ namespace SuMultiplayer.Protocol.Circuit {
       if (TopologyGeneration != 0L) {
         output.WriteRawTag(72);
         output.WriteInt64(TopologyGeneration);
+      }
+      if (ClientCircuitStep != 0) {
+        output.WriteRawTag(80);
+        output.WriteInt32(ClientCircuitStep);
+      }
+      if (ChunkCommittedEventSequence != 0) {
+        output.WriteRawTag(88);
+        output.WriteUInt32(ChunkCommittedEventSequence);
       }
       if (_unknownFields != null) {
         _unknownFields.WriteTo(ref output);
@@ -6081,10 +6846,10 @@ namespace SuMultiplayer.Protocol.Circuit {
         size += 1 + pb::CodedOutputStream.ComputeUInt64Size(SnapshotId);
       }
       if (ChunkX != 0) {
-        size += 1 + pb::CodedOutputStream.ComputeInt32Size(ChunkX);
+        size += 1 + pb::CodedOutputStream.ComputeSInt32Size(ChunkX);
       }
       if (ChunkZ != 0) {
-        size += 1 + pb::CodedOutputStream.ComputeInt32Size(ChunkZ);
+        size += 1 + pb::CodedOutputStream.ComputeSInt32Size(ChunkZ);
       }
       if (StateHash != 0) {
         size += 1 + pb::CodedOutputStream.ComputeUInt32Size(StateHash);
@@ -6092,14 +6857,20 @@ namespace SuMultiplayer.Protocol.Circuit {
       if (TerrainSequence != 0L) {
         size += 1 + pb::CodedOutputStream.ComputeInt64Size(TerrainSequence);
       }
-      if (LastEventSequence != 0) {
-        size += 1 + pb::CodedOutputStream.ComputeInt32Size(LastEventSequence);
+      if (LastCommittedEventSequence != 0) {
+        size += 1 + pb::CodedOutputStream.ComputeInt32Size(LastCommittedEventSequence);
       }
       if (TimelineGeneration != 0) {
         size += 1 + pb::CodedOutputStream.ComputeInt32Size(TimelineGeneration);
       }
       if (TopologyGeneration != 0L) {
         size += 1 + pb::CodedOutputStream.ComputeInt64Size(TopologyGeneration);
+      }
+      if (ClientCircuitStep != 0) {
+        size += 1 + pb::CodedOutputStream.ComputeInt32Size(ClientCircuitStep);
+      }
+      if (ChunkCommittedEventSequence != 0) {
+        size += 1 + pb::CodedOutputStream.ComputeUInt32Size(ChunkCommittedEventSequence);
       }
       if (_unknownFields != null) {
         size += _unknownFields.CalculateSize();
@@ -6131,14 +6902,20 @@ namespace SuMultiplayer.Protocol.Circuit {
       if (other.TerrainSequence != 0L) {
         TerrainSequence = other.TerrainSequence;
       }
-      if (other.LastEventSequence != 0) {
-        LastEventSequence = other.LastEventSequence;
+      if (other.LastCommittedEventSequence != 0) {
+        LastCommittedEventSequence = other.LastCommittedEventSequence;
       }
       if (other.TimelineGeneration != 0) {
         TimelineGeneration = other.TimelineGeneration;
       }
       if (other.TopologyGeneration != 0L) {
         TopologyGeneration = other.TopologyGeneration;
+      }
+      if (other.ClientCircuitStep != 0) {
+        ClientCircuitStep = other.ClientCircuitStep;
+      }
+      if (other.ChunkCommittedEventSequence != 0) {
+        ChunkCommittedEventSequence = other.ChunkCommittedEventSequence;
       }
       _unknownFields = pb::UnknownFieldSet.MergeFrom(_unknownFields, other._unknownFields);
     }
@@ -6168,11 +6945,11 @@ namespace SuMultiplayer.Protocol.Circuit {
             break;
           }
           case 24: {
-            ChunkX = input.ReadInt32();
+            ChunkX = input.ReadSInt32();
             break;
           }
           case 32: {
-            ChunkZ = input.ReadInt32();
+            ChunkZ = input.ReadSInt32();
             break;
           }
           case 40: {
@@ -6184,7 +6961,7 @@ namespace SuMultiplayer.Protocol.Circuit {
             break;
           }
           case 56: {
-            LastEventSequence = input.ReadInt32();
+            LastCommittedEventSequence = input.ReadInt32();
             break;
           }
           case 64: {
@@ -6193,6 +6970,14 @@ namespace SuMultiplayer.Protocol.Circuit {
           }
           case 72: {
             TopologyGeneration = input.ReadInt64();
+            break;
+          }
+          case 80: {
+            ClientCircuitStep = input.ReadInt32();
+            break;
+          }
+          case 88: {
+            ChunkCommittedEventSequence = input.ReadUInt32();
             break;
           }
         }
@@ -6223,11 +7008,11 @@ namespace SuMultiplayer.Protocol.Circuit {
             break;
           }
           case 24: {
-            ChunkX = input.ReadInt32();
+            ChunkX = input.ReadSInt32();
             break;
           }
           case 32: {
-            ChunkZ = input.ReadInt32();
+            ChunkZ = input.ReadSInt32();
             break;
           }
           case 40: {
@@ -6239,7 +7024,7 @@ namespace SuMultiplayer.Protocol.Circuit {
             break;
           }
           case 56: {
-            LastEventSequence = input.ReadInt32();
+            LastCommittedEventSequence = input.ReadInt32();
             break;
           }
           case 64: {
@@ -6248,6 +7033,14 @@ namespace SuMultiplayer.Protocol.Circuit {
           }
           case 72: {
             TopologyGeneration = input.ReadInt64();
+            break;
+          }
+          case 80: {
+            ClientCircuitStep = input.ReadInt32();
+            break;
+          }
+          case 88: {
+            ChunkCommittedEventSequence = input.ReadUInt32();
             break;
           }
         }
@@ -6272,7 +7065,7 @@ namespace SuMultiplayer.Protocol.Circuit {
     [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
     [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
     public static pbr::MessageDescriptor Descriptor {
-      get { return global::SuMultiplayer.Protocol.Circuit.CircuitReflection.Descriptor.MessageTypes[12]; }
+      get { return global::SuMultiplayer.Protocol.Circuit.CircuitReflection.Descriptor.MessageTypes[13]; }
     }
 
     [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
@@ -6295,7 +7088,7 @@ namespace SuMultiplayer.Protocol.Circuit {
       requestId_ = other.requestId_;
       accepted_ = other.accepted_;
       reason_ = other.reason_;
-      sequence_ = other.sequence_;
+      operationSequence_ = other.operationSequence_;
       hostCircuitStep_ = other.hostCircuitStep_;
       x_ = other.x_;
       y_ = other.y_;
@@ -6351,15 +7144,15 @@ namespace SuMultiplayer.Protocol.Circuit {
       }
     }
 
-    /// <summary>Field number for the "sequence" field.</summary>
-    public const int SequenceFieldNumber = 4;
-    private uint sequence_;
+    /// <summary>Field number for the "operation_sequence" field.</summary>
+    public const int OperationSequenceFieldNumber = 4;
+    private uint operationSequence_;
     [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
     [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
-    public uint Sequence {
-      get { return sequence_; }
+    public uint OperationSequence {
+      get { return operationSequence_; }
       set {
-        sequence_ = value;
+        operationSequence_ = value;
       }
     }
 
@@ -6501,7 +7294,7 @@ namespace SuMultiplayer.Protocol.Circuit {
       if (RequestId != other.RequestId) return false;
       if (Accepted != other.Accepted) return false;
       if (Reason != other.Reason) return false;
-      if (Sequence != other.Sequence) return false;
+      if (OperationSequence != other.OperationSequence) return false;
       if (HostCircuitStep != other.HostCircuitStep) return false;
       if (X != other.X) return false;
       if (Y != other.Y) return false;
@@ -6522,7 +7315,7 @@ namespace SuMultiplayer.Protocol.Circuit {
       if (RequestId != 0UL) hash ^= RequestId.GetHashCode();
       if (Accepted != false) hash ^= Accepted.GetHashCode();
       if (Reason.Length != 0) hash ^= Reason.GetHashCode();
-      if (Sequence != 0) hash ^= Sequence.GetHashCode();
+      if (OperationSequence != 0) hash ^= OperationSequence.GetHashCode();
       if (HostCircuitStep != 0) hash ^= HostCircuitStep.GetHashCode();
       if (X != 0) hash ^= X.GetHashCode();
       if (Y != 0) hash ^= Y.GetHashCode();
@@ -6563,9 +7356,9 @@ namespace SuMultiplayer.Protocol.Circuit {
         output.WriteRawTag(26);
         output.WriteString(Reason);
       }
-      if (Sequence != 0) {
+      if (OperationSequence != 0) {
         output.WriteRawTag(32);
-        output.WriteUInt32(Sequence);
+        output.WriteUInt32(OperationSequence);
       }
       if (HostCircuitStep != 0) {
         output.WriteRawTag(40);
@@ -6573,7 +7366,7 @@ namespace SuMultiplayer.Protocol.Circuit {
       }
       if (X != 0) {
         output.WriteRawTag(48);
-        output.WriteInt32(X);
+        output.WriteSInt32(X);
       }
       if (Y != 0) {
         output.WriteRawTag(56);
@@ -6581,7 +7374,7 @@ namespace SuMultiplayer.Protocol.Circuit {
       }
       if (Z != 0) {
         output.WriteRawTag(64);
-        output.WriteInt32(Z);
+        output.WriteSInt32(Z);
       }
       if (CellValue != 0) {
         output.WriteRawTag(72);
@@ -6629,9 +7422,9 @@ namespace SuMultiplayer.Protocol.Circuit {
         output.WriteRawTag(26);
         output.WriteString(Reason);
       }
-      if (Sequence != 0) {
+      if (OperationSequence != 0) {
         output.WriteRawTag(32);
-        output.WriteUInt32(Sequence);
+        output.WriteUInt32(OperationSequence);
       }
       if (HostCircuitStep != 0) {
         output.WriteRawTag(40);
@@ -6639,7 +7432,7 @@ namespace SuMultiplayer.Protocol.Circuit {
       }
       if (X != 0) {
         output.WriteRawTag(48);
-        output.WriteInt32(X);
+        output.WriteSInt32(X);
       }
       if (Y != 0) {
         output.WriteRawTag(56);
@@ -6647,7 +7440,7 @@ namespace SuMultiplayer.Protocol.Circuit {
       }
       if (Z != 0) {
         output.WriteRawTag(64);
-        output.WriteInt32(Z);
+        output.WriteSInt32(Z);
       }
       if (CellValue != 0) {
         output.WriteRawTag(72);
@@ -6692,20 +7485,20 @@ namespace SuMultiplayer.Protocol.Circuit {
       if (Reason.Length != 0) {
         size += 1 + pb::CodedOutputStream.ComputeStringSize(Reason);
       }
-      if (Sequence != 0) {
-        size += 1 + pb::CodedOutputStream.ComputeUInt32Size(Sequence);
+      if (OperationSequence != 0) {
+        size += 1 + pb::CodedOutputStream.ComputeUInt32Size(OperationSequence);
       }
       if (HostCircuitStep != 0) {
         size += 1 + pb::CodedOutputStream.ComputeInt32Size(HostCircuitStep);
       }
       if (X != 0) {
-        size += 1 + pb::CodedOutputStream.ComputeInt32Size(X);
+        size += 1 + pb::CodedOutputStream.ComputeSInt32Size(X);
       }
       if (Y != 0) {
         size += 1 + pb::CodedOutputStream.ComputeInt32Size(Y);
       }
       if (Z != 0) {
-        size += 1 + pb::CodedOutputStream.ComputeInt32Size(Z);
+        size += 1 + pb::CodedOutputStream.ComputeSInt32Size(Z);
       }
       if (CellValue != 0) {
         size += 1 + pb::CodedOutputStream.ComputeUInt32Size(CellValue);
@@ -6746,8 +7539,8 @@ namespace SuMultiplayer.Protocol.Circuit {
       if (other.Reason.Length != 0) {
         Reason = other.Reason;
       }
-      if (other.Sequence != 0) {
-        Sequence = other.Sequence;
+      if (other.OperationSequence != 0) {
+        OperationSequence = other.OperationSequence;
       }
       if (other.HostCircuitStep != 0) {
         HostCircuitStep = other.HostCircuitStep;
@@ -6811,7 +7604,7 @@ namespace SuMultiplayer.Protocol.Circuit {
             break;
           }
           case 32: {
-            Sequence = input.ReadUInt32();
+            OperationSequence = input.ReadUInt32();
             break;
           }
           case 40: {
@@ -6819,7 +7612,7 @@ namespace SuMultiplayer.Protocol.Circuit {
             break;
           }
           case 48: {
-            X = input.ReadInt32();
+            X = input.ReadSInt32();
             break;
           }
           case 56: {
@@ -6827,7 +7620,7 @@ namespace SuMultiplayer.Protocol.Circuit {
             break;
           }
           case 64: {
-            Z = input.ReadInt32();
+            Z = input.ReadSInt32();
             break;
           }
           case 72: {
@@ -6886,7 +7679,7 @@ namespace SuMultiplayer.Protocol.Circuit {
             break;
           }
           case 32: {
-            Sequence = input.ReadUInt32();
+            OperationSequence = input.ReadUInt32();
             break;
           }
           case 40: {
@@ -6894,7 +7687,7 @@ namespace SuMultiplayer.Protocol.Circuit {
             break;
           }
           case 48: {
-            X = input.ReadInt32();
+            X = input.ReadSInt32();
             break;
           }
           case 56: {
@@ -6902,7 +7695,7 @@ namespace SuMultiplayer.Protocol.Circuit {
             break;
           }
           case 64: {
-            Z = input.ReadInt32();
+            Z = input.ReadSInt32();
             break;
           }
           case 72: {
@@ -6951,7 +7744,7 @@ namespace SuMultiplayer.Protocol.Circuit {
     [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
     [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
     public static pbr::MessageDescriptor Descriptor {
-      get { return global::SuMultiplayer.Protocol.Circuit.CircuitReflection.Descriptor.MessageTypes[13]; }
+      get { return global::SuMultiplayer.Protocol.Circuit.CircuitReflection.Descriptor.MessageTypes[14]; }
     }
 
     [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
@@ -7052,11 +7845,11 @@ namespace SuMultiplayer.Protocol.Circuit {
     #else
       if (X != 0) {
         output.WriteRawTag(8);
-        output.WriteInt32(X);
+        output.WriteSInt32(X);
       }
       if (Z != 0) {
         output.WriteRawTag(16);
-        output.WriteInt32(Z);
+        output.WriteSInt32(Z);
       }
       if (_unknownFields != null) {
         _unknownFields.WriteTo(output);
@@ -7070,11 +7863,11 @@ namespace SuMultiplayer.Protocol.Circuit {
     void pb::IBufferMessage.InternalWriteTo(ref pb::WriteContext output) {
       if (X != 0) {
         output.WriteRawTag(8);
-        output.WriteInt32(X);
+        output.WriteSInt32(X);
       }
       if (Z != 0) {
         output.WriteRawTag(16);
-        output.WriteInt32(Z);
+        output.WriteSInt32(Z);
       }
       if (_unknownFields != null) {
         _unknownFields.WriteTo(ref output);
@@ -7087,10 +7880,10 @@ namespace SuMultiplayer.Protocol.Circuit {
     public int CalculateSize() {
       int size = 0;
       if (X != 0) {
-        size += 1 + pb::CodedOutputStream.ComputeInt32Size(X);
+        size += 1 + pb::CodedOutputStream.ComputeSInt32Size(X);
       }
       if (Z != 0) {
-        size += 1 + pb::CodedOutputStream.ComputeInt32Size(Z);
+        size += 1 + pb::CodedOutputStream.ComputeSInt32Size(Z);
       }
       if (_unknownFields != null) {
         size += _unknownFields.CalculateSize();
@@ -7130,11 +7923,11 @@ namespace SuMultiplayer.Protocol.Circuit {
             _unknownFields = pb::UnknownFieldSet.MergeFieldFrom(_unknownFields, input);
             break;
           case 8: {
-            X = input.ReadInt32();
+            X = input.ReadSInt32();
             break;
           }
           case 16: {
-            Z = input.ReadInt32();
+            Z = input.ReadSInt32();
             break;
           }
         }
@@ -7157,11 +7950,11 @@ namespace SuMultiplayer.Protocol.Circuit {
             _unknownFields = pb::UnknownFieldSet.MergeFieldFrom(_unknownFields, ref input);
             break;
           case 8: {
-            X = input.ReadInt32();
+            X = input.ReadSInt32();
             break;
           }
           case 16: {
-            Z = input.ReadInt32();
+            Z = input.ReadSInt32();
             break;
           }
         }
@@ -7186,7 +7979,7 @@ namespace SuMultiplayer.Protocol.Circuit {
     [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
     [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
     public static pbr::MessageDescriptor Descriptor {
-      get { return global::SuMultiplayer.Protocol.Circuit.CircuitReflection.Descriptor.MessageTypes[14]; }
+      get { return global::SuMultiplayer.Protocol.Circuit.CircuitReflection.Descriptor.MessageTypes[15]; }
     }
 
     [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
@@ -7510,7 +8303,7 @@ namespace SuMultiplayer.Protocol.Circuit {
     [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
     [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
     public static pbr::MessageDescriptor Descriptor {
-      get { return global::SuMultiplayer.Protocol.Circuit.CircuitReflection.Descriptor.MessageTypes[15]; }
+      get { return global::SuMultiplayer.Protocol.Circuit.CircuitReflection.Descriptor.MessageTypes[16]; }
     }
 
     [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
@@ -7828,7 +8621,7 @@ namespace SuMultiplayer.Protocol.Circuit {
     [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
     [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
     public static pbr::MessageDescriptor Descriptor {
-      get { return global::SuMultiplayer.Protocol.Circuit.CircuitReflection.Descriptor.MessageTypes[16]; }
+      get { return global::SuMultiplayer.Protocol.Circuit.CircuitReflection.Descriptor.MessageTypes[17]; }
     }
 
     [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
@@ -8063,7 +8856,7 @@ namespace SuMultiplayer.Protocol.Circuit {
     [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
     [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
     public static pbr::MessageDescriptor Descriptor {
-      get { return global::SuMultiplayer.Protocol.Circuit.CircuitReflection.Descriptor.MessageTypes[17]; }
+      get { return global::SuMultiplayer.Protocol.Circuit.CircuitReflection.Descriptor.MessageTypes[18]; }
     }
 
     [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
