@@ -90,7 +90,7 @@ namespace SuMultiplayer.Protocol {
             "EhAKCGlkZW50aXR5GAcgASgJIpcBChBQbGF5ZXJTcGF3blN0YXRlEgwKBGZ1",
             "bGwYASABKAgSEAoIcmV2aXNpb24YAiABKA0SMAoHZW50cmllcxgDIAMoCzIf",
             "LnN1bXAucHJvdG9jb2wuUGxheWVyU3Bhd25FbnRyeRILCgNleHQYZCABKAwS",
-            "JAoGY3VzdG9tGGUgASgLMhQuZ29vZ2xlLnByb3RvYnVmLkFueSq8GQoLTWVz",
+            "JAoGY3VzdG9tGGUgASgLMhQuZ29vZ2xlLnByb3RvYnVmLkFueSqtGQoLTWVz",
             "c2FnZVR5cGUSHAoYTUVTU0FHRV9UWVBFX1VOU1BFQ0lGSUVEEAASCQoFSEVM",
             "TE8QARINCglIRUxMT19BQ0sQAhITCg9JTlRFUkVTVF9VUERBVEUQAxIXChND",
             "SFVOS19ESUdFU1RfUkVQT1JUEAQSEQoNQ0hVTktfVkVSRElDVBAFEhAKDENI",
@@ -152,19 +152,18 @@ namespace SuMultiplayer.Protocol {
             "UExBWUVSX1NMT1RTEF4SGAoUUExBWUVSX1ZJVEFMU19SRVBPUlQQXxIYChRQ",
             "TEFZRVJfVklUQUxTX0VWRU5UUxBgEhgKFE1FTEVFX0FUVEFDS19SRVFVRVNU",
             "EGESFwoTTUVMRUVfQVRUQUNLX1JFU1VMVBBiEhMKD0NPTUJBVF9STkdfU1lO",
-            "QxBjEhMKD0NMSUVOVF9VSV9TVEFURRBkEhoKFlBMQVlFUl9SRVNQQVdOX1JF",
-            "UVVFU1QQZRIZChVQTEFZRVJfUkVTUEFXTl9SRVNVTFQQZhIXChNQTEFZRVJf",
-            "V0FLRV9SRVFVRVNUEGcSGAoUUExBWUVSX1NMRUVQX1JFUVVFU1QQaBIXChNQ",
-            "TEFZRVJfU0xFRVBfUkVTVUxUEGkSHgoaUExBWUVSX1NFTEZfREFNQUdFX1JF",
-            "UVVFU1QQahIdChlQTEFZRVJfU0VMRl9EQU1BR0VfUkVTVUxUEGsSFwoTUExB",
-            "WUVSX1BST0ZJTEVfU1lOQxBsEhgKFFBMQVlFUl9FRkZFQ1RfRVZFTlRTEG0S",
-            "GAoUUFJPSkVDVElMRV9ISVRfRVZFTlQQbxIZChVXT1JMRF9DT05UUk9MX1JF",
-            "UVVFU1QQcBIYChRXT1JMRF9DT05UUk9MX1JFU1VMVBBxEhEKDU1PVU5UX1JF",
-            "UVVFU1QQchIPCgtNT1VOVF9TVEFURRBzEhAKDFBMQVlFUl9TUEFXThB0EggK",
-            "BFBJTkcQdRIICgRQT05HEHYSGAoUQkxPQ0tfREVTVFJPWV9FRkZFQ1QQdxId",
-            "ChhDTElFTlRfUlVOVElNRV9URUxFTUVUUlkQkQESFwoSTElWRV9NQVBfVEVM",
-            "RU1FVFJZEJIBIgQIbhBuQhtIAaoCFlN1TXVsdGlwbGF5ZXIuUHJvdG9jb2xi",
-            "BnByb3RvMw=="));
+            "QxBjEhoKFlBMQVlFUl9SRVNQQVdOX1JFUVVFU1QQZRIZChVQTEFZRVJfUkVT",
+            "UEFXTl9SRVNVTFQQZhIXChNQTEFZRVJfV0FLRV9SRVFVRVNUEGcSGAoUUExB",
+            "WUVSX1NMRUVQX1JFUVVFU1QQaBIXChNQTEFZRVJfU0xFRVBfUkVTVUxUEGkS",
+            "HgoaUExBWUVSX1NFTEZfREFNQUdFX1JFUVVFU1QQahIdChlQTEFZRVJfU0VM",
+            "Rl9EQU1BR0VfUkVTVUxUEGsSFwoTUExBWUVSX1BST0ZJTEVfU1lOQxBsEhgK",
+            "FFBMQVlFUl9FRkZFQ1RfRVZFTlRTEG0SGAoUUFJPSkVDVElMRV9ISVRfRVZF",
+            "TlQQbxIZChVXT1JMRF9DT05UUk9MX1JFUVVFU1QQcBIYChRXT1JMRF9DT05U",
+            "Uk9MX1JFU1VMVBBxEhEKDU1PVU5UX1JFUVVFU1QQchIPCgtNT1VOVF9TVEFU",
+            "RRBzEhAKDFBMQVlFUl9TUEFXThB0EggKBFBJTkcQdRIICgRQT05HEHYSGAoU",
+            "QkxPQ0tfREVTVFJPWV9FRkZFQ1QQdxIdChhDTElFTlRfUlVOVElNRV9URUxF",
+            "TUVUUlkQkQESFwoSTElWRV9NQVBfVEVMRU1FVFJZEJIBIgQIZBBkIgQIbhBu",
+            "QhtIAaoCFlN1TXVsdGlwbGF5ZXIuUHJvdG9jb2xiBnByb3RvMw=="));
       descriptor = pbr::FileDescriptor.FromGeneratedCode(descriptorData,
           new pbr::FileDescriptor[] { global::Google.Protobuf.WellKnownTypes.AnyReflection.Descriptor, },
           new pbr::GeneratedClrTypeInfo(new[] {typeof(global::SuMultiplayer.Protocol.MessageType), }, null, new pbr::GeneratedClrTypeInfo[] {
@@ -601,19 +600,6 @@ namespace SuMultiplayer.Protocol {
     /// </summary>
     [pbr::OriginalName("COMBAT_RNG_SYNC")] CombatRngSync = 99,
     /// <summary>
-    /// Client UI state mirroring (uistate.proto).  Client -> host: the client's
-    /// interface layer (input form / HUD visibility / active screen / open dialog /
-    /// open modal panel / chat input) so the host's split-screen view of that client
-    /// can show the same UI.  Change driven + heartbeat; read-only on the client.
-    /// Append-only: 100 was the reserved gap between 99 and 101; it is now a real
-    /// message id and no existing id is renumbered.
-    /// Source: Survivalcraft/Game/ComponentGui.cs:395（ControlsContainerWidget.IsVisible）
-    /// Source: Survivalcraft/Game/ComponentInput.cs:30（IsControlledByTouch）
-    /// Source: Survivalcraft/Game/ScreensManager.cs:46（CurrentScreen）
-    /// Source: Survivalcraft/Game/DialogsManager.cs:ShowDialog（dialog parent = GuiWidget）
-    /// </summary>
-    [pbr::OriginalName("CLIENT_UI_STATE")] ClientUiState = 100,
-    /// <summary>
     /// Client-requested respawn after a host-decided death (respawn.proto).
     /// The host never auto-respawns a dead client character: it sends the Death
     /// edge and waits.  The client shows the engine-equivalent death screen and,
@@ -621,8 +607,8 @@ namespace SuMultiplayer.Protocol {
     /// validates owner + dead state + game-mode rules and answers with
     /// PLAYER_RESPAWN_RESULT (id 102); accepting emits the existing RESPAWN event
     /// (96) + authoritative report (95).
-    /// Append-only: 101 / 102 are new ids.  100 was the reserved gap and is now
-    /// CLIENT_UI_STATE (see above); no existing id is renumbered.
+    /// Append-only: 101 / 102 are new ids.  Message id 100 is retired and reserved;
+    /// no existing id is renumbered.
     /// Source: Survivalcraft/Game/PlayerData.cs:275-330（死亡屏 / 1.5 s 点击门槛）
     /// Source: Survivalcraft/Game/GameWidget.cs:63-80（每个 GameWidget 自己的 DeathCamera）
     /// </summary>

@@ -36,8 +36,6 @@ namespace SuMultiplayer.Engine
     ///     没有任何引擎代码再写它们（温度条 BarSubtexture 只在 UpdateTemperature 里写，
     ///     IceFactor 又被 ComponentScreenOverlays.Update 每帧清 0）。
     ///   · 主机裁决客户端化身的复活：<see cref="TryRespawnAvatar"/> 按该角色自己的出生点复位。
-    ///   · H3 调试镜像（Engine/MirrorCharacterEngine.cs）读主机侧客户端化身的真实组件；
-    ///     主机不抑制它们，所以 H3 读到的是权威状态。
     ///
     /// 引擎事实：
     ///   · 死亡视觉 / 掉落只在 <c>ComponentHealth.Update</c> 的
@@ -162,17 +160,6 @@ namespace SuMultiplayer.Engine
         /// </summary>
         private readonly Dictionary<int, LocalSleepState> m_localSleep =
             new Dictionary<int, LocalSleepState>();
-        /// <summary>主机槽位（H3 第三分屏视图所有者）→ 睡眠表现镜像状态。</summary>
-        private readonly Dictionary<int, MirrorSleepState> m_mirrorSleep =
-            new Dictionary<int, MirrorSleepState>();
-        /// <summary>主机侧镜像视图刷新用的本机角色缓冲（复用）。</summary>
-        private readonly List<PlayerData> m_mirrorRefreshBuffer =
-            new List<PlayerData>(PlayerKey.SlotCount);
-        /// <summary>本拍仍然是"已绑定视图所有者"的本机槽位集合（复用）。</summary>
-        private readonly HashSet<int> m_mirrorPresent = new HashSet<int>();
-        /// <summary>已经不再绑定视图的槽位（复用，避免每帧分配）。</summary>
-        private readonly List<int> m_mirrorStale = new List<int>(PlayerKey.SlotCount);
-
         /// <summary>
         /// 一个本机槽位的睡眠表现缓存。字段口径：
         ///   · <see cref="SleepStartTime"/> / <see cref="AllowManualWake"/> /
@@ -201,16 +188,6 @@ namespace SuMultiplayer.Engine
             public bool LegacyReported;
         }
 
-        /// <summary>H3 第三分屏视图所有者的睡眠表现镜像状态（只写表现字段，不写睡眠本体）。</summary>
-        private sealed class MirrorSleepState
-        {
-            public ComponentPlayer Owner;
-            public int OwnerToken;
-            public float Factor;
-            public float MessageFactor;
-            public bool ControlsOwned;
-        }
-
         /// <summary>一个本机槽位的 HUD 缓存；实体换代（复活换实体）= 新 GUI，贴图必须重写。</summary>
         private sealed class LocalHudState
         {
@@ -229,8 +206,7 @@ namespace SuMultiplayer.Engine
             /// <summary>这一份冻结值来自"老版本主机没带字段 → 用权威温度推导"（显式计数）。</summary>
             public bool FreezeLegacy;
             /// <summary>
-            /// 冰冻覆盖的连续插值（每帧按时间常数 + 最大速率逼近主机值）。5 Hz 快照直接写
-            /// <c>IceFactor</c> 会一顿一顿地跳，第三分屏（读主机连续温度）也会与客户端不同步。
+            /// 冰冻覆盖的连续插值（每帧按时间常数 + 最大速率逼近主机值），抹平权威快照台阶。
             /// </summary>
             public readonly PlayerPresentationInterpolator Freeze =
                 new PlayerPresentationInterpolator();
@@ -401,15 +377,9 @@ namespace SuMultiplayer.Engine
         private readonly Dictionary<PlayerKey, uint> m_freezeHostStage =
             new Dictionary<PlayerKey, uint>();
         /// <summary>
-        /// 主机为每个角色算出的冻结进度（= vitals.proto 字段 22 的**原值**，随 95 下发）。
-        /// <see cref="TryGetAuthorityFreeze"/> 只读它 —— 第三分屏的冰覆盖必须与客户端同一个数
-        /// （实机问题 1：第三屏不得再按温度自己推导）。
+        /// 主机为每个角色算出的冻结进度（= vitals.proto 字段 22 的值，随 95 下发）。
+        /// 温度按同一引擎规则映射为冻结进度，随生命体征快照下发给客户端。
         /// </summary>
-        private readonly Dictionary<PlayerKey, float> m_freezeHostProgress =
-            new Dictionary<PlayerKey, float>();
-        /// <summary>只读查询成功 / 未命中的次数（第三分屏冰覆盖的可观测性）。</summary>
-        private long m_freezeAuthorityReads;
-        private long m_freezeAuthorityMisses;
         // 受伤反馈（实机问题 3）
         private long m_hurtFeedbackSound;
         private long m_hurtRedoutHits;
@@ -470,9 +440,6 @@ namespace SuMultiplayer.Engine
         private long m_sleepRejectMessages;
         private long m_sleepNoteFailures;
         private long m_sleepPresentationRuns;
-        private long m_sleepMirrorRuns;
-        private long m_sleepMirrorFailures;
-        private long m_sleepMirrorClears;
         /// <summary>
         /// 主机侧客户端化身的死亡减半账本：这些化身不在 <c>SubsystemPlayers.m_playersData</c> 里，
         /// 引擎 <c>PlayerDead</c> 不会跑 → 由主机在抓取时减一次，并写回 <c>PlayerData.Level</c>
@@ -1745,8 +1712,7 @@ namespace SuMultiplayer.Engine
                     if (fpp != null) widget.ActiveCamera = fpp;
                 }
                 // 客户端**不写**死亡大字（引擎 PlayerData.PlayerDead 的 DisplayLargeMessage 由引擎
-                // 自己管，30 秒后自己过期，见 ComponentGui.cs:385-388）；第三屏的死亡文字
-                // 由 Engine/MirrorViewFeedback.cs 负责（引擎同款时长 + 复活清除）。
+                // 自己管，30 秒后自己过期，见 ComponentGui.cs:385-388）。
                 m_localPlayerDataRestores++;
                 Info("本机槽位 " + slot + "：主机确认角色活着 → 已把引擎 PlayerData 从死亡状态" +
                     "恢复到 Playing 并切回第一人称相机（累计 " + m_localPlayerDataRestores + " 次）");
@@ -3192,8 +3158,6 @@ namespace SuMultiplayer.Engine
             // 受伤闪红的"上一拍血量"同样作废：新会话第一次应用不闪（见 m_flashHealth 注释）。
             m_flashHealth.Clear();
             m_freezeHostStage.Clear();
-            // 第三分屏冰覆盖的只读缓存同理：新会话开始，旧的权威冻结值不能带过去。
-            m_freezeHostProgress.Clear();
             // 本地模拟恢复后，引擎的 ComponentVitalStats.UpdateTemperature 会重新写温度条 /
             // 冰冻覆盖 —— 清掉我们这份只读显示缓存，避免两套来源。
             m_localHud.Clear();
@@ -3637,9 +3601,6 @@ namespace SuMultiplayer.Engine
             else
             {
                 m_freezeHostValue = freezeProgress;
-                // 只读缓存：95 上报的**原值**。第三分屏的冰覆盖只允许读它（实机问题 1），
-                // 保证两端是同一个 float、同一时刻；抓取失败时不覆盖（客户端也会保留上一次有效目标）。
-                m_freezeHostProgress[key] = freezeProgress;
                 if (m_freezeHostStage.TryGetValue(key, out uint previousStage) &&
                     previousStage != freezeStage)
                 {
@@ -3679,41 +3640,6 @@ namespace SuMultiplayer.Engine
                 level,
                 freezeProgress,
                 freezeStage);
-        }
-
-        /// <summary>
-        /// **只读查询**（实机问题 1）：主机为某个角色算出的**冻结进度 / 阶段** —— 就是
-        /// vitals.proto 字段 22/23 的**原值**（与随 95 下发给客户端的是同一个 float）。
-        ///
-        /// 为什么需要它：第三分屏（<c>Engine/MirrorViewFeedback</c>）以前自己按
-        /// <c>ComponentVitalStats.Temperature</c> 算 <c>Saturate(1 - T/6)</c> 并阶跃写入，
-        /// 而客户端走的是本条权威值 + <see cref="PlayerPresentationInterpolator"/> 平滑 ——
-        /// 两条数据 / 两条时序必然错开（实测"客户端先冻、第三屏晚很多、屏幕占比不一样"）。
-        /// 现在第三屏只读这里的值，用**同一个**插值器逼近，两端完全同步。
-        ///
-        /// 只读、不改任何状态、不产生日志（日志由调用方限流）：
-        ///   · false = 还没抓到过这个角色（还没进世界 / 化身未就绪 / 抓取失败）；
-        ///     调用方必须明确失败 / 跳过，**不得**拿 0 顶替（0 是"不冷"这个合法值）；
-        ///   · 抓取失败时保留上一次成功值（与客户端"保留上一次有效冻结目标"同口径）。
-        /// </summary>
-        public bool TryGetAuthorityFreeze(PlayerKey key, out float progress, out uint stage,
-            out string reason)
-        {
-            progress = 0f;
-            stage = PlayerFreezePolicy.StageNone;
-            reason = null;
-            if (m_freezeHostProgress.TryGetValue(key, out float capturedProgress) &&
-                m_freezeHostStage.TryGetValue(key, out uint capturedStage))
-            {
-                progress = capturedProgress;
-                stage = capturedStage;
-                m_freezeAuthorityReads++;
-                return true;
-            }
-            m_freezeAuthorityMisses++;
-            reason = "主机还没有抓到玩家键 " + key + " 的冻结进度（还没进世界 / 化身未就绪 / " +
-                "抓取失败；已采样冻结值 " + m_freezeHostProgress.Count + " 个角色）";
-            return false;
         }
 
         /// <summary>
@@ -3981,7 +3907,7 @@ namespace SuMultiplayer.Engine
         /// <c>ComponentSleep.IsSleeping</c> 决定躺下（Source: ComponentHumanModel.cs:86-94）。
         /// 直接写 <c>m_sleepStartTime</c>（不调 <c>Sleep()</c> / <c>WakeUp()</c>：那两个会写统计与
         /// SpawnPosition，属于主机的权威）。远端化身没有自己的视图屏幕，factor 仍按"睡=1 / 醒=0"
-        /// 瞬切（只有本机角色与 H3 视图需要按引擎速度淡入 / 淡出）。
+        /// 瞬切（本机角色按引擎速度淡入 / 淡出）。
         /// </summary>
         private void ApplySleep(ComponentPlayer player, bool sleeping)
         {
@@ -4110,7 +4036,7 @@ namespace SuMultiplayer.Engine
             if (project == null)
             {
                 reason = "没有加载中的 Project（本机睡眠表现无法刷新）";
-                return new PlayerSleepPresentationCounts(0, 0, 0, 0, 0, 0, 0, 0, 0, 1);
+                return new PlayerSleepPresentationCounts(0, 0, 0, 0, 0, 0, 1, 0);
             }
             if (m_disabledLocalSlots.Count == 0)
             {
@@ -4184,8 +4110,8 @@ namespace SuMultiplayer.Engine
             }
             if (applied > 0) m_sleepPresentationRuns++;
             reason = firstFailure;
-            return new PlayerSleepPresentationCounts(applied, zzz, blackout, forced, 0, legacy, 0,
-                0, missing, failures);
+            return new PlayerSleepPresentationCounts(applied, zzz, blackout, forced, 0, legacy,
+                missing, failures);
         }
 
         /// <summary>
@@ -4612,207 +4538,10 @@ namespace SuMultiplayer.Engine
             return TryResolveAvatar(key, out playerData, out player, out reason);
         }
 
-        // ================================================================ 主机侧：H3 第三分屏睡眠表现镜像
+        // ================================================================ 本机睡眠表现写入器
 
         /// <summary>
-        /// **主机每帧**：H3（replace 模式）第三个分屏显示的是 H3 自己的
-        /// <c>ComponentGui / ComponentScreenOverlays</c>（<c>ViewWidget.Draw</c> 只认自己 GameWidget
-        /// 的 PlayerData），但相机 Target 是客户端角色；H3 自己的
-        /// <c>ComponentSleep.Update</c> 已被调试镜像摘掉。于是这里把"被镜像客户端"的睡眠表现
-        /// 用**同一个写入器**写到 H3（视图所有者）身上。
-        ///
-        /// 与 <c>Engine/MirrorCharacterEngine.cs</c> 解耦：不引用它的内部状态，只按 replace 模式的
-        /// 公开特征识别绑定 —— <c>GameWidget.Target != 自己</c> 且 Target 是 <c>NetworkAvatarSpawner</c>
-        /// 里的某个客户端化身。只写表现字段（<c>m_sleepFactor</c> / overlays / 控件），
-        /// **不写** <c>m_sleepStartTime</c> / <c>m_allowManualWakeUp</c>：H3 的存档状态与
-        /// 镜像引擎的"不复制任何状态"口径保持不变。
-        /// </summary>
-        public PlayerSleepPresentationCounts RefreshMirrorSleepPresentation(float dt,
-            out string reason)
-        {
-            reason = null;
-            int applied = 0;
-            int cleared = 0;
-            int failures = 0;
-            Project project = GameManager.Project;
-            if (project == null)
-            {
-                reason = "没有加载中的 Project（H3 分屏睡眠表现无法刷新）";
-                return new PlayerSleepPresentationCounts(0, 0, 0, 0, 0, 0, 0, 0, 0, 1);
-            }
-            if (!m_spawner.TryCollectLocalPlayers(project, m_mirrorRefreshBuffer, out bool tooMany,
-                    out string localReason))
-            {
-                reason = "读取本机角色失败：" + (localReason ?? "端口没有给原因");
-                return new PlayerSleepPresentationCounts(0, 0, 0, 0, 0, 0, 0, 0, 0, 1);
-            }
-            if (tooMany)
-                Problem("sleep-mirror-too-many", "本机角色数超过引擎上限（" + localReason +
-                    "）→ H3 睡眠表现镜像只处理前 " + PlayerKey.SlotCount + " 个槽位");
-            m_mirrorPresent.Clear();
-            string firstFailure = null;
-            for (int slot = 0; slot < m_mirrorRefreshBuffer.Count; slot++)
-            {
-                ComponentPlayer owner = m_mirrorRefreshBuffer[slot]?.ComponentPlayer;
-                if (owner?.Entity == null) continue;
-                m_mirrorPresent.Add(slot);
-                GameWidget widget = owner.GameWidget;
-                ComponentCreature target = widget?.Target;
-                bool bound = target != null && target.Entity != null &&
-                    target.Entity != owner.Entity;
-                if (!bound)
-                {
-                    if (!m_mirrorSleep.TryGetValue(slot, out MirrorSleepState old)) continue;
-                    m_mirrorSleep.Remove(slot);
-                    m_sleepMirrorClears++;
-                    if (!ClearMirrorSleep(old, out string clearReason))
-                    {
-                        failures++;
-                        if (firstFailure == null)
-                            firstFailure = "槽位 " + slot + "：" + clearReason;
-                        continue;
-                    }
-                    cleared++;
-                    continue;
-                }
-                ComponentPlayer source = target as ComponentPlayer;
-                if (source == null || !TryFindAvatarKey(source, out PlayerKey sourceKey))
-                    continue;   // 不是"客户端角色"的镜像视图（例如别的本机角色）→ 不是本功能的范围
-                ComponentSleep sourceSleep = source.ComponentSleep;
-                if (sourceSleep == null)
-                {
-                    failures++;
-                    if (firstFailure == null)
-                        firstFailure = "槽位 " + slot + "：客户端 " + sourceKey +
-                            " 没有 ComponentSleep";
-                    continue;
-                }
-                MirrorSleepState state = GetOrCreateMirrorSleep(slot, owner);
-                bool sleeping = sourceSleep.IsSleeping;
-                bool allow = m_parentField.GetParentField<bool>(sourceSleep,
-                    "m_allowManualWakeUp", typeof(ComponentSleep));
-                bool dead = source.ComponentHealth != null &&
-                    source.ComponentHealth.Health <= 0f;
-                double start = ReadSleepStartTime(sourceSleep);
-                float elapsed = 0f;
-                if (sleeping && start > 0.0)
-                {
-                    double value = CurrentGameTime(owner) - start;
-                    if (!double.IsNaN(value) && !double.IsInfinity(value) && value > 0.0)
-                        elapsed = (float)Math.Min(value,
-                            (double)PlayerSleepLimits.MaxSleepElapsedSeconds);
-                }
-                var sleepState = new PlayerSleepState(sleeping, dead, allow,
-                    sleeping && !allow, start, elapsed);
-                PlayerSleepFrame frame = PlayerSleepRules.Advance(in sleepState, elapsed,
-                    state.Factor, state.MessageFactor, dt);
-                bool needsWrite = frame.PresentationActive || state.ControlsOwned;
-                if (!needsWrite)
-                {
-                    state.Factor = frame.Factor;
-                    state.MessageFactor = frame.MessageFactor;
-                    state.ControlsOwned = false;
-                    continue;
-                }
-                if (!WriteSleepPresentation(owner, in frame, out string writeReason))
-                {
-                    failures++;
-                    if (firstFailure == null)
-                        firstFailure = "槽位 " + slot + "：" + writeReason;
-                    continue;
-                }
-                state.Factor = frame.Factor;
-                state.MessageFactor = frame.MessageFactor;
-                state.ControlsOwned = frame.ControlsHidden;
-                applied++;
-            }
-            if (m_mirrorSleep.Count > 0)
-            {
-                m_mirrorStale.Clear();
-                foreach (int slot in m_mirrorSleep.Keys)
-                    if (!m_mirrorPresent.Contains(slot)) m_mirrorStale.Add(slot);
-                for (int i = 0; i < m_mirrorStale.Count; i++)
-                {
-                    int slot = m_mirrorStale[i];
-                    MirrorSleepState old = m_mirrorSleep[slot];
-                    m_mirrorSleep.Remove(slot);
-                    m_sleepMirrorClears++;
-                    if (!ClearMirrorSleep(old, out string clearReason))
-                    {
-                        failures++;
-                        if (firstFailure == null)
-                            firstFailure = "槽位 " + slot + "：" + clearReason;
-                        continue;
-                    }
-                    cleared++;
-                }
-            }
-            if (applied > 0) m_sleepMirrorRuns++;
-            if (failures > 0) m_sleepMirrorFailures++;
-            reason = firstFailure;
-            return new PlayerSleepPresentationCounts(0, 0, 0, 0, 0, 0, applied, cleared, 0,
-                failures);
-        }
-
-        private MirrorSleepState GetOrCreateMirrorSleep(int slot, ComponentPlayer owner)
-        {
-            if (!m_mirrorSleep.TryGetValue(slot, out MirrorSleepState state))
-            {
-                state = new MirrorSleepState();
-                m_mirrorSleep[slot] = state;
-            }
-            int token = Token(owner);
-            if (state.OwnerToken != token)
-            {
-                state.OwnerToken = token;
-                state.Factor = 0f;
-                state.MessageFactor = 0f;
-                state.ControlsOwned = false;
-            }
-            state.Owner = owner;
-            return state;
-        }
-
-        /// <summary>视图解绑 / 所有者消失：把 H3 的表现写回"醒着"（否则 SleepFactor 会永远 &gt; 0）。</summary>
-        private bool ClearMirrorSleep(MirrorSleepState state, out string reason)
-        {
-            reason = null;
-            ComponentPlayer owner = state.Owner;
-            if (owner?.Entity == null || !owner.Entity.IsAddedToProject)
-            {
-                reason = "视图所有者的实体已不存在（无需写回表现）";
-                return true;
-            }
-            var frame = new PlayerSleepFrame(0f, 0f, 0f, false, 0f,
-                PlayerSleepMessageKind.None, null, false, 0f, false);
-            if (!WriteSleepPresentation(owner, in frame, out reason)) return false;
-            state.Factor = 0f;
-            state.MessageFactor = 0f;
-            state.ControlsOwned = false;
-            return true;
-        }
-
-        /// <summary>客户端化身 → 玩家键（主机镜像视图的 Target 反查；化身表 ≤ 4 项）。</summary>
-        private bool TryFindAvatarKey(ComponentPlayer source, out PlayerKey key)
-        {
-            key = default;
-            if (source == null) return false;
-            foreach (PlayerKey candidate in m_spawner.Keys)
-            {
-                if (!m_spawner.TryGet(candidate, out PlayerData data)) continue;
-                if (data?.ComponentPlayer == source)
-                {
-                    key = candidate;
-                    return true;
-                }
-            }
-            return false;
-        }
-
-        // ================================================================ 睡眠表现写入器（本机 / H3 镜像共用）
-
-        /// <summary>
-        /// 把一帧表现写进角色的引擎显示层（**本机角色与 H3 视图所有者共用**）：
+        /// 把一帧表现写进本机角色的引擎显示层：
         ///   · <c>ComponentSleep.m_sleepFactor</c>（引擎 <c>SleepFactor</c> 属性 / <c>ComponentGui</c>
         ///     的控件判定 / <c>SubsystemTime</c> 的"所有人都在睡"加速都读它）；
         ///   · <c>ComponentScreenOverlays.BlackoutFactor = max(现有, factor)</c>（引擎同款）；
@@ -4821,7 +4550,7 @@ namespace SuMultiplayer.Engine
         ///   · <c>ControlsContainerWidget.IsVisible</c> = 引擎
         ///     <c>IsReadyForPlaying &amp;&amp; ActiveCamera.IsEntityControlEnabled &amp;&amp; SleepFactor &lt;= 0</c>。
         /// 只写表现字段；<c>m_sleepStartTime</c> / <c>m_allowManualWakeUp</c> 由
-        /// <see cref="ApplyLocalSleep"/> 按主机权威写（H3 镜像路径不写，保持其存档状态）。
+        /// <see cref="ApplyLocalSleep"/> 按主机权威写。
         /// </summary>
         private bool WriteSleepPresentation(ComponentPlayer player, in PlayerSleepFrame frame,
             out string reason)
@@ -5619,9 +5348,6 @@ namespace SuMultiplayer.Engine
                 " freezeLegacy=" + m_freezeLegacy + " freezeInvalid=" + m_freezeInvalid +
                 " freezeCaptureFailures=" + m_freezeCaptureFailures +
                 " freezeSeeds=" + m_freezeSeeds +
-                " freezeAuthorityReads=" + m_freezeAuthorityReads +
-                " freezeAuthorityMisses=" + m_freezeAuthorityMisses +
-                " freezeAuthorityKeys=" + m_freezeHostProgress.Count +
                 " iceFactorWriteFailures=" + m_iceFactorWriteFailures +
                 " hurtFeedbackSound=" + m_hurtFeedbackSound +
                 " hurtFeedbackRedout=" + m_hurtRedoutHits +
@@ -5654,9 +5380,7 @@ namespace SuMultiplayer.Engine
                 " suppressed=" + m_suppressedTokens.Count + " missing=" + m_suppressedMissing +
                 " deathParticleFail=" + m_deathParticleFailures +
                 " sleepStates=" + m_localSleep.Count + " sleepRuns=" +
-                m_sleepPresentationRuns + " mirrorViews=" + m_mirrorSleep.Count +
-                " sleepMirrorRuns=" + m_sleepMirrorRuns + " sleepMirrorFail=" +
-                m_sleepMirrorFailures + " sleepMirrorClears=" + m_sleepMirrorClears +
+                m_sleepPresentationRuns +
                 " sleepNoteFail=" + m_sleepNoteFailures + " authoritySleepReads=" +
                 m_authoritySleepReads + " authorityWakes=" + m_authorityWakes +
                 " authoritySleeps=" + m_authoritySleeps + " sleepAuthorityFail=" +

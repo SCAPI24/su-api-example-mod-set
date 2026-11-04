@@ -1,8 +1,6 @@
 # 近战攻击表现与客户端死亡（主机裁决口径）
 
 > 本文记录两条客户端表现契约：**近战不显示预测标记**、**客户端死亡姿态由本地补写**。
-> 镜像分屏在客户端死亡 / 复活时的相机切换见 [`MIRROR-CHARACTER.md`](MIRROR-CHARACTER.md)
-> 的「客户端死亡 / 复活：相机切 DeathCamera / FppCamera」。
 
 ## 1. 近战：预测标记已关闭，表现只由主机回执驱动
 
@@ -57,13 +55,6 @@
 
 写失败不静默：日志 `death-pose:<slot>` 明确写“角色会保持站立”（`:952-956`）。
 
-## 3. 镜像分屏的死亡相机
-
-客户端角色死亡时，主机镜像分屏（显式 `H3` 与 `mirrorcharacterauto` 自动宿主共用同一段绑定代码）
-切到 `DeathCamera`，复活切回 `FppCamera`。原因、日志与内部计数见
-[`MIRROR-CHARACTER.md`](MIRROR-CHARACTER.md) 的「客户端死亡 / 复活：相机切 DeathCamera / FppCamera」：
-`FppCamera` 盯死亡模型时眼睛位置失效会黑屏，`DeathCamera` 是引擎 `PlayerDead` 用的同一台相机。
-
 ## 验证清单
 
 1. 两个客户端进同一世界，A 攻击 B：主机结果到达前**看不到红色 `*` / 白色预测 `Miss` 粒子**；
@@ -72,5 +63,3 @@
    随回执递增，表示预测逻辑仍在跑（`Engine/MeleeReplicaEngine.cs:1462-1470`）。
 3. 客户端角色被主机判定死亡：从另一客户端或主机非镜像分屏观察，角色呈躺姿；
    客户端装了 CmdBridge 时可 `sccmd players` 读本机玩家的 `action.deathPhase=1`，复活后回 `0` 并站起。
-4. 主机日志出现 `view-death-camera:<clientId>` → 第三 / 第四分屏切到 `DeathCamera`；
-   客户端复活后出现 `view-death-camera-restore:<clientId>` → 切回 `FppCamera`。

@@ -57,7 +57,6 @@ offset 16 : protobuf payload       （该 type 对应的消息字节）
 | `Protocol/creature.proto` | 生物记录批 / 全量重发请求 |
 | `Protocol/entities.proto` | 拾取物 / 投射物复制与拾取裁决（`ENTITY_STATE = 38` / `ENTITY_SNAPSHOT = 39` / 拾取请求与回执），以及纯表现事件：`WEAPON_FIRE_EVENT = 54`、`PICKUP_SOUND_EVENT = 69`、`PROJECTILE_HIT_EVENT = 111`（投射物命中伤害数字：主机按每个客户端的兴趣窗口中继，客户端只建 `HitValueParticleSystem`，不扣血 / 不改格） |
 | `Protocol/ambient.proto` | 主机 → 客户端的循环环境音音量（`AMBIENT_SOUNDS_STATE = 93`，每个客户端一条 4 float 小消息） |
-| `Protocol/uistate.proto` | 客户端 → 主机的界面层状态（`CLIENT_UI_STATE = 100`：输入形态 / HUD 显隐 / 当前屏幕 / 打开的对话框与模态面板 / 聊天输入行 / 本机视角模式（`camera_mode = 18`：0 不改变 / 1 第一人称 / 2 第三人称 / 3 轨道环绕 / 4 固定视点，>4 拒绝）；变化驱动 + 2 s 心跳，见 `Modules/UiStateSyncModule.cs`） |
 | `Protocol/vitals.proto` | 主机 → 客户端权威生命 / 体征 / 死亡边沿（`PLAYER_VITALS_REPORT = 95` / `PLAYER_VITALS_EVENTS = 96`） |
 | `Protocol/respawn.proto` | 客户端 → 主机复活请求 `PLAYER_RESPAWN_REQUEST = 101` / 主机回执 `PLAYER_RESPAWN_RESULT = 102`（死亡屏点击后每次死亡最多一次；主机校验 owner / dead / 模式 / 冷却；接受后立即 `TryRespawnAvatar`，回执带落点并沿用 95/96）。110（`PLAYER_RESPAWN_STAGE` 进度握手）已回退并保留编号，禁止复用 |
 | `Protocol/Generated/` | 构建时生成并提交的 C#（不参与编译，只作审阅 / 离线参考） |
@@ -74,7 +73,7 @@ id 区间：
 `InvalidOperationException`（不会静默覆盖）。当前内置 id 最大为 **111**
 （`PROJECTILE_HIT_EVENT` = 投射物命中伤害数字，主机按每个客户端的兴趣窗口中继；
 110 曾是已回退的复活进度握手，编号保留、禁止复用；109 是 `PLAYER_EFFECT_EVENTS`，
-108 是 `PLAYER_PROFILE_SYNC`，101/102 是复活请求 / 回执，100 是 `CLIENT_UI_STATE`，
+108 是 `PLAYER_PROFILE_SYNC`，101/102 是复活请求 / 回执，100 是已退役并保留的消息号，
 99 是 `COMBAT_RNG_SYNC`）；新增内置消息请从 112 开始。
 
 ---

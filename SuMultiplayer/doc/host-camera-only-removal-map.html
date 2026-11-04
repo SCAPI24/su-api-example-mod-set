@@ -1,0 +1,246 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>主机端 Camera-only / 第三分屏移除关系图</title>
+<style>
+:root{
+  color-scheme:light;
+  --bg:#f3f6fa;--paper:#fff;--ink:#17243a;--muted:#586a82;--line:#d5deea;
+  --remove:#b52d49;--remove-bg:#fff0f2;--partial:#986000;--partial-bg:#fff7e6;
+  --keep:#087553;--keep-bg:#eaf8f1;--blue:#176b94;--blue-bg:#eaf5fb;
+  --mono:ui-monospace,"Cascadia Mono",Consolas,monospace;
+  --sans:system-ui,-apple-system,"Segoe UI","Microsoft YaHei","PingFang SC",sans-serif;
+}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);font:14px/1.55 var(--sans)}
+header,main,footer{width:min(1500px,100%);margin:0 auto;padding-left:22px;padding-right:22px}
+header{padding-top:26px;padding-bottom:16px}
+.eyebrow{font:700 11px/1.4 var(--mono);color:var(--blue);text-transform:uppercase}
+h1{margin:5px 0 7px;font-size:27px;line-height:1.25}
+.lead{max-width:970px;margin:0;color:var(--muted)}
+.legend{display:flex;gap:8px;flex-wrap:wrap;margin-top:15px}
+.legend span{display:inline-flex;align-items:center;gap:7px;border:1px solid var(--line);border-radius:6px;background:var(--paper);padding:5px 9px;color:var(--muted);font-size:12px}
+.swatch{width:9px;height:9px;border-radius:2px;background:var(--remove)}
+.swatch.partial{background:#d18a12}.swatch.keep{background:#198565}.swatch.link{background:var(--blue)}
+.diagram-frame{overflow:auto;border:1px solid var(--line);border-radius:8px;background:var(--paper);box-shadow:0 2px 8px #18324c0b}
+svg{display:block;width:100%;min-width:1120px;height:auto}
+.group{fill:#fbfcfe;stroke:#cbd6e3;stroke-width:1.5}
+.group-title{font-size:18px;font-weight:750;fill:var(--ink)}
+.group-sub{font-size:12px;fill:var(--muted)}
+.node{fill:#fff;stroke:#d7e0ea;stroke-width:1.2}
+.node-remove{fill:var(--remove-bg);stroke:#e7aeb9}
+.node-partial{fill:var(--partial-bg);stroke:#e5c782}
+.node-keep{fill:var(--keep-bg);stroke:#a9d8c3}
+.node-blue{fill:var(--blue-bg);stroke:#b8d8e8}
+.node-title{font-size:13px;font-weight:750;fill:var(--ink)}
+.node-text{font-size:11.5px;fill:#4f6077}
+.node-code{font-size:10.5px;font-family:var(--mono);fill:#43546a}
+.hub{fill:#21364f;stroke:#12273f;stroke-width:2}
+.hub-title{font-size:17px;font-weight:800;fill:#fff;text-anchor:middle}
+.hub-text{font-size:12px;fill:#e2edf7;text-anchor:middle}
+.edge{fill:none;stroke:var(--remove);stroke-width:2.3;marker-end:url(#arrow-red)}
+.edge-partial{fill:none;stroke:#c08212;stroke-width:2;stroke-dasharray:7 5;marker-end:url(#arrow-amber)}
+.edge-blue{fill:none;stroke:var(--blue);stroke-width:2;marker-end:url(#arrow-blue)}
+.edge-label{font-size:10.5px;font-weight:650;fill:#6b4650;paint-order:stroke;stroke:#fff;stroke-width:4px;stroke-linejoin:round}
+.section-title{margin:25px 0 9px;font-size:18px}
+.grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}
+.card{background:var(--paper);border:1px solid var(--line);border-radius:7px;padding:14px 15px;min-width:0}
+.card h3{margin:0 0 7px;font-size:14px}
+.card.remove{border-left:4px solid var(--remove)}
+.card.partial{border-left:4px solid #c08212}
+.card.keep{border-left:4px solid var(--keep)}
+.card.protocol{border-left:4px solid var(--blue)}
+.card p{margin:4px 0;color:var(--muted);font-size:12.5px}
+code{font-family:var(--mono);font-size:11.5px;overflow-wrap:anywhere;color:#34475f;background:#f3f6fa;padding:1px 3px;border-radius:3px}
+.files{display:block;margin-top:5px;color:#43546a;font:11px/1.65 var(--mono);overflow-wrap:anywhere}
+.note{padding:11px 13px;margin-top:12px;background:var(--partial-bg);border:1px solid #ecd9a7;border-left:4px solid #c08212;border-radius:6px;color:#59491f;font-size:12.5px}
+footer{padding-top:17px;padding-bottom:28px;color:var(--muted);font-size:11.5px}
+@media(max-width:760px){
+  header,main,footer{padding-left:13px;padding-right:13px}
+  h1{font-size:22px}
+  .grid{grid-template-columns:1fr}
+  .diagram-frame{border-radius:6px}
+}
+@media(prefers-reduced-motion:reduce){*{scroll-behavior:auto!important}}
+</style>
+</head>
+<body>
+<header>
+  <div class="eyebrow">SuMultiplayer · removal map</div>
+  <h1>主机端 Camera-only / 第三分屏功能移除关系图</h1>
+  <p class="lead">中心是废弃目标，红色支线表示随功能移除；黄色虚线表示共享文件只删专用部分；绿色表示需要保留的网络化身及正常同步。图中的连接表达代码依赖和组合根接线，不表示运行时消息方向。</p>
+  <div class="legend" aria-label="图例">
+    <span><i class="swatch"></i>整项移除</span>
+    <span><i class="swatch partial"></i>共享文件局部移除</span>
+    <span><i class="swatch keep"></i>保留功能</span>
+    <span><i class="swatch link"></i>组合/数据依赖</span>
+  </div>
+</header>
+<main>
+  <div class="diagram-frame" role="img" aria-label="主机端 Camera-only 和第三分屏移除关系图">
+    <svg viewBox="0 0 1800 1130" xmlns="http://www.w3.org/2000/svg">
+      <defs>
+        <marker id="arrow-red" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="#b52d49"/></marker>
+        <marker id="arrow-amber" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="#c08212"/></marker>
+        <marker id="arrow-blue" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="#176b94"/></marker>
+      </defs>
+
+      <!-- radial connectors -->
+      <path class="edge" d="M900 440V286"/><text class="edge-label" x="915" y="365">视图创建 / 绑定</text>
+      <path class="edge" d="M710 510H557"/><text class="edge-label" x="584" y="495">组合根 / 配置</text>
+      <path class="edge" d="M1090 510H1243"/><text class="edge-label" x="1126" y="495">UI状态投射</text>
+      <path class="edge" d="M740 630L550 790"/><text class="edge-label" x="606" y="714">第三屏反馈</text>
+      <path class="edge" d="M1060 630L1250 790"/><text class="edge-label" x="1113" y="714">协议与兼容性</text>
+      <path class="edge-partial" d="M900 650V813"/><text class="edge-label" x="915" y="754">共享文件边界</text>
+
+      <!-- routes -->
+      <rect class="group" x="500" y="24" width="800" height="262" rx="9"/>
+      <text class="group-title" x="524" y="55">1 · 三条主机分屏路线</text>
+      <text class="group-sub" x="524" y="76">目标一致：把客户端画面放到主机新建或复用的本地 GameWidget</text>
+      <rect class="node node-remove" x="524" y="94" width="360" height="72" rx="6"/>
+      <text class="node-title" x="540" y="116">Debug Camera-only</text>
+      <text class="node-code" x="540" y="136">DebugMirrorClient + DebugMirrorPorts</text>
+      <text class="node-text" x="540" y="153">临时 PlayerData / 第 3 个 GameWidget / MIR 按钮</text>
+      <rect class="node node-remove" x="916" y="94" width="360" height="72" rx="6"/>
+      <text class="node-title" x="932" y="116">自动 ClientView</text>
+      <text class="node-code" x="932" y="136">ClientViewEngine + ClientViewPorts</text>
+      <text class="node-text" x="932" y="153">为每个客户端创建 camera-only 临时视图</text>
+      <rect class="node node-remove" x="524" y="180" width="360" height="80" rx="6"/>
+      <text class="node-title" x="540" y="202">MirrorCharacter · H3 replace / copy</text>
+      <text class="node-code" x="540" y="222">MirrorCharacterEngine + DebugMirrorCharacterPorts</text>
+      <text class="node-text" x="540" y="242">绑定现有本地角色、隐藏/复制/恢复角色状态</text>
+      <rect class="node node-remove" x="916" y="180" width="360" height="80" rx="6"/>
+      <text class="node-title" x="932" y="202">MirrorHost · 自动真实本地角色</text>
+      <text class="node-code" x="932" y="222">MirrorHostEngine + MirrorHostPorts + Immunity</text>
+      <text class="node-text" x="932" y="242">创建/收编 PlayerData，并直接调用 MirrorCharacterEngine</text>
+
+      <!-- composition/config -->
+      <rect class="group" x="24" y="330" width="534" height="355" rx="9"/>
+      <text class="group-title" x="48" y="361">2 · 组合根、配置与存档</text>
+      <rect class="node node-remove" x="48" y="381" width="486" height="118" rx="6"/>
+      <text class="node-title" x="64" y="404">Plug/SuMultiplayerMod.cs</text>
+      <text class="node-code" x="64" y="426">字段 / 实例构造 / ModuleHost port 注册</text>
+      <text class="node-text" x="64" y="447">三路优先级仲裁、Tick、状态行、错误步骤名</text>
+      <text class="node-text" x="64" y="468">世界配置刷新、卸载顺序、第三屏恢复与 Dispose</text>
+      <rect class="node node-remove" x="48" y="513" width="486" height="72" rx="6"/>
+      <text class="node-title" x="64" y="536">DebugMirrorWorldSettings</text>
+      <text class="node-code" x="64" y="557">debugmirrorclient / mirrorcharacter* / mirrorcharacterauto</text>
+      <text class="node-code" x="64" y="575">mirrorhostnameprefix / clientview*</text>
+      <rect class="node node-partial" x="48" y="600" width="486" height="64" rx="6"/>
+      <text class="node-title" x="64" y="623">SuSubsystemPlayers · 只切 MirrorHost 注册表</text>
+      <text class="node-text" x="64" y="644">保留下载世界出生点；旧自动角色只按明确标记迁移清理</text>
+
+      <!-- UI state mirror -->
+      <rect class="group" x="1242" y="330" width="534" height="355" rx="9"/>
+      <text class="group-title" x="1266" y="361">3 · 客户端 UI 镜像链</text>
+      <rect class="node node-remove" x="1266" y="381" width="486" height="59" rx="6"/>
+      <text class="node-title" x="1282" y="404">ClientUiStateReader</text>
+      <text class="node-code" x="1282" y="425">Engine/ClientUiStateReader.cs</text>
+      <rect class="node node-remove" x="1266" y="451" width="486" height="59" rx="6"/>
+      <text class="node-title" x="1282" y="474">UiStateSyncModule · 变化/心跳 · 接收/重试/清理</text>
+      <text class="node-code" x="1282" y="495">Modules/UiStateSyncModule.cs · ui-state</text>
+      <rect class="node node-remove" x="1266" y="521" width="486" height="59" rx="6"/>
+      <text class="node-title" x="1282" y="544">UiMirrorEngine + UI 专用适配器</text>
+      <text class="node-code" x="1282" y="565">UiMirrorCrafting / UiMirrorMessageWidget / Presentation</text>
+      <rect class="node node-partial" x="1266" y="591" width="486" height="70" rx="6"/>
+      <text class="node-title" x="1282" y="614">BlockUseSyncModule · 仅移除 UI 容器端口</text>
+      <text class="node-text" x="1282" y="636">保留 m_openKey / m_openContainers 与库存同步本体</text>
+      <path class="edge-blue" d="M1509 441V449M1509 511V519"/>
+
+      <!-- third-screen feedback -->
+      <rect class="group" x="24" y="760" width="534" height="315" rx="9"/>
+      <text class="group-title" x="48" y="791">4 · 第三屏专属表现</text>
+      <rect class="node node-remove" x="48" y="811" width="486" height="78" rx="6"/>
+      <text class="node-title" x="64" y="834">MirrorViewFeedback / Policy / BottomHudPolicy</text>
+      <text class="node-text" x="64" y="855">死亡大消息、血条/体征、冰冻覆盖、红黑屏、底部条</text>
+      <text class="node-text" x="64" y="875">特效观察、蹲伏显示、第三屏相机和角色绑定反馈</text>
+      <rect class="node node-partial" x="48" y="902" width="486" height="70" rx="6"/>
+      <text class="node-title" x="64" y="925">PlayerVitalsReplica / PlayerVitalsModule</text>
+      <text class="node-text" x="64" y="947">只移除 H3 睡眠镜像、ViewFreezeProbe 与专属计数</text>
+      <rect class="node node-partial" x="48" y="985" width="486" height="65" rx="6"/>
+      <text class="node-title" x="64" y="1008">PlayerSleepPorts</text>
+      <text class="node-text" x="64" y="1030">保留本机睡眠/唤醒；去掉第三屏端口与镜像计数</text>
+
+      <!-- protocols -->
+      <rect class="group" x="1242" y="760" width="534" height="315" rx="9"/>
+      <text class="group-title" x="1266" y="791">5 · 协议与兼容性</text>
+      <rect class="node node-remove" x="1266" y="811" width="486" height="78" rx="6"/>
+      <text class="node-title" x="1282" y="834">Protocol/uistate.proto + 生成类型</text>
+      <text class="node-code" x="1282" y="855">Protocol/Generated/Uistate.cs · CLIENT_UI_STATE</text>
+      <text class="node-text" x="1282" y="875">相机模式字段随整条废弃分屏传输一起删除</text>
+      <rect class="node node-partial" x="1266" y="902" width="486" height="62" rx="6"/>
+      <text class="node-title" x="1282" y="925">protocol.proto · 消息号 100 退役</text>
+      <text class="node-text" x="1282" y="947">保留为 reserved/tombstone，不复用、不重编号</text>
+      <rect class="node node-remove" x="1266" y="977" width="486" height="73" rx="6"/>
+      <text class="node-title" x="1282" y="1000">MultiplayerModCompatibility</text>
+      <text class="node-text" x="1282" y="1022">移除 UistateReflection.Descriptor；保留严格协议/Mod校验</text>
+      <path class="edge-blue" d="M1509 890V900M1509 964V975"/>
+
+      <!-- shared boundary -->
+      <rect class="group" x="620" y="814" width="560" height="261" rx="9"/>
+      <text class="group-title" x="644" y="845">共享边界 · 局部删除与必须保留</text>
+      <rect class="node node-partial" x="644" y="866" width="512" height="82" rx="6"/>
+      <text class="node-title" x="660" y="889">PlayerVitals / PlayerSleep · 保留权威同步</text>
+      <text class="node-text" x="660" y="911">真实网络角色、死亡/复活、本机 HUD/睡眠、冻结协议 22/23</text>
+      <text class="node-text" x="660" y="933">只拆第三屏支线；共用本机睡眠表现写入器继续存在</text>
+      <rect class="node node-keep" x="644" y="961" width="512" height="94" rx="6"/>
+      <text class="node-title" x="660" y="984">必须保留：远端网络化身及游戏同步</text>
+      <text class="node-code" x="660" y="1006">PlayerAvatarModule + NetworkAvatarSpawner</text>
+      <text class="node-text" x="660" y="1027">位置/动作/地形/容器/电路/生命体征等正常协议不删</text>
+      <path class="edge-partial" d="M900 650V812"/>
+      <path class="edge-blue" d="M620 1010H570"/>
+      <rect class="node node-keep" x="26" y="1090" width="1750" height="30" rx="5"/>
+      <text class="node-text" x="44" y="1110">额外保留：SuSubsystemPlayers 的下载出生点功能；BlockUseSyncModule 的容器同步；Terrain/TerrainSync.cs 的 ClientView 兴趣区域类型（不是 Engine/ClientViewEngine）。</text>
+
+      <!-- central target -->
+      <rect class="hub" x="710" y="440" width="380" height="210" rx="14"/>
+      <text class="hub-title" x="900" y="477">移除目标</text>
+      <text class="hub-title" x="900" y="503">主机 Camera-only</text>
+      <text class="hub-title" x="900" y="529">/ 第三分屏投射</text>
+      <text class="hub-text" x="900" y="564">不创建临时视图，不绑定/复制 H3</text>
+      <text class="hub-text" x="900" y="586">不修改主机本地分屏角色</text>
+      <text class="hub-text" x="900" y="616">客户端仍作为网络化身正常同步</text>
+    </svg>
+  </div>
+
+  <h2 class="section-title">文件边界清单</h2>
+  <div class="grid">
+    <section class="card remove">
+      <h3>整项移除</h3>
+      <span class="files">Engine/DebugMirrorClient.cs<br>Modules/DebugMirrorPorts.cs<br>UI/DebugMirrorHud.cs<br>Engine/ClientViewEngine.cs<br>Modules/ClientViewPorts.cs<br>Engine/MirrorCharacterEngine.cs<br>Modules/DebugMirrorCharacterPorts.cs<br>Engine/MirrorHostEngine.cs<br>Modules/MirrorHostPorts.cs<br>Engine/MirrorHostImmunityEngine.cs<br>Modules/MirrorHostImmunity.cs<br>Engine/MirrorViewFeedback.cs<br>Engine/MirrorViewFeedbackPolicy.cs<br>Engine/MirrorBottomHudPolicy.cs<br>Engine/ViewCameraPolicy.cs</span>
+    </section>
+    <section class="card remove">
+      <h3>UI 状态镜像与网络</h3>
+      <span class="files">Engine/ClientUiStateReader.cs<br>Engine/UiMirrorEngine.cs<br>Engine/UiMirrorCrafting.cs<br>Engine/UiMirrorMessageWidget.cs<br>Modules/UiStateSyncModule.cs<br>Modules/UiStatePorts.cs<br>Net/UiStateNet.cs<br>Net/UiMirrorPresentation.cs<br>Protocol/uistate.proto<br>Protocol/Generated/Uistate.cs</span>
+    </section>
+    <section class="card partial">
+      <h3>共享文件只删专用分支</h3>
+      <p><code>Plug/SuMultiplayerMod.cs</code>：分屏字段、接线、Tick/仲裁、日志、配置刷新和清理。</p>
+      <p><code>Modules/BlockUseSyncModule.cs</code>：`IUiContainerCellPort` 与坐标访问器；保留容器状态表和库存同步。</p>
+      <p><code>Engine/PlayerVitalsReplica.cs</code> / <code>Modules/PlayerVitalsModule.cs</code> / <code>Modules/PlayerSleepPorts.cs</code>：仅第三屏睡眠、反馈探针及计数。</p>
+      <p><code>Engine/SuSubsystemPlayers.cs</code>：移除 MirrorHost 标记 API；保留子类、注入和下载世界出生点路径。</p>
+      <p><code>Engine/DebugMirrorWorldSettings.cs</code>：整类只服务这些分屏配置，随路线移除。</p>
+    </section>
+    <section class="card protocol">
+      <h3>协议清理</h3>
+      <p>删除 <code>CLIENT_UI_STATE</code>、UI 状态生成消息及 <code>UistateReflection.Descriptor</code>。协议号 <code>100</code> 已用过，只能标记退役并保留，禁止再分配。</p>
+      <p>角色位置/动作/背包/生命体征协议服务于网络化身，继续保留。完成后重新生成协议代码并核对严格协议哈希。</p>
+    </section>
+    <section class="card keep">
+      <h3>保留功能</h3>
+      <p><code>PlayerAvatarModule</code>、<code>NetworkAvatarSpawner</code> 和所有远端客户端化身同步。</p>
+      <p><code>SuSubsystemPlayers</code> 的下载出生点逻辑、BlockUse 容器同步、PlayerVitals 本机/网络角色同步。</p>
+      <p><code>Terrain/TerrainSync.cs</code> 的 <code>ClientView</code> 兴趣区域类型。它与待删除的 <code>Engine/ClientViewEngine.cs</code> 无关。</p>
+    </section>
+    <section class="card partial">
+      <h3>旧存档保持原样</h3>
+      <p>不扫描、不清理、不迁移、不改写任何既有 PlayerData 或 MirrorHost 标记。只删除当前代码和运行入口。</p>
+    </section>
+  </div>
+  <div class="note"><strong>实施状态：</strong>代码删除已完成并暂存，Release 全量 Rebuild 通过；既有世界存档不扫描、不清理、不改写。详细记录见 <code>host-camera-only-removal-plan.md</code>。</div>
+</main>
+<footer>SuMultiplayer · 主机端 Camera-only / 第三分屏功能移除图 · 独立 HTML，无外部资源依赖</footer>
+</body>
+</html>

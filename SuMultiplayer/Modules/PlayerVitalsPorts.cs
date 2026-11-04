@@ -108,9 +108,7 @@ namespace SuMultiplayer.Modules
     ///   · 客户端上的远端化身（主机角色 / 其它客户端角色）同样不跑生命 / 体征模拟
     ///     （<see cref="SuppressRemoteAvatars"/>），只应用主机下发的值
     ///     （<see cref="ApplyRemoteVitals"/> / <see cref="ApplyVitalEvent"/>）；
-    ///   · <see cref="CaptureAuthorityVitals"/> 读到的客户端化身状态也是 H3 调试镜像
-    ///     （Engine/MirrorCharacterEngine.cs）的来源：主机绝不能再抑制 / 对账回滚这些化身，
-    ///     否则 H3 读到的是假状态。
+    ///   · 主机绝不能抑制 / 对账回滚这些客户端化身，否则权威模拟和其它玩家看到的状态都会错误。
     ///
     /// **死亡 / 复活（2026-10 产品决定：走引擎原生流程，方案 A）**：
     ///   · 死亡 = 主机 Death 事件驱动客户端写 <c>CauseOfDeath</c> + <c>Health = 0</c>，
@@ -174,7 +172,7 @@ namespace SuMultiplayer.Modules
 
         /// <summary>
         /// 读某个**联机化身**（客户端角色 / 主机角色在客户端的副本）当前的生命 / 体征。
-        /// H3 调试镜像 / 诊断用；false = 没有这个化身（<paramref name="reason"/> 明确）。
+        /// 联机诊断用；false = 没有这个化身（<paramref name="reason"/> 明确）。
         /// </summary>
         bool TryGetAvatarVitals(PlayerKey key, out PlayerVitalsSnapshot snapshot, out string reason);
 

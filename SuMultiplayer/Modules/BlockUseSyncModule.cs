@@ -25,7 +25,7 @@ namespace SuMultiplayer.Modules
     /// 无静态状态；引擎类型全部在 <see cref="IBlockUsePort"/> 实现里。
     /// </summary>
     public sealed class BlockUseSyncModule : IMultiplayerModule, ISuMPMessageModule,
-        IBlockUseRequestSink, IUiContainerCellPort, ICircuitUseAuthorityPort
+        IBlockUseRequestSink, ICircuitUseAuthorityPort
     {
         private const int SummaryLogMs = 10000;
         private const int ProblemLogMs = 5000;
@@ -238,36 +238,6 @@ namespace SuMultiplayer.Modules
         public string ModuleId => m_descriptor.Id;
 
         public string StatusLine() => "block-use: " + Summary() + " · " + m_port.Describe();
-
-        // ---------------------------------------------------------------- IUiContainerCellPort
-        // 客户端界面层镜像（Modules/UiStateSyncModule.cs）需要知道"哪个方块格子的库存"：
-        // 这里给出的就是模块自己已经在用的权威键，镜像侧**不猜坐标**。
-        //   · 客户端 = 当前打开的副本面板的 key（TryOpenContainerView 成功后写入 m_openKey，
-        //     面板被关掉（ESC / 点外面）时由 PumpClientContainer 清空）；
-        //   · 主机 = 该玩家端打开中的容器（BlockUseRequest 成功后写入 m_openContainers，
-        //     它的 Close 请求 / 客户端离开时清除）。
-
-        public bool TryGetLocalContainerCell(out int x, out int y, out int z)
-        {
-            x = y = z = 0;
-            if (!m_openKey.HasValue) return false;
-            ContainerKey key = m_openKey.Value;
-            x = key.X;
-            y = key.Y;
-            z = key.Z;
-            return true;
-        }
-
-        public bool TryGetClientContainerCell(int clientId, out int x, out int y, out int z)
-        {
-            x = y = z = 0;
-            if (clientId <= 0) return false;
-            if (!m_openContainers.TryGetValue(clientId, out ContainerKey key)) return false;
-            x = key.X;
-            y = key.Y;
-            z = key.Z;
-            return true;
-        }
 
         /// <summary>客户端缓存的"刚收到的炉况"：打开面板时重放（带接收时间，过期不冒充当前值）。</summary>
         private readonly struct PendingFurnaceState

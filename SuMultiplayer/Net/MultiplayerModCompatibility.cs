@@ -43,7 +43,6 @@ namespace SuMultiplayer.Net
             global::SuMultiplayer.Protocol.StatsReflection.Descriptor,
             global::SuMultiplayer.Protocol.Terrain.TerrainReflection.Descriptor,
             global::SuMultiplayer.Protocol.Transfer.TransferReflection.Descriptor,
-            global::SuMultiplayer.Protocol.UiState.UistateReflection.Descriptor,
             global::SuMultiplayer.Protocol.Vitals.VitalsReflection.Descriptor,
             global::SuMultiplayer.Protocol.Voice.VoiceReflection.Descriptor,
             global::SuMultiplayer.Protocol.WorldControl.WorldcontrolReflection.Descriptor,

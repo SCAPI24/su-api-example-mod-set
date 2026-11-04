@@ -373,17 +373,9 @@ enum MessageType {
   // Source: Survivalcraft/Game/ComponentMiner.cs:309-326（命中概率 / 伤害方差）
   COMBAT_RNG_SYNC = 99;
 
-  // Client UI state mirroring (uistate.proto).  Client -> host: the client's
-  // interface layer (input form / HUD visibility / active screen / open dialog /
-  // open modal panel / chat input) so the host's split-screen view of that client
-  // can show the same UI.  Change driven + heartbeat; read-only on the client.
-  // Append-only: 100 was the reserved gap between 99 and 101; it is now a real
-  // message id and no existing id is renumbered.
-  // Source: Survivalcraft/Game/ComponentGui.cs:395（ControlsContainerWidget.IsVisible）
-  // Source: Survivalcraft/Game/ComponentInput.cs:30（IsControlledByTouch）
-  // Source: Survivalcraft/Game/ScreensManager.cs:46（CurrentScreen）
-  // Source: Survivalcraft/Game/DialogsManager.cs:ShowDialog（dialog parent = GuiWidget）
-  CLIENT_UI_STATE = 100;
+  // Message id 100 was used by the retired host-side camera-only / split-screen UI mirror.
+  // It remains reserved and must never be reused.
+  reserved 100;
 
   // Client-requested respawn after a host-decided death (respawn.proto).
   // The host never auto-respawns a dead client character: it sends the Death
@@ -392,8 +384,8 @@ enum MessageType {
   // validates owner + dead state + game-mode rules and answers with
   // PLAYER_RESPAWN_RESULT (id 102); accepting emits the existing RESPAWN event
   // (96) + authoritative report (95).
-  // Append-only: 101 / 102 are new ids.  100 was the reserved gap and is now
-  // CLIENT_UI_STATE (see above); no existing id is renumbered.
+  // Append-only: 101 / 102 are new ids.  Message id 100 is retired and reserved;
+  // no existing id is renumbered.
   // Source: Survivalcraft/Game/PlayerData.cs:275-330（死亡屏 / 1.5 s 点击门槛）
   // Source: Survivalcraft/Game/GameWidget.cs:63-80（每个 GameWidget 自己的 DeathCamera）
   PLAYER_RESPAWN_REQUEST = 101;

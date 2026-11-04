@@ -11,15 +11,12 @@ namespace SuMultiplayer.Modules
     ///     （每个正在表现的槽位每帧 +1；模块累加成 <c>sleepOverlayApplied</c> 等）；
     ///   · <see cref="Forced"/> / <see cref="Legacy"/> = **睡眠期边沿**（进入强制睡眠 /
     ///     老版本主机没有睡眠权威字段的睡眠期各 +1）；
-    ///   · <see cref="MirrorApplied"/> / <see cref="MirrorCleared"/> = 主机 H3 第三分屏
-    ///     视图所有者的角色-帧 / 解绑清理次数；
     ///   · <see cref="Missing"/> / <see cref="Failures"/> = 本拍没找到角色 / 写入失败次数。
     /// </summary>
     public readonly struct PlayerSleepPresentationCounts
     {
         public PlayerSleepPresentationCounts(int applied, int zzz, int blackout, int forced,
-            int manualWakeDisabled, int legacy, int mirrorApplied, int mirrorCleared, int missing,
-            int failures)
+            int manualWakeDisabled, int legacy, int missing, int failures)
         {
             Applied = applied;
             Zzz = zzz;
@@ -27,8 +24,6 @@ namespace SuMultiplayer.Modules
             Forced = forced;
             ManualWakeDisabled = manualWakeDisabled;
             Legacy = legacy;
-            MirrorApplied = mirrorApplied;
-            MirrorCleared = mirrorCleared;
             Missing = missing;
             Failures = failures;
         }
@@ -39,13 +34,11 @@ namespace SuMultiplayer.Modules
         public int Forced { get; }
         public int ManualWakeDisabled { get; }
         public int Legacy { get; }
-        public int MirrorApplied { get; }
-        public int MirrorCleared { get; }
         public int Missing { get; }
         public int Failures { get; }
 
         public static PlayerSleepPresentationCounts Empty =>
-            new PlayerSleepPresentationCounts(0, 0, 0, 0, 0, 0, 0, 0, 0, 0);
+            new PlayerSleepPresentationCounts(0, 0, 0, 0, 0, 0, 0, 0);
     }
 
     /// <summary>
@@ -167,16 +160,5 @@ namespace SuMultiplayer.Modules
         /// </summary>
         bool TryWakeAuthorityPlayer(PlayerKey key, out string reason);
 
-        /// <summary>
-        /// **主机侧 / 每帧**：H3 第三分屏（replace 模式）的睡眠表现镜像。H3 自己的
-        /// <c>ComponentSleep.Update</c> 被调试镜像摘掉了，但第三个视图画的是 H3 自己的
-        /// <c>ComponentGui / ComponentScreenOverlays</c>（<c>ViewWidget</c> → H3 的 GameWidget），
-        /// 所以用**同一个表现写入器**把"被镜像客户端"的睡眠黑屏 / Zzz / 提示 / 控件隐藏写到
-        /// 视图所有者身上。只写表现字段（不写 <c>m_sleepStartTime</c>，H3 的存档状态不变）。
-        /// 与调试镜像引擎解耦：通过"GameWidget.Target != 自己 + Target 是某个客户端化身"识别
-        /// 绑定，不修改 <c>Engine/MirrorCharacterEngine.cs</c>。
-        /// </summary>
-        PlayerSleepPresentationCounts RefreshMirrorSleepPresentation(float dt,
-            out string reason);
     }
 }

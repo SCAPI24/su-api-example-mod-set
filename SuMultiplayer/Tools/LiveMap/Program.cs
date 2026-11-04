@@ -43,6 +43,12 @@ namespace SuMPLiveMap
         /// <summary>解包失败（版本不匹配 / 载荷坏了）的计数与只报一次的原因。</summary>
         private static long s_decodeFailures;
         private static string s_decodeFailureReason = string.Empty;
+        private static long s_statsEpoch;
+        private static long s_statsSamplesBaseline;
+        private static long s_statsDroppedPartialBaseline;
+        private static long s_statsDecodeFailuresBaseline;
+        private static string s_statsTelemetryBaselineJson = "null";
+        private static bool s_statsTelemetryBaselinePending;
         private static LiveTelemetry s_telemetry;
         private static readonly JsonFormatter s_telemetryFormatter =
             new JsonFormatter(new JsonFormatter.Settings(true));
@@ -169,7 +175,15 @@ namespace SuMPLiveMap
                 try
                 {
                     LiveTelemetry telemetry = LiveTelemetry.Parser.ParseFrom(frame.Payload);
-                    lock (s_gate) s_telemetry = telemetry;
+                    lock (s_gate)
+                    {
+                        if (s_statsTelemetryBaselinePending)
+                        {
+                            s_statsTelemetryBaselineJson = s_telemetryFormatter.Format(telemetry);
+                            s_statsTelemetryBaselinePending = false;
+                        }
+                        s_telemetry = telemetry;
+                    }
                 }
                 catch (InvalidProtocolBufferException error)
                 {
@@ -276,7 +290,41 @@ namespace SuMPLiveMap
                 string body;
                 string contentType = "application/json; charset=utf-8";
                 int status = 200;
-                if (path == "/state")
+                if (path == "/reset-stats")
+                {
+                    if (!string.Equals(context.Request.HttpMethod, "POST",
+                            StringComparison.OrdinalIgnoreCase))
+                    {
+                        status = 405;
+                        body = "{\"ok\":false,\"error\":\"POST required\"}";
+                        context.Response.Headers["Allow"] = "POST";
+                        WriteResponse(context, status, contentType, body);
+                        continue;
+                    }
+                    long epoch;
+                    lock (s_gate)
+                    {
+                        s_statsSamplesBaseline = s_samples;
+                        s_statsDroppedPartialBaseline = s_droppedPartial;
+                        s_statsDecodeFailuresBaseline = s_decodeFailures;
+                        s_decodeFailureReason = string.Empty;
+                        s_statsEpoch++;
+                        if (s_telemetry == null)
+                        {
+                            s_statsTelemetryBaselineJson = "null";
+                            s_statsTelemetryBaselinePending = true;
+                        }
+                        else
+                        {
+                            s_statsTelemetryBaselineJson = s_telemetryFormatter.Format(s_telemetry);
+                            s_statsTelemetryBaselinePending = false;
+                        }
+                        epoch = s_statsEpoch;
+                    }
+                    body = "{\"ok\":true,\"epoch\":" + epoch + "}";
+                    Log("网页请求重置 LiveMap 统计窗口（epoch=" + epoch + "）");
+                }
+                else if (path == "/state")
                 {
                     body = BuildStateJson();
                 }
@@ -373,15 +421,21 @@ namespace SuMPLiveMap
             long decodeFailures;
             string decodeReason;
             LiveTelemetry telemetry;
+            long statsEpoch;
+            string statsTelemetryBaselineJson;
+            bool statsTelemetryBaselinePending;
             lock (s_gate)
             {
                 snapshot = s_snapshot;
                 ageMs = snapshot == null ? -1 : Environment.TickCount64 - s_snapshotMs;
-                samples = s_samples;
-                dropped = s_droppedPartial;
-                decodeFailures = s_decodeFailures;
+                samples = Math.Max(0, s_samples - s_statsSamplesBaseline);
+                dropped = Math.Max(0, s_droppedPartial - s_statsDroppedPartialBaseline);
+                decodeFailures = Math.Max(0, s_decodeFailures - s_statsDecodeFailuresBaseline);
                 decodeReason = s_decodeFailureReason;
                 telemetry = s_telemetry?.Clone();
+                statsEpoch = s_statsEpoch;
+                statsTelemetryBaselineJson = s_statsTelemetryBaselineJson;
+                statsTelemetryBaselinePending = s_statsTelemetryBaselinePending;
             }
 
             var sb = new StringBuilder(512 * 1024);
@@ -390,6 +444,10 @@ namespace SuMPLiveMap
             sb.Append(",\"ageMs\":").Append(ageMs < 0 ? 0 : ageMs);
             sb.Append(",\"samples\":").Append(samples);
             sb.Append(",\"droppedPartial\":").Append(dropped);
+            sb.Append(",\"statsEpoch\":").Append(statsEpoch);
+            sb.Append(",\"statsTelemetryBaselinePending\":")
+              .Append(statsTelemetryBaselinePending ? "true" : "false");
+            sb.Append(",\"statsBaselineTelemetry\":").Append(statsTelemetryBaselineJson);
             // 载荷版本（网页据此判断"这台工具是不是配套版本"）；解包失败也如实报出来。
             sb.Append(",\"payloadVersion\":").Append(LiveMapCodec.Version);
             sb.Append(",\"decodeFailures\":").Append(decodeFailures);

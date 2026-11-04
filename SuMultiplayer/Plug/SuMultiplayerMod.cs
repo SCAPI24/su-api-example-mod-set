@@ -172,48 +172,6 @@ namespace SuMultiplayer
         /// <summary>客户端 UI 拖出（inventory drag-to-world）拦截：替换 GameWidget 的 DragHost。</summary>
         private UiDropAttacher m_uiDropAttacher;
         /// <summary>
-        /// 调试镜像（debug-only 主机端分屏镜像）：纯逻辑控制器（配置闸门 / 目标 / 生命周期 /
-        /// 计数）+ 引擎适配器（临时PlayerData + 第 3 个 GameWidget）+ 小 HUD 按钮。
-        /// 配置 debugmirrorclient 默认关闭；关闭时这三者都不产生任何引擎对象。
-        /// </summary>
-        private DebugMirrorController m_debugMirror;
-        private DebugMirrorClient m_debugMirrorClient;
-        private DebugMirrorHud m_debugMirrorHud;
-        /// <summary>
-        /// 调试镜像角色（debug-only，默认关闭）：主机本地角色（名字由 mirrorcharacter 配置，产品口径 = H3）
-        /// 逐拍复制指定客户端角色的位置/状态/背包/动作。纯逻辑 = Modules/DebugMirrorCharacterPorts.cs，
-        /// 引擎动作 = Engine/MirrorCharacterEngine.cs；配置关闭时控制器一帧都不会调用引擎。
-        /// </summary>
-        private MirrorCharacterController m_mirrorCharacter;
-        private MirrorCharacterEngine m_mirrorCharacterEngine;
-        /// <summary>
-        /// 自动客户端分屏（**默认开启**，配置键 clientview / clientviewclient）：主机在有空槽时
-        /// 为每个加入的客户端建一个 camera-only 第一人称分屏（与客户端自己看到的画面一致），
-        /// 客户端离开 / 离开房间 / 世界卸载 / 配置关闭时自动拆除。
-        /// 纯逻辑 = Modules/ClientViewPorts.cs，引擎动作 = Engine/ClientViewEngine.cs；
-        /// 与 H3 replace 模式的优先级：显式 mirrorcharacter 优先（H3 绑定同一客户端时不建自动视图）。
-        /// </summary>
-        private ClientViewController m_clientView;
-        /// <summary>
-        /// 镜像宿主（**调试功能，默认开启**；配置键 mirrorcharacterauto / mirrorhostnameprefix）：
-        /// 客户端加入时主机为它自动创建**真实本地角色**（引擎第 2/3/4 个分屏，带引擎自带的触控控件 /
-        /// HUD / 界面镜像 / 睡眠与受击表现），并把该分屏相机绑到客户端第一人称（replace）。
-        /// 池 = 4 − 主机实际本地角色数（PlayersData.Count）；池满明确拒绝，绝不顶掉已有角色。
-        /// 纯逻辑 = Modules/MirrorHostPorts.cs，引擎动作 = Engine/MirrorHostEngine.cs；
-        /// auto 标记注册表 = MirrorHostEngine.RegistrySubsystem（注入 Game.SubsystemPlayers）。
-        /// </summary>
-        private MirrorHostController m_mirrorHost;
-        private MirrorHostEngine m_mirrorHostEngine;
-
-        /// <summary>
-        /// 当前世界的**调试镜像配置**（世界目录里的 SuMultiplayerDebug.json；换世界自动重读）。
-        /// 全局 SuMultiplayer.json 不再保存调试镜像开关（用户口径：调试只跟随一张地图）。
-        /// </summary>
-        private DebugMirrorWorldSettings m_debugMirrorWorldSettings =
-            DebugMirrorWorldSettings.None;
-        private Project m_debugMirrorSettingsProject;
-
-        /// <summary>
         /// 当前世界的**联机行为设置**（世界目录里的 SuMultiplayerWorld.json；换世界自动重读）：
         /// 目前只有 autoapprovejoins（是否自动同意加入）。默认手动审批。
         /// </summary>
@@ -221,20 +179,6 @@ namespace SuMultiplayer
         private Project m_worldJoinSettingsProject;
         /// <summary>加入审批决定器（主机：手动弹 Allow/Reject，或按世界设置自动同意）。</summary>
         private JoinApprovalUi m_joinApprovalUi;
-        /// <summary>镜像宿主当前观察的 Project（换世界时补做一次"清理上一次会话留下的 auto 角色"）。</summary>
-        private Project m_mirrorHostProject;
-        /// <summary>本会话是否已经在当前世界里补做过清理（每个 Project 只做一次）。</summary>
-        private bool m_mirrorHostReconciled;
-        private ClientViewEngine m_clientViewEngine;
-        /// <summary>
-        /// 客户端界面层镜像（CLIENT_UI_STATE，id 100）：客户端只读采集输入形态 / HUD 显隐 /
-        /// 当前屏幕 / 打开的对话框与模态面板，主机施加到"相机 Target = 该客户端"的分屏视图。
-        /// 纯逻辑 = Net/UiStateNet.cs + Modules/UiStatePorts.cs + Modules/UiStateSyncModule.cs；
-        /// 引擎动作 = Engine/ClientUiStateReader.cs（只读）+ Engine/UiMirrorEngine.cs（只写视图）。
-        /// </summary>
-        private UiStateSyncModule m_uiStateModule;
-        private ClientUiStateReader m_uiStateReader;
-        private UiMirrorEngine m_uiMirrorEngine;
         private EngineWorldTransfer m_engineWorldTransfer;
         /// <summary>角色创建屏的默认名字摇号（按身份稳定键 + 本次会话盐；计数器见 StatusLine）。
         /// 组合根建一个、随本次会话存活 —— 模块与屏都不持有静态状态。</summary>
@@ -828,21 +772,6 @@ namespace SuMultiplayer
             // 下载世界端口也要注册：联机角色模块靠它判断"当前玩的是不是下载来的联机世界"
             // （客户端建主机角色的前提），拿不到就会明确拒绝建角色（不做 index 兜底）。
             m_moduleHost.RegisterPort<IDownloadedWorldPort>(m_transferModule.DownloadedWorldPort);
-            // 客户端界面层镜像（CLIENT_UI_STATE，id 100）：
-            //   客户端 = Engine/ClientUiStateReader.cs 只读采集（输入形态 / HUD 显隐 / 当前屏幕 /
-            //            打开的对话框与模态面板 / 聊天输入行），变化才发 + 2 s 心跳；
-            //   主机   = Engine/UiMirrorEngine.cs 施加到"相机 Target = 该客户端 ComponentPlayer"的
-            //            分屏视图（自动客户端视图 / H3 replace 模式同一条绑定），只写视图自己的
-            //            HUD 与输入开关，绝不写客户端化身。
-            //   容器面板的方块坐标来自 block-use 模块（它已按端跟踪打开中的容器），不猜坐标。
-            // 聊天输入行状态由组合根用委托注入（UI 类型不反向进入模块）。
-            m_uiMirrorEngine = new UiMirrorEngine(avatarSpawner, m_blockUseModule,
-                engineModManager.ModParentField, diagnostics);
-            m_uiStateReader = new ClientUiStateReader(avatarSpawner,
-                engineModManager.ModParentField,
-                delegate { return m_chatOverlay != null && m_chatOverlay.HasOpenInput; });
-            m_uiStateModule = new UiStateSyncModule(m_uiStateReader, m_uiMirrorEngine);
-            m_moduleHost.Register(m_uiStateModule);
             ModuleResolution resolution = m_moduleHost.Resolve("OnLoad");
             // 单机 / 主菜单不跑联机模块的 Tick（不跟踪同步、不写周期状态日志）：
             // session 仍要 Tick 以处理房间发现/创建/加入；terrain 仍要 Tick 以解除旧地形桥。
@@ -897,95 +826,6 @@ namespace SuMultiplayer
                 engineModManager.ModParentField,
                 message => ModLog.Info(message),
                 message => Log.Warning(message));
-            // 调试镜像（debug-only，默认关闭；配置键 debugmirrorclient）：
-            //   纯逻辑 = Modules/DebugMirrorPorts.cs（配置闸门 / 目标选择 / 生命周期 / 限流日志 / 计数），
-            //   引擎动作 = Engine/DebugMirrorClient.cs（临时 camera-only PlayerData + 第 3 个 GameWidget），
-            //   HUD = UI/DebugMirrorHud.cs（MoreContents 里的 MIR 小按钮，只在配置开启 + 主持房间时出现）。
-            // 目标从 NetworkAvatarSpawner 的公开 API 读，不碰它的文件；客户端侧永远不创建。
-            m_debugMirrorClient = new DebugMirrorClient(avatarSpawner,
-                engineModManager.ModParentField, engineModManager.ModParentMethod, diagnostics,
-                "debug-mirror");
-            // 世界作用域：先按"全关"构造，进世界时读 <世界目录>/SuMultiplayerDebug.json 再应用。
-            m_debugMirror = new DebugMirrorController(string.Empty,
-                m_debugMirrorClient,
-                message => ModLog.Info(message),
-                message => Log.Warning(message),
-                delegate { return Time.RealTime; });
-            m_debugMirrorHud = new DebugMirrorHud(m_debugMirror,
-                delegate { return m_sessionModule != null && m_sessionModule.IsHostingRoom; },
-                message => ModLog.Info(message),
-                message => Log.Warning(message));
-            // 调试镜像角色（debug-only，默认关闭；配置键 mirrorcharacter / mirrorcharacterclient /
-            //   mirrorcharactermode）：
-            //   纯逻辑 = Modules/DebugMirrorCharacterPorts.cs（配置闸门 / 名字查找 / 目标选择 / 计划 / 生命周期 / 计数），
-            //   引擎动作 = Engine/MirrorCharacterEngine.cs（只读客户端化身，只写主机本地角色 H3 + 快照恢复）。
-            //   默认 replace = 用 H3 的第三个分屏显示客户端角色本身（H3 的身体从世界里摘掉、不复制状态）；
-            //   copy = 旧行为（把客户端状态逐拍复制到 H3 身上）。
-            // 配置关闭时控制器 Tick 直接 return，不产生任何引擎调用 / 对象。
-            m_mirrorCharacterEngine = new MirrorCharacterEngine(avatarSpawner,
-                engineModManager.ModParentField, engineModManager.ModParentMethod, diagnostics);
-            m_mirrorCharacterEngine.ViewFreezeProbe = m_vitalsEngine.TryGetAuthorityFreeze;
-            m_moduleHost.RegisterPort<IViewCameraModePort>(m_mirrorCharacterEngine);
-            m_mirrorCharacter = new MirrorCharacterController(string.Empty, string.Empty,
-                string.Empty,
-                m_mirrorCharacterEngine,
-                message => ModLog.Info(message),
-                message => Log.Warning(message),
-                delegate { return Time.RealTime; });
-            // 镜像宿主（**调试功能，默认开启**；配置键 mirrorcharacterauto / mirrorhostnameprefix /
-            //   mirrorcharacter + mirrorcharactermode 复用）：
-            //   纯逻辑 = Modules/MirrorHostPorts.cs（配置 / 池计算 / 闸门 / 命名 / 复用 / 生命周期 / 计数），
-            //   引擎动作 = Engine/MirrorHostEngine.cs（只用公开链路 new PlayerData → AddPlayerData /
-            //   RemovePlayerData；绑定复用上面的 MirrorCharacterEngine）。
-            //   与显式 mirrorcharacter 的关系：WorldDatabase 里已有同名的 auto 角色 → 复用它；
-            //   手动创建的角色（h1/h2/H3）绝不被归入 auto 账本，离开时绝不被删除。
-            m_mirrorHostEngine = new MirrorHostEngine(avatarSpawner, m_mirrorCharacterEngine,
-                // 免疫写入（免伤 / 免病 / 着火 / 体征归位）走 SuAPI 的反射入口，单独成类注入：
-                // 宿主生命周期那条链路保持"只用公开 API"（源码守卫按文件检查）。
-                new MirrorHostImmunityEngine(engineModManager.ModParentField, diagnostics),
-                diagnostics)
-            {
-                NamePrefix = DebugMirrorWorldSettings.DefaultNamePrefix
-            };
-            m_mirrorHost = new MirrorHostController(false,
-                DebugMirrorWorldSettings.DefaultNamePrefix, string.Empty, string.Empty,
-                m_mirrorHostEngine,
-                message => ModLog.Info(message),
-                message => Log.Warning(message),
-                delegate { return Time.RealTime; });
-            // 自动客户端分屏（默认开启；配置键 clientview / clientviewclient）：
-            //   纯逻辑 = Modules/ClientViewPorts.cs（配置闸门 / 候选筛选 / 槽位账本 / 生命周期 / 计数），
-            //   引擎动作 = Engine/ClientViewEngine.cs（camera-only 临时 PlayerData + GameWidget，
-            //   实体不加入 Project：不存盘 / 不碰撞 / 不可攻击，与 DebugMirrorClient 同一配方）。
-            // 槽位账本 = 本机角色 + 联机化身 + 视图 ≤ 4；没空槽只记 clientViewNoSlot，不崩溃。
-            // 优先级：显式 mirrorcharacter（H3 replace）已绑定同一客户端时，自动视图让位；
-            // 已被 debugmirrorclient 实际镜像的客户端同理（显式配置优先）。
-            m_clientViewEngine = new ClientViewEngine(avatarSpawner,
-                engineModManager.ModParentField, engineModManager.ModParentMethod, diagnostics);
-            // 自动客户端分屏是**调试功能**：默认关闭，只有 &lt;世界目录&gt;/SuMultiplayerDebug.json 里
-            // 显式写 clientview 才启用（用户口径 2026-10-21：正常加入时主机端不该默认多出屏幕）。
-            m_clientView = new ClientViewController(false, string.Empty,
-                m_clientViewEngine,
-                message => ModLog.Info(message),
-                message => Log.Warning(message),
-                delegate { return Time.RealTime; },
-                delegate (int clientId)
-                {
-                    if (m_mirrorCharacterEngine != null && m_mirrorCharacterEngine.IsBound &&
-                        m_mirrorCharacterEngine.BoundClientId == clientId)
-                        return true;                    // 镜像宿主（mirrorcharacterauto）已经接管这个客户端 → 自动视图让位（显式镜像优先）。
-                    if (m_mirrorHost != null && m_mirrorHost.HasHostFor(clientId))
-                    {
-                        if (m_clientView != null) m_clientView.Counters.NoteYieldToMirrorHost();
-                        return true;
-                    }
-
-                    if (m_debugMirror != null && m_debugMirror.IsEnabled &&
-                        m_debugMirror.TryGetActiveTarget(out DebugMirrorTarget debugTarget) &&
-                        debugTarget.IsResolved && debugTarget.ClientId == clientId)
-                        return true;
-                    return false;
-                });
             // 聊天 HUD：底部消息流 + 暖色半透明面板（无蓝色）+ 回车/T 打开输入 +
             // 触摸端常驻“聊天”按钮。关闭输入时不拦截任何游戏输入。
             m_chatOverlay = new ChatOverlayAttacher(m_chatModule,
@@ -1070,33 +910,9 @@ namespace SuMultiplayer
                     CultureInfo.InvariantCulture) + "m · " + m_reachGate.Counters.Describe());
             ModLog.Info("[SuMP] " + m_nameRoller.StatusLine());
             ModLog.Info("[SuMP] " + m_fusePresenter.Describe());
-            ModLog.Info("[SuMP] " + m_debugMirror.StatusLine() +
-                (m_debugMirror.IsConfigured
-                    ? ""
-                    : "（调试镜像默认关闭；在<世界目录>/SuMultiplayerDebug.json里显式打开）"));
-            ModLog.Info("[SuMP] " + m_mirrorCharacter.StatusLine() +
-                (m_mirrorCharacter.IsConfigured
-                    ? ""
-                    : "（调试镜像角色默认关闭；在<世界目录>/SuMultiplayerDebug.json里显式打开）"));
-            ModLog.Info("[SuMP] " + m_mirrorHost.StatusLine() +
-                (m_mirrorHost.IsConfigured
-                    ? ""
-                    : "（镜像宿主默认关闭；在<世界目录>/SuMultiplayerDebug.json里显式打开）"));
-            ModLog.Info("[SuMP] " + m_clientView.StatusLine() +
-                (m_clientView.IsConfigured
-                    ? ""
-                    : "（clientview 已关闭 / 配置写错；默认 true）"));
-            ModLog.Info("[SuMP] " + m_uiStateModule.StatusLine() +
-                " · unsupportedTypes=" + m_uiStateModule.DescribeUnsupported());
-
             // 引擎注入
-            // 镜像宿主的 auto 标记注册表：注册在 SubsystemPlayers 模板下（作为它的子节点），
-            // 数据写在它自己的 ValuesDictionary 里 —— Project.SaveProject 会把每个子系统的
-            // ValuesDictionary 原样写进世界存档，下次进世界原样读回；PlayerData 自己的 Save
-            // 只写引擎固定字段，写不下自定义标记。
-            // Source: EntitySystem/GameEntitySystem/Project.cs:Project(GameDatabase, ProjectData)
-            // Source: TemplatesDatabase/ValuesDictionary.cs:Save(XElement)（整张表写存档）
-            // 引擎注入：SubsystemPlayers 的**完整子类**（只追加镜像宿主注册表，其余继承引擎语义）。
+            // 引擎注入：SubsystemPlayers 的完整子类，负责下载世界的本机出生点预置；
+            // 角色列表、加入/移除和存档行为继承引擎实现。
             // 注意：必须是真的继承 SubsystemPlayers；替换成"新子系统"会让引擎报
             // 「Required subsystem Game.SubsystemPlayers does not exist in project.」
             modInjector.Register("Game.SubsystemPlayers", "SuMultiplayer.Engine.SuSubsystemPlayers");
@@ -1411,64 +1227,9 @@ namespace SuMultiplayer
                     try { m_entityEngine?.CaptureUiDropInventorySnapshot(); }
                     catch (Exception e) { NoteFrameStepFailure("ui-drop-snapshot", e); }
 
-                    // 世界作用域的调试镜像配置：进世界 / 换世界时重读 <世界目录>/SuMultiplayerDebug.json，
-                    // 再把结果应用到三个调试镜像控制器（全局配置里不再有这些开关）。
-                    try { RefreshDebugMirrorWorldSettings(inWorld); }
-                    catch (Exception e) { NoteFrameStepFailure("debug-mirror-config", e); }
-
                     // 世界作用域的联机设置（加入审批）：换世界重读；文件不存在 = 手动审批。
                     try { RefreshWorldJoinSettings(inWorld); }
                     catch (Exception e) { NoteFrameStepFailure("world-join-settings", e); }
-
-                    // 调试镜像（debug-only）：先让控制器按"配置 / 主机 / 世界"状态创建或拆除
-                    // 第 3 个分屏视图，再挂 MIR 小按钮。配置关闭时两者都不产生任何引擎对象；
-                    // 离开房间 / 世界卸载 / 关闭开关都在控制器 Tick 里同步拆除。
-                    try
-                    {
-                        m_debugMirror?.Tick(GameManager.Project != null,
-                            m_sessionModule != null && m_sessionModule.IsHostingRoom);
-                    }
-                    catch (Exception e) { NoteFrameStepFailure("debug-mirror", e); }
-
-                    try { m_debugMirrorHud?.Tick(); }
-                    catch (Exception e) { NoteFrameStepFailure("debug-mirror-ui", e); }
-
-                    // 调试镜像角色（debug-only）：主机 + 世界内 + 配置开启时才工作；
-                    // 每拍把客户端角色的位置/状态/背包/动作复制到主机本地角色 H3（只显示、不可操作）。
-                    // 离开房间 / 世界卸载 / 客户端离开 / 配置关闭都在控制器 Tick 里自动解绑并写回快照。
-                    // 仲裁：mirrorcharacterauto 开启时，引擎独占权交给 MirrorHost（它自己按 auto 宿主名绑定）。
-                    // 否则两个控制器会抢同一个 MirrorCharacterEngine：显式控制器先绑定 → MirrorHost 侧
-                    // TryBind 命中"幂等返回" → replace 的绑视图/隐藏身体动作从未执行（viewBound=0，
-                    // 第三屏还是宿主自己的视角）。auto 关闭时才由显式 mirrorcharacter 驱动。
-                    bool mirrorHostOwnsEngine = m_debugMirrorWorldSettings.MirrorHostAuto;
-                    if (!mirrorHostOwnsEngine)
-                    {
-                        try
-                        {
-                            m_mirrorCharacter?.Tick(GameManager.Project != null,
-                                m_sessionModule != null && m_sessionModule.IsHostingRoom);
-                        }
-                        catch (Exception e) { NoteFrameStepFailure("mirror-character", e); }
-                    }
-
-                                        // 镜像宿主（默认开启；配置键 mirrorcharacterauto）：客户端加入时主机为它自动创建
-                    // 真实本地角色（引擎第 2/3/4 个分屏）并绑定到客户端第一人称；离开时只删 auto 角色。
-                    // 必须在 client-view 之前：本拍已经建 / 绑上的宿主会让同客户端的自动视图让位。
-                    try
-                    {
-                        TickMirrorHost(inWorld);
-                    }
-                    catch (Exception e) { NoteFrameStepFailure("mirror-host", e); }
-
-// 自动客户端分屏（默认开启）：主机在有空槽时为每个加入的客户端建 camera-only
-                    // 第一人称视图；客户端离开 / 离开房间 / 世界卸载 / 配置关闭都在控制器 Tick 里拆除。
-                    // 放在 mirror-character 之后：本拍已绑定的 H3（replace）会让同客户端的自动视图让位。
-                    try
-                    {
-                        m_clientView?.Tick(GameManager.Project != null,
-                            m_sessionModule != null && m_sessionModule.IsHostingRoom);
-                    }
-                    catch (Exception e) { NoteFrameStepFailure("client-view", e); }
                     // 周期性打一行各模块状态（组合根是唯一同时知道两个模块的地方，
                     // 模块之间不互相读状态）。实机排查全靠这几行。
                     long nowMs = (long)(Time.RealTime * 1000.0);
@@ -1533,18 +1294,6 @@ namespace SuMultiplayer
                             (m_voiceMuteTable?.DescribeCounters() ?? "vo=n/a") +
                             " · frameSteps=" + m_frameStepFailureTotal + " [" +
                             DescribeFrameStepCounters() + "]");
-                        if (m_debugMirror != null && m_debugMirror.IsConfigured)
-                            ModLog.Info("[SuMP] " + m_debugMirror.StatusLine() + " · " +
-                                (m_debugMirrorHud?.DescribeCounters() ?? "debug-mirror-ui=n/a"));
-                        if (m_mirrorCharacter != null && m_mirrorCharacter.IsConfigured)
-                            ModLog.Info("[SuMP] " + m_mirrorCharacter.StatusLine());
-                        if (m_mirrorHost != null && m_mirrorHost.IsConfigured)
-                            ModLog.Info("[SuMP] " + m_mirrorHost.StatusLine());
-                        if (m_clientView != null && m_clientView.IsConfigured)
-                            ModLog.Info("[SuMP] " + m_clientView.StatusLine());
-                        if (m_uiStateModule != null)
-                            ModLog.Info("[SuMP] " + m_uiStateModule.StatusLine() +
-                                " · unsupportedTypes=" + m_uiStateModule.DescribeUnsupported());
                     }
                 }
                 catch (Exception e)
@@ -1556,51 +1305,6 @@ namespace SuMultiplayer
         }
 
         /// <summary>
-        /// <summary>
-        /// 镜像宿主的每帧驱动（组合根是唯一知道"世界 / 主机"状态的地方）。
-        ///   ① 换了 Project → 第一拍补做"清理上一次会话留下的 auto 角色"（只删带标记的前缀命名角色）；
-        ///   ② 控制器按池计算 / 就绪 / 离开做创建、绑定、解绑、只删 auto 的清理。
-        /// 同一帧只跑一次：ClientJoined 在模块 tick 里到达，控制器下一拍就能看到新客户端。
-        /// </summary>
-        /// <summary>
-        /// 进世界 / 换世界时重读**该世界目录**的调试镜像配置（SuMultiplayerDebug.json），
-        /// 并应用到三个调试镜像控制器。换世界 = 换文件（不同世界互不沿用调试开关）。
-        /// </summary>
-        private void RefreshDebugMirrorWorldSettings(bool inWorld)
-        {
-            Project project = inWorld ? GameManager.Project : null;
-            if (ReferenceEquals(project, m_debugMirrorSettingsProject)) return;
-            m_debugMirrorSettingsProject = project;
-            if (project == null)
-            {
-                m_debugMirrorWorldSettings = DebugMirrorWorldSettings.None;
-                ApplyDebugMirrorWorldSettings("世界已卸载 → 调试镜像全关");
-                return;
-            }
-            string directory = project.FindSubsystem<SubsystemGameInfo>(false)?.DirectoryName ??
-                string.Empty;
-            m_debugMirrorWorldSettings = DebugMirrorWorldSettings.Load(directory, out string note);
-            ApplyDebugMirrorWorldSettings(note);
-        }
-
-        private void ApplyDebugMirrorWorldSettings(string note)
-        {
-            m_debugMirror?.ApplyConfiguration(m_debugMirrorWorldSettings.DebugMirrorClient);
-            m_mirrorCharacter?.ApplyConfiguration(m_debugMirrorWorldSettings.MirrorCharacter,
-                m_debugMirrorWorldSettings.MirrorCharacterClient,
-                m_debugMirrorWorldSettings.MirrorCharacterMode);
-            m_mirrorHost?.ApplyConfiguration(m_debugMirrorWorldSettings.MirrorHostAuto,
-                m_debugMirrorWorldSettings.MirrorHostNamePrefix,
-                m_debugMirrorWorldSettings.MirrorCharacterMode,
-                m_debugMirrorWorldSettings.MirrorCharacter);
-            if (m_mirrorHostEngine != null)
-                m_mirrorHostEngine.NamePrefix = m_debugMirrorWorldSettings.MirrorHostNamePrefix;
-            // 自动客户端分屏同属调试开关（世界文件），默认关闭；关闭时立刻拆掉已建的视图。
-            m_clientView?.ApplyConfiguration(m_debugMirrorWorldSettings.ClientView,
-                m_debugMirrorWorldSettings.ClientViewClient);
-            ModLog.Info("[SuMP] 世界调试配置（镜像/自动分屏）：" + note);
-        }
-
         /// <summary>换世界时重读 &lt;世界目录&gt;/SuMultiplayerWorld.json（加入审批设置）。</summary>
         private void RefreshWorldJoinSettings(bool inWorld)
         {
@@ -1925,23 +1629,6 @@ namespace SuMultiplayer
             }
         }
 
-        private void TickMirrorHost(bool inWorld)
-        {
-            if (m_mirrorHost == null) return;
-            Project project = inWorld ? GameManager.Project : null;
-            if (!ReferenceEquals(project, m_mirrorHostProject))
-            {
-                m_mirrorHostProject = project;
-                m_mirrorHostReconciled = false;
-            }
-            if (project != null && !m_mirrorHostReconciled && m_mirrorHostEngine != null)
-            {
-                m_mirrorHostReconciled = true;
-                m_mirrorHostEngine.ReconcileOrphans(Log.Information, m_mirrorHost.IsConfigured);
-            }
-            m_mirrorHost.Tick(inWorld, m_sessionModule != null && m_sessionModule.IsHostingRoom);
-        }
-
         /// 帧子步骤异常隔离：计数器每帧真实累加，日志按 5 秒限流（同一步骤只写一行）。
         /// 不是静默吞异常：日志里有步骤名、累计次数、异常类型与消息。
         /// </summary>
@@ -1981,92 +1668,6 @@ namespace SuMultiplayer
                 ChatAutomation = null;
                 CircuitSyncDebugAutomation = null;
                 m_editWatcher = null;
-                // 客户端界面层镜像先下线：趁分屏视图还在把挂上去的面板摘掉、恢复视图原值
-                // （输入形态 / HUD 可见），随后再拆视图本身。
-                try
-                {
-                    m_uiStateModule?.Detach(ModuleDetachReason.HostShutdown);
-                }
-                catch (Exception e)
-                {
-                    Log.Warning("[SuMP] 卸载客户端界面层镜像失败：" + e.GetType().Name + " " +
-                        e.Message);
-                }
-                m_uiStateModule = null;
-                m_uiStateReader = null;
-                m_uiMirrorEngine = null;
-                // 镜像宿主先下线：趁客户端化身 / 宿主都还活着解绑镜像并**只移除 auto 角色**
-                // （手动角色绝不动）。它绑定的是 mirror-character 的引擎，所以必须先于下面那段。
-                try
-                {
-                    m_mirrorHost?.Shutdown("SuMultiplayer 卸载");
-                }
-                catch (Exception e)
-                {
-                    Log.Warning("[SuMP] 卸载镜像宿主失败：" + e.GetType().Name + " " + e.Message);
-                }
-                try
-                {
-                    m_mirrorHostEngine?.Detach("SuMultiplayer 卸载");
-                }
-                catch (Exception e)
-                {
-                    Log.Warning("[SuMP] 卸载镜像宿主引擎失败：" + e.GetType().Name + " " + e.Message);
-                }
-                m_mirrorHost = null;
-                m_mirrorHostEngine = null;
-                // 自动客户端分屏先下线：趁客户端化身还在把临时玩家 / 视图拆干净（槽位立即释放）。
-                try
-                {
-                    m_clientView?.Shutdown("SuMultiplayer 卸载");
-                }
-                catch (Exception e)
-                {
-                    Log.Warning("[SuMP] 卸载自动客户端分屏失败：" + e.GetType().Name + " " + e.Message);
-                }
-                try
-                {
-                    m_clientViewEngine?.Dispose();
-                }
-                catch (Exception e)
-                {
-                    Log.Warning("[SuMP] 释放自动客户端分屏引擎失败：" + e.GetType().Name + " " +
-                        e.Message);
-                }
-                m_clientView = null;
-                m_clientViewEngine = null;
-                // 调试镜像角色先下线：它要在客户端化身 / 主机本地角色都还活着时写回 H3 的绑定前快照。
-                try
-                {
-                    m_mirrorCharacter?.Shutdown("SuMultiplayer 卸载");
-                }
-                catch (Exception e)
-                {
-                    Log.Warning("[SuMP] 卸载调试镜像角色失败：" + e.GetType().Name + " " + e.Message);
-                }
-                try
-                {
-                    m_mirrorCharacterEngine?.Dispose();
-                }
-                catch (Exception e)
-                {
-                    Log.Warning("[SuMP] 释放调试镜像角色引擎失败：" + e.GetType().Name + " " +
-                        e.Message);
-                }
-                m_mirrorCharacter = null;
-                m_mirrorCharacterEngine = null;
-                // 调试镜像先下线：它要在联机角色还在时把临时玩家 / 第 3 个视图拆干净。
-                try
-                {
-                    m_debugMirror?.Shutdown("SuMultiplayer 卸载");
-                }
-                catch (Exception e)
-                {
-                    Log.Warning("[SuMP] 卸载调试镜像失败：" + e.GetType().Name + " " + e.Message);
-                }
-                m_debugMirrorHud = null;
-                m_debugMirror = null;
-                m_debugMirrorClient = null;
                 m_chatOverlay?.Dispose();
                 m_chatOverlay = null;
                 // 统计模块先下线：它要在联机角色 / 记录表还活着时把最后的统计 / 成就落盘。

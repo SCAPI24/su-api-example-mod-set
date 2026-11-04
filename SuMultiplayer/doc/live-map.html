@@ -31,6 +31,8 @@ code{font-family:var(--mono);font-size:.87em;background:var(--tint2);border:1px 
 .btn{cursor:pointer;border:1px solid var(--line);background:#fff;border-radius:999px;padding:6px 13px;font-size:12px;color:var(--tx2);font-family:var(--sans)}
 .btn:hover{border-color:var(--line2);color:var(--tx)}
 .btn:disabled{opacity:.5;cursor:default}
+.btn.danger{color:#9f2840;border-color:#efc2cb;background:#fff8f9}
+.btn.danger:hover{border-color:#d88998;background:#fff0f2}
 select{font-family:var(--sans);font-size:12.5px;border:1px solid var(--line2);border-radius:999px;padding:5px 11px;background:#fff;color:var(--tx)}
 .wrap{max-width:1620px;margin:0 auto;padding:14px 20px 60px}
 .pane{background:var(--card);border:1px solid var(--line);border-radius:var(--r);box-shadow:var(--sh);padding:12px 14px;min-width:0}
@@ -95,6 +97,7 @@ td.mono,.mono{font-family:var(--mono);font-size:11.6px}
 .num{text-align:right;font-family:var(--mono)}
 footer{margin-top:20px;padding-top:12px;border-top:1px solid var(--line);font-size:12px;color:var(--tx3)}
 @media (max-width:760px){.telemetry-grid{grid-template-columns:minmax(0,1fr)}}
+@media (max-width:760px){.topbar{gap:6px;padding:8px 10px;flex-wrap:wrap}.brand{min-width:0}.brand small{display:none}.topbar .grow{flex:1 1 auto}.btn{padding:6px 9px}}
 @media (max-width:1100px){.wrap{padding:12px 12px 48px}}
 @media print{.topbar{display:none}.pane{break-inside:avoid;box-shadow:none}}
 </style>
@@ -105,6 +108,7 @@ footer{margin-top:20px;padding-top:12px;border-top:1px solid var(--line);font-si
   <div class="grow"></div>
   <span class="lamp off" id="lamp"><i></i><span id="lampText">连接中…</span></span>
   <button class="btn" id="btnReload">立即刷新</button>
+  <button class="btn danger" id="btnResetStats" title="重置 LiveMap 统计窗口，不影响游戏世界">重置统计</button>
 </header>
 
 <div class="wrap" id="top">
@@ -171,11 +175,11 @@ footer{margin-top:20px;padding-top:12px;border-top:1px solid var(--line);font-si
       </section>
       <section class="telemetry-block" style="grid-column:1/-1">
         <h4>同步模块耗时</h4>
-        <div class="telemetry-table-wrap"><table><thead><tr><th>实例 / 模块</th><th>调用 / 秒</th><th>耗时 / 秒</th><th>平均耗时 / 次</th><th>生命周期历史最大</th></tr></thead><tbody id="telemetryModuleBody"><tr><td colspan="5" class="mono telemetry-unavailable">模块耗时统计不可用</td></tr></tbody></table></div>
+        <div class="telemetry-table-wrap"><table><thead><tr><th>实例 / 模块</th><th>调用 / 秒</th><th>耗时 / 秒</th><th>平均耗时 / 次</th><th>统计窗口最大</th></tr></thead><tbody id="telemetryModuleBody"><tr><td colspan="5" class="mono telemetry-unavailable">模块耗时统计不可用</td></tr></tbody></table></div>
       </section>
       <section class="telemetry-block" style="grid-column:1/-1">
         <h4>电路同步阶段尖峰</h4>
-        <div class="telemetry-table-wrap"><table><thead><tr><th>实例 / 阶段</th><th>调用</th><th>累计耗时</th><th>窗口最大</th><th>最近耗时</th><th>慢调用</th><th>窗口峰值上下文</th></tr></thead><tbody id="telemetryCircuitStagesBody"><tr><td colspan="7" class="mono telemetry-unavailable">电路阶段探针不可用</td></tr></tbody></table></div>
+        <div class="telemetry-table-wrap"><table><thead><tr><th>实例 / 阶段</th><th>调用</th><th>累计耗时</th><th>统计窗口最大</th><th>最近耗时</th><th>慢调用</th><th>窗口峰值上下文</th></tr></thead><tbody id="telemetryCircuitStagesBody"><tr><td colspan="7" class="mono telemetry-unavailable">电路阶段探针不可用</td></tr></tbody></table></div>
       </section>
     </div>
   </div>
@@ -247,6 +251,7 @@ footer{margin-top:20px;padding-top:12px;border-top:1px solid var(--line);font-si
   var selectedKey = null;           // 当前居中的角色**身份稳定键**（players[].key；主机 = "host"）
   var lastGood = null;              // 最近一次成功的 state
   var ageAtGood = 0, lastGoodAt = 0;
+  var statsResetVersion = 0;
   var lampKind = "off", lampMsg = "连接中…";
   var lastFrameKey = "";            // 角色稳定键|scale —— 只在换角色/换比例时把页面滚到角色
   // 「整片区域」自动跟随：只有 feed 的**范围/集合**变化才自动拟合；首帧只记基线（?scale= 不被抢掉），
@@ -1650,6 +1655,77 @@ footer{margin-top:20px;padding-top:12px;border-top:1px solid var(--line);font-si
   /* ---------- 统计面板 ---------- */
   var telemetryRateHistory = Object.create(null);
   var lastTelemetrySampleToken = null, lastTelemetryReceivedAt = 0;
+  var lastStatsEpoch = null;
+  var telemetryGaugeFields = {
+    sampleId: true, sampledAtMs: true, clientId: true, key: true, name: true,
+    typeId: true, id: true, state: true, cpuAvailable: true, cpuOneCorePercent: true,
+    cpuTotalPercent: true, processorCount: true, gameUpdateHz: true,
+    frameTimeAvgMs: true, frameTimeMaxMs: true, moduleSampleEvery: true,
+    lastMs: true, runtimeAgeMs: true,
+    attachedPeers: true, clientSimulationEnabled: true, pendingReports: true,
+    pendingMarks: true, pendingClients: true, reportsPerSecond: true,
+    mismatchPerSecond: true, resyncReceivedPerSecond: true,
+    resyncAppliedPerSecond: true, sendQueueHigh: true, liveMapBuildMs: true,
+    liveMapChunks: true, liveMapBatches: true
+  };
+  function telemetryArrayKey(item) {
+    if (!item || typeof item !== "object") return null;
+    var keys = ["key", "id", "typeId", "clientId"];
+    for (var i = 0; i < keys.length; i++) {
+      var value = item[keys[i]];
+      if (value !== undefined && value !== null) return keys[i] + ":" + String(value);
+    }
+    return null;
+  }
+  function telemetryNumber(value) {
+    if (typeof value === "number" && isFinite(value)) return value;
+    if (typeof value === "string" && /^\d+$/.test(value)) {
+      var parsed = Number(value);
+      return Number.isSafeInteger(parsed) ? parsed : null;
+    }
+    return null;
+  }
+  function telemetrySinceBaseline(current, baseline, field) {
+    if (Array.isArray(current)) {
+      var previousByKey = Object.create(null), positional = [];
+      if (Array.isArray(baseline)) baseline.forEach(function (item, index) {
+        var key = telemetryArrayKey(item);
+        if (key === null) positional[index] = item;
+        else previousByKey[key] = item;
+      });
+      return current.map(function (item, index) {
+        var key = telemetryArrayKey(item);
+        var previous = key === null ? positional[index] : previousByKey[key];
+        return telemetrySinceBaseline(item, previous, field);
+      });
+    }
+    if (current && typeof current === "object") {
+      var result = {};
+      var currentMax = telemetryNumber(current.maxMs);
+      var previousMax = baseline && typeof baseline === "object"
+        ? telemetryNumber(baseline.maxMs) : null;
+      var maxAdvanced = currentMax !== null && previousMax !== null && currentMax > previousMax;
+      Object.keys(current).forEach(function (name) {
+        var previous = baseline && typeof baseline === "object" ? baseline[name] : undefined;
+        if (name === "maxContext" && previousMax !== null && !maxAdvanced) {
+          result[name] = "";
+          return;
+        }
+        result[name] = telemetrySinceBaseline(current[name], previous, name);
+      });
+      return result;
+    }
+    if (field === "maxMs") {
+      var currentMaxValue = telemetryNumber(current), previousMaxValue = telemetryNumber(baseline);
+      if (previousMaxValue === null || currentMaxValue === null) return current;
+      return currentMaxValue > previousMaxValue ? current : (typeof current === "string" ? "0" : 0);
+    }
+    if (telemetryGaugeFields[field] || baseline === undefined || baseline === null) return current;
+    var nowValue = telemetryNumber(current), oldValue = telemetryNumber(baseline);
+    if (nowValue === null || oldValue === null) return current;
+    var delta = nowValue >= oldValue ? nowValue - oldValue : nowValue;
+    return typeof current === "string" ? String(delta) : delta;
+  }
   function finiteMetric(value) {
     if (typeof value === "number") return isFinite(value);
     return typeof value === "string" && /^\d+$/.test(value) &&
@@ -1725,7 +1801,17 @@ footer{margin-top:20px;padding-top:12px;border-top:1px solid var(--line);font-si
     var peerBody = $("telemetryPeerBody"), moduleBody = $("telemetryModuleBody");
     var circuitStagesBody = $("telemetryCircuitStagesBody");
     if (!chip || !hostTiles || !workBody || !clientBody || !peerBody || !moduleBody) return;
-    var telemetry = state && state.telemetry;
+    var epoch = state && finiteMetric(state.statsEpoch) ? String(state.statsEpoch) : "0";
+    if (epoch !== lastStatsEpoch) {
+      lastStatsEpoch = epoch;
+      telemetryRateHistory = Object.create(null);
+      lastTelemetrySampleToken = null;
+      lastTelemetryReceivedAt = 0;
+    }
+    var telemetry = state && state.statsTelemetryBaselinePending === true
+      ? null
+      : telemetrySinceBaseline(state && state.telemetry,
+          state && state.statsBaselineTelemetry, null);
     if (!telemetry || typeof telemetry !== "object") {
       chip.textContent = "遥测字段不可用";
       hostTiles.innerHTML = [
@@ -2484,6 +2570,7 @@ footer{margin-top:20px;padding-top:12px;border-top:1px solid var(--line);font-si
       return;
     }
     inFlight = true;
+    var pollResetVersion = statsResetVersion;
     var p;
     try {
       p = fetch(stateUrl, { cache: "no-store" });
@@ -2500,6 +2587,7 @@ footer{margin-top:20px;padding-top:12px;border-top:1px solid var(--line);font-si
       })
       .then(function (st) {
         if (!st || typeof st !== "object") throw new Error("state 不是 JSON 对象");
+        if (pollResetVersion !== statsResetVersion) return;
         lastGood = st; ageAtGood = (typeof st.ageMs === "number" ? st.ageMs : 0); lastGoodAt = Date.now();
         var dataChanged = noteFeedSignature(st);   // 首帧只记基线；数据没变 → 不自动拟合（不抖）
         if (st.online === true) { setLamp("on", "在线 · age " + Math.round(ageAtGood) + " ms"); banner(""); }
@@ -2507,7 +2595,9 @@ footer{margin-top:20px;padding-top:12px;border-top:1px solid var(--line);font-si
         // 范围变了就走自动「整片区域」（fitWholeRegion 自己会 renderAll）；被静默期/节流挡下时照常按当前比例画
         if (!(dataChanged && requestAutoFit())) renderAll();
       })
-      .catch(onFail)
+      .catch(function (error) {
+        if (pollResetVersion === statsResetVersion) onFail(error);
+      })
       .then(function () { inFlight = false; }, function () { inFlight = false; });
   }
   function onFail(err) {
@@ -2665,6 +2755,42 @@ footer{margin-top:20px;padding-top:12px;border-top:1px solid var(--line);font-si
     fitWholeRegion();
   });
   bind("btnReload", "click", function () { poll(); });
+  bind("btnResetStats", "click", function () {
+    var button = $("btnResetStats");
+    if (!button || button.disabled) return;
+    var resetUrl = stateUrl.replace(/\/state(?:\?.*)?$/, "/reset-stats");
+    statsResetVersion++;
+    button.disabled = true;
+    fetch(resetUrl, { method: "POST", cache: "no-store" })
+      .then(function (response) {
+        if (!response || !response.ok) throw new Error("HTTP " + (response ? response.status : "?"));
+        return response.json();
+      })
+      .then(function (result) {
+        if (!result || result.ok !== true || !finiteMetric(result.epoch))
+          throw new Error("工具没有确认统计基线已重置");
+        lastStatsEpoch = String(result.epoch);
+        telemetryRateHistory = Object.create(null);
+        lastTelemetrySampleToken = null;
+        lastTelemetryReceivedAt = 0;
+        if (lastGood) {
+          lastGood.statsEpoch = result.epoch;
+          lastGood.samples = 0;
+          lastGood.droppedPartial = 0;
+          lastGood.decodeFailures = 0;
+          lastGood.decodeFailureReason = "";
+          lastGood.statsBaselineTelemetry = lastGood.telemetry || null;
+          lastGood.statsTelemetryBaselinePending = !lastGood.telemetry;
+          renderAll();
+        }
+        banner("LiveMap 统计已重置，正在建立新的速率基线。地图与主机状态未更改。", "ok");
+        poll();
+      })
+      .catch(function (error) {
+        banner("重置统计失败：" + (error && error.message ? error.message : String(error)), "bad");
+      })
+      .then(function () { button.disabled = false; });
+  });
   bind("centerSel", "change", function (ev) {
     var v = ev && ev.target ? ev.target.value : null;
     selectedKey = v;

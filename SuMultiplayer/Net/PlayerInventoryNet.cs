@@ -385,7 +385,7 @@ namespace SuMultiplayer.Net
         /// Source: Pak/Database.xml:4162-4166（ComponentTemplate Name="Inventory" SlotsCount=26）
         /// Source: Survivalcraft/Game/ComponentInventoryBase.cs:Load（按 SlotsCount 建槽）
         /// 实机缺陷（2026-10-21）：只同步前 10 槽时，客户端把快捷栏物品拖到背包格（槽 10..25）
-        /// 从未上传 → 主机侧化身的背包不更新 → 第三屏背包面板显示旧值。
+        /// 从未上传 → 主机侧化身的背包不更新 → 其他同步消费者会显示旧值。
         /// </summary>
         public const int NormalInventorySlots = 26;
 

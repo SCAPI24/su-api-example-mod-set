@@ -16,7 +16,7 @@ namespace SuMultiplayer.Modules
     ///   · **主机模拟每一个角色**：主机本机角色（PlayerKey(0, slot)）+ 主机侧每个客户端化身
     ///     （PlayerKey(clientId, slot)）。主机不再摘掉远端化身的生命 / 体征 / 睡眠 Update，
     ///     也不再对账回滚主机侧伤害 —— 生物攻击 / 爆炸 / 摔落 / 溺水 / 火焰 / 岩浆 / 饥饿 /
-    ///     疾病在主机上按单机规则生效；H3 调试镜像读到的就是这份权威状态。
+    ///     疾病在主机上按单机规则生效。
     ///   · **主机下发，客户端只跟随**：客户端**绝不**上报自己的生命 / 体征；客户端本机角色的
     ///     ComponentHealth / ComponentVitalStats / ComponentSleep / ComponentFlu /
     ///     ComponentSickness / ComponentOnFire 的 Update 被摘掉，只应用主机下发的值
@@ -435,15 +435,13 @@ namespace SuMultiplayer.Modules
         private long m_respawnReqWrongDirection;
         private readonly Dictionary<string, long> m_hostRespawnRejectReasons =
             new Dictionary<string, long>(StringComparer.Ordinal);
-        // 睡眠表现 / 点击唤醒（客户端 + 主机 H3 分屏镜像）
+        // 本机睡眠表现 / 点击唤醒
         private long m_sleepOverlayApplied;
         private long m_sleepZzz;
         private long m_sleepBlackout;
         private long m_sleepForced;
         private long m_sleepManualWakeDisabled;
         private long m_sleepLegacy;
-        private long m_sleepMirrorApplied;
-        private long m_sleepMirrorCleared;
         private long m_sleepTapCaptured;
         private long m_sleepSuppressed;
         private long m_sleepMissing;
@@ -676,7 +674,7 @@ namespace SuMultiplayer.Modules
                 ResetLocalRespawns("离开世界");
             }
 
-            if (hosting) TickHost(nowMs, tick.DeltaTime);
+            if (hosting) TickHost(nowMs);
             else if (connected && inWorld) TickClient(nowMs, tick.DeltaTime);
             else if (!hosting && m_port != null &&
                 (inWorld || (!connected && m_clientLocalSimDisabled > 0)) &&
@@ -690,12 +688,8 @@ namespace SuMultiplayer.Modules
             LogSummaryIfDue(nowMs);
         }
 
-        private void TickHost(long nowMs, float deltaTime)
+        private void TickHost(long nowMs)
         {
-            // H3 第三分屏（replace 模式）的睡眠表现镜像：每帧写（帧末，晚于
-            // ComponentScreenOverlays.Update 的每帧 Reset）。必须在客户端数 == 0 的早退之前
-            // 也跑：客户端离开后 H3 的 SleepFactor 要写回 0，否则第三分屏控件永远隐藏。
-            TickHostMirrorSleep(deltaTime);
             if (m_clients.Count == 0)
             {
                 if (m_broadcastPort != null && m_broadcastPort.PlayerPeerCount > 0)
@@ -2381,21 +2375,6 @@ namespace SuMultiplayer.Modules
 
         // ---------------------------------------------------------------- 客户端：睡眠点击 → 唤醒请求
 
-        /// <summary>主机侧 H3 分屏镜像的睡眠表现（每帧；失败只计数 + 限流日志）。</summary>
-        private void TickHostMirrorSleep(float deltaTime)
-        {
-            if (m_sleepPort == null) return;
-            PlayerSleepPresentationCounts counts =
-                m_sleepPort.RefreshMirrorSleepPresentation(deltaTime, out string reason);
-            AccumulateSleepCounts(in counts);
-            if (!string.IsNullOrEmpty(reason))
-            {
-                m_sleepPresentationFailures++;
-                Problem("sleep-mirror-refresh", "H3 第三分屏的睡眠表现刷新失败：" + reason +
-                    "（本拍应用 " + counts.MirrorApplied + " 个视图；不静默跳过）");
-            }
-        }
-
         /// <summary>把端口返回的一帧计数累加进状态行计数器（10 s 汇总）。</summary>
         private void AccumulateSleepCounts(in PlayerSleepPresentationCounts counts)
         {
@@ -2405,8 +2384,6 @@ namespace SuMultiplayer.Modules
             m_sleepForced += counts.Forced;
             m_sleepManualWakeDisabled += counts.ManualWakeDisabled;
             m_sleepLegacy += counts.Legacy;
-            m_sleepMirrorApplied += counts.MirrorApplied;
-            m_sleepMirrorCleared += counts.MirrorCleared;
             m_sleepMissing += counts.Missing;
             m_sleepPresentationFailures += counts.Failures;
         }
@@ -3310,7 +3287,7 @@ namespace SuMultiplayer.Modules
 
         /// <summary>
         /// 客户端：远端化身（主机角色 / 其它客户端角色）也不跑生命 / 体征 / 睡眠模拟。
-        /// 主机侧**绝不**调用（主机要自己模拟它们，H3 读的就是这份状态）。
+        /// 主机侧**绝不**调用（主机要自己模拟这些角色）。
         /// </summary>
         private void TickRemoteSuppression()
         {
@@ -3760,7 +3737,7 @@ namespace SuMultiplayer.Modules
         /// 睡眠表现 / 点击唤醒的 10 秒计数器（两种角色的状态行都输出同一组名字，
         /// 不适用的那一侧为 0 —— 排查时不用记"这个名字只在哪一端出现"）。
         ///
-        ///   · <c>sleepOverlayApplied</c>   = 写入睡眠表现的角色-帧数（本机 + H3 镜像）；
+        ///   · <c>sleepOverlayApplied</c>   = 写入本机角色睡眠表现的角色-帧数；
         ///   · <c>sleepZzz</c> / <c>sleepBlackout</c> = 其中写 "Zzz..." / 黑屏的角色-帧数；
         ///   · <c>sleepForced</c>           = 进入强制睡眠（昏迷）的睡眠期数；
         ///   · <c>sleepManualWakeDisabled</c> = 强制睡眠期间被抑制的点击次数（没有唤醒路径）；
@@ -3772,7 +3749,6 @@ namespace SuMultiplayer.Modules
         ///     没有单独的结果消息，接受就是这样确认的；
         ///   · <c>sleepLegacy</c>            = 老版本主机（没有 sleep_start_time）的睡眠期数：
         ///     仍显示淡入 + Zzz / 黑屏，但没有提示文本与唤醒路径；
-        ///   · <c>sleepMirrorApplied/Cleared</c> = H3 第三分屏镜像的角色-帧 / 解绑写回次数；
         ///   · <c>sleepSuppressedBy</c> / <c>sleepFail</c> / <c>sleepMissing</c> = 点击抑制原因 /
         ///     表现写入失败 / 本拍找不到角色。
         /// </summary>
@@ -3796,8 +3772,6 @@ namespace SuMultiplayer.Modules
                 " sleepSuppressed=" + m_sleepSuppressed +
                 " sleepSuppressedBy=" + FormatReasons(m_sleepSuppressedReasons) +
                 " sleepLegacy=" + m_sleepLegacy +
-                " sleepMirrorApplied=" + m_sleepMirrorApplied +
-                " sleepMirrorCleared=" + m_sleepMirrorCleared +
                 " sleepMissing=" + m_sleepMissing +
                 " sleepFail=" + m_sleepPresentationFailures +
                 // 入睡申请（104 / 105）：与唤醒（103）分开计数，状态行里一眼能分清
