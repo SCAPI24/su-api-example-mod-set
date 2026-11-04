@@ -56,6 +56,8 @@ namespace SuMultiplayer.Net
             MoveVelocity = moveVelocity;
             HasMoveVelocity = hasMoveVelocity;
             StandingOnMount = false;
+            AuthorityImpulse = Vector3.Zero;
+            HasAuthorityImpulse = false;
         }
 
         /// <summary>
@@ -70,6 +72,8 @@ namespace SuMultiplayer.Net
                 isGrounded, moveVelocity, hasMoveVelocity)
         {
             StandingOnMount = standingOnMount;
+            AuthorityImpulse = Vector3.Zero;
+            HasAuthorityImpulse = false;
         }
 
         /// <summary>
@@ -78,11 +82,14 @@ namespace SuMultiplayer.Net
         /// </summary>
         public PlayerPositionSnapshot(int serverTick, Vector3 position, Quaternion rotation,
             Vector3 velocity, Vector2 lookAngles, bool isCrouching, bool isFlying, bool isGrounded,
-            Vector3 moveVelocity, bool hasMoveVelocity, bool standingOnMount, int ladderValue)
+            Vector3 moveVelocity, bool hasMoveVelocity, bool standingOnMount, int ladderValue,
+            Vector3 authorityImpulse = default, bool hasAuthorityImpulse = false)
             : this(serverTick, position, rotation, velocity, lookAngles, isCrouching, isFlying,
                 isGrounded, moveVelocity, hasMoveVelocity, standingOnMount)
         {
             LadderValue = ladderValue;
+            AuthorityImpulse = authorityImpulse;
+            HasAuthorityImpulse = hasAuthorityImpulse;
         }
 
         /// <summary>发送方自己的位置脉冲序号（旧 <c>client.Step</c>）。只用于丢弃陈旧快照与诊断。</summary>
@@ -102,6 +109,8 @@ namespace SuMultiplayer.Net
         public bool StandingOnMount { get; }
         /// <summary>客户端当前挂着的梯子 cell value；0 = 不在梯子上。</summary>
         public int LadderValue { get; }
+        public Vector3 AuthorityImpulse { get; }
+        public bool HasAuthorityImpulse { get; }
         /// <summary>俯仰/偏航（旧 <c>msg.LookAngles</c>；机身 yaw 在 <see cref="Rotation"/> 里）。</summary>
         public Vector2 LookAngles { get; }
         public bool IsCrouching { get; }
@@ -120,7 +129,9 @@ namespace SuMultiplayer.Net
             IsFiniteValue(Velocity.X) && IsFiniteValue(Velocity.Y) && IsFiniteValue(Velocity.Z) &&
             IsFiniteValue(LookAngles.X) && IsFiniteValue(LookAngles.Y) &&
             (!HasMoveVelocity || (IsFiniteValue(MoveVelocity.X) && IsFiniteValue(MoveVelocity.Y) &&
-                IsFiniteValue(MoveVelocity.Z)));
+                IsFiniteValue(MoveVelocity.Z))) &&
+            (!HasAuthorityImpulse || (IsFiniteValue(AuthorityImpulse.X) &&
+                IsFiniteValue(AuthorityImpulse.Y) && IsFiniteValue(AuthorityImpulse.Z)));
 
         private static bool IsFiniteValue(float value) =>
             !float.IsNaN(value) && !float.IsInfinity(value);
@@ -187,6 +198,8 @@ namespace SuMultiplayer.Net
         /// </summary>
         public Vector3 MoveVelocity;
         public bool HasMoveVelocity;
+        public Vector3 AuthorityImpulse;
+        public bool HasAuthorityImpulse;
         /// <summary>客户端站在可骑乘实体（船/坐骑）上：主机化身直接贴位置 + 速度清零。</summary>
         public bool StandingOnMount;
         public Vector2 LookAngles;
@@ -229,6 +242,8 @@ namespace SuMultiplayer.Net
             Velocity = snapshot.Velocity;
             MoveVelocity = snapshot.MoveVelocity;
             HasMoveVelocity = snapshot.HasMoveVelocity;
+            AuthorityImpulse = snapshot.AuthorityImpulse;
+            HasAuthorityImpulse = snapshot.HasAuthorityImpulse;
             StandingOnMount = snapshot.StandingOnMount;
             LookAngles = snapshot.LookAngles;
             IsCrouching = snapshot.IsCrouching;
@@ -440,13 +455,26 @@ namespace SuMultiplayer.Net
                 moveVelocity = new Vector3(entry.MoveVelocity.X, entry.MoveVelocity.Y,
                     entry.MoveVelocity.Z);
             }
+            bool hasAuthorityImpulse = entry.HasAuthorityImpulse;
+            Vector3 authorityImpulse = Vector3.Zero;
+            if (hasAuthorityImpulse)
+            {
+                if (entry.AuthorityImpulse == null)
+                {
+                    error = "条目声明 has_authority_impulse 但缺少 authority_impulse";
+                    return false;
+                }
+                authorityImpulse = new Vector3(entry.AuthorityImpulse.X,
+                    entry.AuthorityImpulse.Y, entry.AuthorityImpulse.Z);
+            }
             snapshot = new PlayerPositionSnapshot(entry.ServerTick,
                 new Vector3(entry.Position.X, entry.Position.Y, entry.Position.Z),
                 new Quaternion(entry.Rotation.X, entry.Rotation.Y, entry.Rotation.Z, entry.Rotation.W),
                 new Vector3(entry.Velocity.X, entry.Velocity.Y, entry.Velocity.Z),
                 new Vector2(entry.LookAngles.X, entry.LookAngles.Y),
                 entry.IsCrouching, entry.IsFlying, entry.IsGrounded,
-                moveVelocity, hasMoveVelocity, entry.StandingOnMount, entry.LadderValue);
+                moveVelocity, hasMoveVelocity, entry.StandingOnMount, entry.LadderValue,
+                authorityImpulse, hasAuthorityImpulse);
             return true;
         }
 
@@ -467,6 +495,10 @@ namespace SuMultiplayer.Net
                     ? new PP.Vec3 { X = s.MoveVelocity.X, Y = s.MoveVelocity.Y, Z = s.MoveVelocity.Z }
                     : null,
                 HasMoveVelocity = s.HasMoveVelocity,
+                AuthorityImpulse = s.HasAuthorityImpulse
+                    ? new PP.Vec3 { X = s.AuthorityImpulse.X, Y = s.AuthorityImpulse.Y, Z = s.AuthorityImpulse.Z }
+                    : null,
+                HasAuthorityImpulse = s.HasAuthorityImpulse,
                 StandingOnMount = s.StandingOnMount,
                 LookAngles = new PP.Vec2 { X = s.LookAngles.X, Y = s.LookAngles.Y },
                 IsCrouching = s.IsCrouching,

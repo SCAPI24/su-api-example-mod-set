@@ -113,6 +113,10 @@ namespace SuMultiplayer.Creatures
         public float MaxDigIn;
         /// <summary>主机 ComponentFishOutOfWaterBehavior 是否处于 "Jump" 状态（鱼离水挣扎）。</summary>
         public bool IsBend;
+        /// <summary>主机 ComponentLocomotion.LastFlyOrder（飞鸟扑翼表现）。</summary>
+        public Vector3 FlyOrder;
+        public bool HasFlyOrder;
+        public bool Shapeshifting;
 
         /// <summary>
         /// 主机侧活动状态：既用于选择同步频率，也随 <c>CreatureRecord.activity</c> 下发 ——
@@ -145,6 +149,9 @@ namespace SuMultiplayer.Creatures
             IsDigIn = IsDigIn,
             MaxDigIn = MaxDigIn,
             IsBend = IsBend,
+            FlyOrder = FlyOrder,
+            HasFlyOrder = HasFlyOrder,
+            Shapeshifting = Shapeshifting,
             Activity = Activity
         };
     }
@@ -330,7 +337,13 @@ namespace SuMultiplayer.Creatures
                     Grounded = record.Grounded,
                     IsDigIn = record.IsDigIn,
                     MaxDigIn = record.MaxDigIn,
-                    IsBend = record.IsBend
+                    IsBend = record.IsBend,
+                    FlyOrder = record.HasFlyOrder ? new PC.Vec3
+                    {
+                        X = record.FlyOrder.X, Y = record.FlyOrder.Y, Z = record.FlyOrder.Z
+                    } : null,
+                    HasFlyOrder = record.HasFlyOrder,
+                    Shapeshifting = record.Shapeshifting
                 };
                 message.Records.Add(wire);
             }
@@ -436,8 +449,13 @@ namespace SuMultiplayer.Creatures
                     record.MaxDigIn = float.IsFinite(wire.MaxDigIn)
                         ? MathUtils.Clamp(wire.MaxDigIn, 0f, 10f) : 0f;
                     record.IsBend = wire.IsBend;
+                    record.HasFlyOrder = wire.HasFlyOrder;
+                    record.FlyOrder = wire.FlyOrder == null ? Vector3.Zero :
+                        new Vector3(wire.FlyOrder.X, wire.FlyOrder.Y, wire.FlyOrder.Z);
+                    record.Shapeshifting = wire.Shapeshifting;
                     if (!IsFinite(record.Position) || !IsFinite(record.Rotation) ||
-                        !IsFinite(record.Velocity) || !float.IsFinite(record.Health))
+                        !IsFinite(record.Velocity) || !IsFinite(record.FlyOrder) ||
+                        !float.IsFinite(record.Health))
                     {
                         reason = "记录 key=" + record.Key + " 含非有限数值";
                         return false;

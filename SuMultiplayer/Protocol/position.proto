@@ -56,6 +56,11 @@ message PlayerPosition {
   // 客户端当前挂着的梯子 cell value（0 = 不在梯子上）。只在客户端 → 主机快照里填；
   // 主机远端化身据此恢复 LadderValue，并在 true→false 时强制贴合一次位置（下梯子补正）。
   int32 ladder_value = 15;
+  // Host -> client: velocity impulse measured by the authoritative body after
+  // a collision/attack. Clients apply it with ComponentBody.ApplyImpulse;
+  // normal position snapshots never write the local position back.
+  Vec3 authority_impulse = 16;
+  bool has_authority_impulse = 17;
   // Third-party extension points: see doc/message-protocol.md.
   bytes ext = 100;
   google.protobuf.Any custom = 101;

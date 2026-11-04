@@ -1833,6 +1833,7 @@ namespace SuMultiplayer.Modules
                 if (!hosting && key.ClientId == ClientLocalClientId)
                 {
                     m_avatarLink.NotePositionSkippedOwn(key);
+                    m_avatarLink.ApplyAuthoritativeLocalImpulse(key, in snapshot);
                     continue;
                 }
                 if (!snapshot.IsFinite)

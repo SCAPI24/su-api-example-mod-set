@@ -197,6 +197,9 @@ namespace SuMultiplayer.Modules
         /// </summary>
         void NotePositionSkippedOwn(PlayerKey key);
 
+        bool ApplyAuthoritativeLocalImpulse(PlayerKey key,
+            in PlayerPositionSnapshot snapshot);
+
         /// <summary>
         /// 主机：这个玩家端是否已经上报过本机槽位（<c>LOCAL_PLAYER_SLOTS</c>）。
         /// false = 旧构建 / 尚未上报 → 位置批与名册只发槽位 0（单角色兼容，绝不让旧客户端

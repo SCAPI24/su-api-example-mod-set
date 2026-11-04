@@ -2022,6 +2022,71 @@ footer{margin-top:20px;padding-top:12px;border-top:1px solid var(--line);font-si
         "</td><td class='num'>" + (finiteMetric(channel.protocolViolations) ? esc(String(channel.protocolViolations)) : "不可用") +
         "</td><td>" + detail + "</td></tr>");
     }
+    function aggregateChannels(channels) {
+      var aggregate = {
+        state: "Connected",
+        framesSent: 0, bytesSent: 0, framesReceived: 0, bytesReceived: 0,
+        backpressureEvents: 0, protocolViolations: 0, sendQueueHigh: 0,
+        count: 0
+      };
+      channels.forEach(function (channel) {
+        if (!channel || typeof channel !== "object") return;
+        aggregate.count++;
+        ["framesSent", "bytesSent", "framesReceived", "bytesReceived",
+          "backpressureEvents", "protocolViolations"].forEach(function (name) {
+          if (finiteMetric(channel[name])) aggregate[name] += Number(channel[name]);
+        });
+        if (finiteMetric(channel.sendQueueHigh))
+          aggregate.sendQueueHigh = Math.max(aggregate.sendQueueHigh, Number(channel.sendQueueHigh));
+      });
+      return aggregate.count ? aggregate : null;
+    }
+
+    function appendAggregateChannel(label, channel, key) {
+      if (!channel) {
+        peerRows.push(unavailableRow(11, label + "不可用"));
+        return;
+      }
+      var rates = telemetryCounterRates(key, telemetry, {
+        bytesSent: channel.bytesSent, bytesReceived: channel.bytesReceived,
+        framesSent: channel.framesSent, framesReceived: channel.framesReceived,
+        backpressureEvents: channel.backpressureEvents
+      });
+      var rateSent = formatCounterRate(telemetry, channel.bytesSent, rates, "bytesSent", formatByteRate);
+      var rateRecv = formatCounterRate(telemetry, channel.bytesReceived, rates, "bytesReceived", formatByteRate);
+      var frameRate = formatCounterRate(telemetry, channel.framesSent, rates, "framesSent", function (v) {
+        return metricValue(v, 1);
+      }) + " / " + formatCounterRate(telemetry, channel.framesReceived, rates, "framesReceived", function (v) {
+        return metricValue(v, 1);
+      });
+      var backpressure = finiteMetric(channel.backpressureEvents)
+        ? esc(String(channel.backpressureEvents)) + " · " + esc(formatCounterRate(
+          telemetry, channel.backpressureEvents, rates, "backpressureEvents",
+          function (v) { return metricValue(v, 2) + "/s"; }))
+        : "不可用";
+      peerRows.push("<tr><td>" + esc(label) + "</td><td class='mono'>" +
+        esc(String(channel.count)) + " 条连接</td><td class='num'>" + esc(formatBytes(channel.bytesSent)) +
+        "</td><td class='num telemetry-rate'>" + esc(rateSent) + "</td><td class='num'>" +
+        esc(formatBytes(channel.bytesReceived)) + "</td><td class='num telemetry-rate'>" + esc(rateRecv) +
+        "</td><td class='num telemetry-rate'>" + esc(frameRate) + "</td><td class='num'>" +
+        backpressure + "</td><td class='num'>" + esc(String(channel.sendQueueHigh)) +
+        "</td><td class='num'>" + esc(String(channel.protocolViolations)) +
+        "</td><td class='telemetry-unavailable'>合计行；消息类型见各连接明细</td></tr>");
+    }
+
+    if (peers && peers.length) {
+      var playerPrimary = [], playerCircuit = [], playerAll = [];
+      peers.forEach(function (peer) {
+        if (peer.primary) { playerPrimary.push(peer.primary); playerAll.push(peer.primary); }
+        if (peer.circuit) { playerCircuit.push(peer.circuit); playerAll.push(peer.circuit); }
+      });
+      var primaryTotal = aggregateChannels(playerPrimary);
+      var circuitTotal = aggregateChannels(playerCircuit);
+      var playerTotal = aggregateChannels(playerAll);
+      if (playerTotal) appendAggregateChannel("主机玩家连接合计（主连接+电路）", playerTotal, "host:player-total");
+      if (primaryTotal) appendAggregateChannel("主机玩家主连接合计", primaryTotal, "host:primary-total");
+      if (circuitTotal) appendAggregateChannel("主机玩家电路连接合计", circuitTotal, "host:circuit-total");
+    }
     if (peers) {
       peers.forEach(function (peer) {
         var rt = runtimeSummary(peer.clientRuntime);

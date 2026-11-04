@@ -277,6 +277,9 @@ enum MessageType {
   CIRCUIT_SCOPE_SNAPSHOT = 147;
   CIRCUIT_HASH_CHECKPOINT = 148;
 
+  // Host -> clients: sign circuit presentation event. Append-only.
+  SIGN_TRIGGER_EVENT = 150;
+
   // Multiplayer chat (chat.proto), append-only: 82..84 are new ids, no
   // existing id is renumbered.
   // Client -> host request, host -> all clients accepted line, host -> sender

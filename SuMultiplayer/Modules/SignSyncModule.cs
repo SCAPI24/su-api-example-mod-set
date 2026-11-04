@@ -37,6 +37,8 @@ namespace SuMultiplayer.Modules
         private readonly List<SignRecordData> m_edits = new List<SignRecordData>(16);
         private readonly List<PlayerPeerUser> m_peerScratch = new List<PlayerPeerUser>(8);
         private readonly List<int> m_onlineScratch = new List<int>(8);
+        private readonly List<SignSyncEngine.TriggerData> m_triggers =
+            new List<SignSyncEngine.TriggerData>(8);
 
         private IModuleContext m_context;
         private ITransportPort m_transport;
@@ -101,6 +103,8 @@ namespace SuMultiplayer.Modules
                 new DelegateMessageHandler<P.SignEditRequest>(OnEditRequest), ModuleId);
             registry.Register((int)MessageType.SignEditResult, P.SignEditResult.Parser,
                 new DelegateMessageHandler<P.SignEditResult>(OnEditResult), ModuleId);
+            registry.Register((int)MessageType.SignTriggerEvent, P.SignTriggerEvent.Parser,
+                new DelegateMessageHandler<P.SignTriggerEvent>(OnTrigger), ModuleId);
         }
 
         public void Detach(ModuleDetachReason reason)
@@ -140,8 +144,26 @@ namespace SuMultiplayer.Modules
             m_nextPollMs = nowMs + PollMs;
             if (nowMs < m_nextEditMs) return; // just sent an edit; wait for host state
             bool hosting = m_control.IsHosting;
-            if (hosting) HostTick();
+            if (hosting) { HostTick(); PollTriggers(); }
             else ClientTick();
+        }
+
+        private void PollTriggers()
+        {
+            m_engine.CaptureTriggers(m_triggers);
+            for (int i = 0; i < m_triggers.Count; i++)
+            {
+                SignSyncEngine.TriggerData trigger = m_triggers[i];
+                var message = new P.SignTriggerEvent
+                {
+                    EventId = trigger.EventId,
+                    ServerTick = trigger.ServerTick,
+                    X = trigger.X, Y = trigger.Y, Z = trigger.Z
+                };
+                message.Lines.AddRange(trigger.Lines);
+                message.Colors.AddRange(trigger.Colors);
+                SendTriggerToAll(message.ToByteArray());
+            }
         }
 
         private void HostTick()
@@ -328,6 +350,15 @@ namespace SuMultiplayer.Modules
                     "标牌编辑被主机拒绝：" + message.Reason);
         }
 
+        private void OnTrigger(MessageContext context, P.SignTriggerEvent message)
+        {
+            if (m_control.IsHosting) return;
+            if (message.EventId <= 0 || message.Lines.Count != SignRecordData.LineCount ||
+                message.Colors.Count != SignRecordData.LineCount) return;
+            if (!m_engine.PresentTrigger(message, out string reason))
+                LogFailure("trigger-present", "客户端显示标牌触发失败（" + reason + "）");
+        }
+
         private void SendEditResult(int clientId, long sequence, bool accepted, string reason)
         {
             if (m_transport == null || clientId <= 0) return;
@@ -353,6 +384,17 @@ namespace SuMultiplayer.Modules
             }
             for (int i = 0; i < players.Count; i++)
                 m_transport.TrySendTo(players[i], MessageType.SignState, payload);
+        }
+
+        private void SendTriggerToAll(byte[] payload)
+        {
+            if (m_transport == null || payload == null) return;
+            m_peerScratch.Clear();
+            m_broadcast?.CapturePlayerUsers(m_peerScratch);
+            for (int i = 0; i < m_peerScratch.Count; i++)
+                if (m_peerScratch[i].ClientId > 0)
+                    m_transport.TrySendTo(m_peerScratch[i].ClientId,
+                        MessageType.SignTriggerEvent, payload);
         }
 
         private static string ReasonCode(string reason)

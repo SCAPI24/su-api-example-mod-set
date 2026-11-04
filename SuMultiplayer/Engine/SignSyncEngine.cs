@@ -7,6 +7,7 @@ using Game;
 using GameEntitySystem;
 using SuMultiplayer.Modules;
 using SuMultiplayer.Net;
+using P = SuMultiplayer.Protocol;
 
 namespace SuMultiplayer.Engine
 {
@@ -17,12 +18,25 @@ namespace SuMultiplayer.Engine
     /// </summary>
     public sealed class SignSyncEngine
     {
+        public sealed class TriggerData
+        {
+            public long EventId;
+            public long ServerTick;
+            public int X, Y, Z;
+            public string[] Lines;
+            public uint[] Colors;
+        }
         private readonly NetworkAvatarSpawner m_spawner;
         private readonly IModParentField m_parentField;
         private readonly IModuleDiagnostics m_diagnostics;
         private Project m_project;
         private SubsystemSignBlockBehavior m_behavior;
         private int m_sessionSerial;
+        private long m_nextTriggerId;
+        private readonly Dictionary<string, bool> m_signInputHigh =
+            new Dictionary<string, bool>(StringComparer.Ordinal);
+        private readonly List<TriggerData> m_triggerScratch = new List<TriggerData>(8);
+        private readonly List<PlayerData> m_localPlayersScratch = new List<PlayerData>(4);
 
         public SignSyncEngine(NetworkAvatarSpawner spawner, IModParentField parentField,
             IModuleDiagnostics diagnostics)
@@ -42,6 +56,8 @@ namespace SuMultiplayer.Engine
                 m_project = project;
                 m_behavior = null;
                 m_sessionSerial++;
+                m_signInputHigh.Clear();
+                m_nextTriggerId = 0;
             }
             if (m_project == null)
             {
@@ -50,6 +66,76 @@ namespace SuMultiplayer.Engine
             }
             if (m_behavior == null)
                 m_behavior = m_project.FindSubsystem<SubsystemSignBlockBehavior>(false);
+        }
+
+        /// <summary>主机轮询标牌电路的上升沿；只返回文字/颜色表现事件。</summary>
+        public int CaptureTriggers(List<TriggerData> target)
+        {
+            if (target == null) throw new ArgumentNullException(nameof(target));
+            target.Clear();
+            if (m_behavior == null || m_project == null) return 0;
+            SubsystemElectricity electricity = m_project.FindSubsystem<SubsystemElectricity>(false);
+            if (electricity == null) return 0;
+            object raw = m_parentField.GetParentField(electricity,
+                "m_electricElements", typeof(SubsystemElectricity));
+            if (!(raw is IDictionary elements)) return 0;
+            foreach (object key in elements.Keys)
+            {
+                if (!(key is SignElectricElement sign) || sign.CellFaces.Count == 0) continue;
+                bool high = false;
+                foreach (ElectricConnection connection in sign.Connections)
+                {
+                    if (connection.ConnectorType == ElectricConnectorType.Output ||
+                        connection.NeighborConnectorType == ElectricConnectorType.Input) continue;
+                    if (ElectricElement.IsSignalHigh(connection.NeighborElectricElement
+                        .GetOutputVoltage(connection.NeighborConnectorFace))) { high = true; break; }
+                }
+                CellFace face = sign.CellFaces[0];
+                string id = face.X + "," + face.Y + "," + face.Z;
+                bool wasHigh = m_signInputHigh.TryGetValue(id, out bool previous) && previous;
+                m_signInputHigh[id] = high;
+                if (!high || wasHigh) continue;
+                SignData data = m_behavior.GetSignData(new Point3(face.X, face.Y, face.Z));
+                if (data == null) continue;
+                var trigger = new TriggerData
+                {
+                    EventId = ++m_nextTriggerId,
+                    ServerTick = (long)(m_project.FindSubsystem<SubsystemTime>(false)?.GameTime ?? 0.0) * 1000L,
+                    X = face.X, Y = face.Y, Z = face.Z,
+                    Lines = new string[SignRecordData.LineCount],
+                    Colors = new uint[SignRecordData.LineCount]
+                };
+                for (int i = 0; i < SignRecordData.LineCount; i++)
+                {
+                    trigger.Lines[i] = data.Lines != null && i < data.Lines.Length
+                        ? data.Lines[i] ?? string.Empty : string.Empty;
+                    trigger.Colors[i] = data.Colors != null && i < data.Colors.Length
+                        ? data.Colors[i].PackedValue : 0u;
+                }
+                target.Add(trigger);
+            }
+            return target.Count;
+        }
+
+        public bool PresentTrigger(P.SignTriggerEvent message, out string reason)
+        {
+            reason = null;
+            if (m_project == null) { reason = "no-project"; return false; }
+            if (message.Lines.Count != SignRecordData.LineCount ||
+                message.Colors.Count != SignRecordData.LineCount)
+            { reason = "line-count"; return false; }
+            if (!m_spawner.TryCollectLocalPlayers(m_project, m_localPlayersScratch,
+                out _, out string collectReason))
+            { reason = collectReason; return false; }
+            string text = string.Join("\n", message.Lines).Trim('\n').Replace("\\\n", "");
+            Color color = new Color(message.Colors[0]);
+            if (color == Color.Black) color = Color.White;
+            int max = Math.Max(color.R, Math.Max(color.G, color.B));
+            if (max > 0) color *= 255f / max;
+            for (int i = 0; i < m_localPlayersScratch.Count; i++)
+                m_localPlayersScratch[i].ComponentPlayer?.ComponentGui?.DisplaySmallMessage(
+                    text, color, blinking: true, playNotificationSound: true);
+            return true;
         }
 
         public bool TryCapture(List<SignRecordData> target, out long fingerprint, out string reason)

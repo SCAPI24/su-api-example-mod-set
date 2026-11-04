@@ -142,6 +142,12 @@ namespace SuMultiplayer.Engine
             new Dictionary<int, CreatureActivity>();
         /// <summary>客户端复制体最近一次 FeedOrder（模型每帧会消费复位，必须持续回写）。</summary>
         private readonly Dictionary<int, bool> m_replicaFeedOrder = new Dictionary<int, bool>();
+        private readonly Dictionary<int, Vector3> m_replicaFlyOrder = new Dictionary<int, Vector3>();
+        private readonly Dictionary<int, bool> m_replicaHasFlyOrder = new Dictionary<int, bool>();
+        private readonly Dictionary<int, bool> m_replicaShapeshifting = new Dictionary<int, bool>();
+        private readonly Dictionary<int, ShapeshiftParticleSystem> m_replicaShapeshiftParticles =
+            new Dictionary<int, ShapeshiftParticleSystem>();
+        private readonly HashSet<int> m_suppressedShapeshiftKeys = new HashSet<int>();
         /// <summary>客户端复制体最近一次主机 grounded 状态（四足模型迈腿条件）。</summary>
         private readonly Dictionary<int, bool> m_replicaGrounded = new Dictionary<int, bool>();
         /// <summary>客户端复制体最近一次主机钻沙状态与最大深度（鱼钻沙表现）。</summary>
@@ -151,6 +157,7 @@ namespace SuMultiplayer.Engine
         private readonly Dictionary<int, bool> m_replicaBend = new Dictionary<int, bool>();
         /// <summary>主机模型私有 m_feedFactor 的反射缓存（类型 → 字段；没有该模型的类型不缓存）。</summary>
         private readonly Dictionary<Type, FieldInfo> m_feedFactorFields = new Dictionary<Type, FieldInfo>();
+        private readonly Dictionary<Type, FieldInfo> m_peckPhaseFields = new Dictionary<Type, FieldInfo>();
 
         // 主机：每只生物上一次被枚举时的状态（判断"在动 / 刚受伤"用；只影响同步频率，不上线）。
         private readonly Dictionary<object, HostCreatureActivityState> m_hostActivityStates =
@@ -294,6 +301,7 @@ namespace SuMultiplayer.Engine
                 m_creatureSpawnSubsystem = null;
                 m_missingSubsystemLogged = false;
                 m_project = project;
+                StopAllReplicaShapeshiftParticles();
             }
             m_clientReplicaMode = clientReplicaMode;
             if (project == null)
@@ -521,6 +529,14 @@ namespace SuMultiplayer.Engine
                 record.SpawnDuration = spawn == null ? 0f : MathUtils.Clamp(spawn.SpawnDuration, 0f, 60f);
                 // 头部朝向（马/驴/骆驼被骑转向时头要转；客户端复制体没有 locomotion updateable）。
                 record.LookAngles = creature?.ComponentLocomotion?.LookAngles ?? Vector2.Zero;
+                Vector3? flyOrder = creature?.ComponentLocomotion?.LastFlyOrder;
+                record.HasFlyOrder = flyOrder.HasValue;
+                record.FlyOrder = flyOrder ?? Vector3.Zero;
+                record.Shapeshifting = false;
+                ComponentShapeshifter shapeshifter = entity.FindComponent<ComponentShapeshifter>();
+                if (shapeshifter != null && TryReadShapeshiftTarget(shapeshifter,
+                    out string shapeshiftTarget))
+                    record.Shapeshifting = !string.IsNullOrEmpty(shapeshiftTarget);
                 record.FeedOrder = IsHostFeeding(creature?.ComponentCreatureModel);
                 record.Grounded = body.StandingOnValue.HasValue || body.StandingOnBody != null;
                 CaptureFishBehavior(entity, record);
@@ -647,11 +663,35 @@ namespace SuMultiplayer.Engine
                 }
                 m_feedFactorFields[type] = field;
             }
-            if (field == null) return false;
+            if (field != null)
+            {
+                try
+                {
+                    object value = field.GetValue(model);
+                    if (value is float factor && factor > 0.05f) return true;
+                }
+                catch (Exception)
+                {
+                    // Bird models use a peck phase instead of m_feedFactor.
+                }
+            }
+            if (!m_peckPhaseFields.TryGetValue(type, out FieldInfo peckField))
+            {
+                peckField = null;
+                for (Type current = type; current != null && current != typeof(ComponentCreatureModel);
+                    current = current.BaseType)
+                {
+                    peckField = current.GetField("m_peckPhase",
+                        BindingFlags.Instance | BindingFlags.NonPublic);
+                    if (peckField != null) break;
+                }
+                m_peckPhaseFields[type] = peckField;
+            }
+            if (peckField == null) return false;
             try
             {
-                object value = field.GetValue(model);
-                return value is float factor && factor > 0.05f;
+                object value = peckField.GetValue(model);
+                return value is float phase && phase > 0.01f && phase < 0.99f;
             }
             catch (Exception)
             {
@@ -1481,6 +1521,19 @@ namespace SuMultiplayer.Engine
                 m_replicaActivity[record.Key] = record.Activity;
 
                 m_replicaFeedOrder[record.Key] = record.FeedOrder;
+                m_replicaHasFlyOrder[record.Key] = record.HasFlyOrder;
+                m_replicaFlyOrder[record.Key] = record.FlyOrder;
+                m_replicaShapeshifting[record.Key] = record.Shapeshifting;
+                if (m_suppressedShapeshiftKeys.Contains(record.Key))
+                {
+                    if (!record.Shapeshifting) m_suppressedShapeshiftKeys.Remove(record.Key);
+                    StopReplicaShapeshiftParticles(record.Key);
+                }
+                else
+                {
+                    UpdateReplicaShapeshift(record.Key, record.Shapeshifting,
+                        entity.FindComponent<ComponentBody>());
+                }
                 m_replicaGrounded[record.Key] = record.Grounded;
                 m_replicaDigIn[record.Key] = record.IsDigIn;
                 m_replicaMaxDigIn[record.Key] = record.MaxDigIn;
@@ -1548,6 +1601,10 @@ namespace SuMultiplayer.Engine
                 m_replicaTemplates.TryGetValue(record.Key, out string oldTemplate) &&
                 !string.Equals(oldTemplate, record.TemplateName, StringComparison.Ordinal))
             {
+                // A shapeshift emitter belongs to the outgoing creature. End its
+                // emission with that entity; never attach it to the replacement form.
+                StopReplicaShapeshiftParticles(record.Key);
+                m_suppressedShapeshiftKeys.Add(record.Key);
                 if (entity.IsAddedToProject && entity.Project == m_project)
                     m_project.RemoveEntity(entity, disposeEntity: true);
                 m_replicas.Remove(record.Key);
@@ -1567,6 +1624,18 @@ namespace SuMultiplayer.Engine
             m_replicaActivity[record.Key] = record.Activity;
 
                 m_replicaFeedOrder[record.Key] = record.FeedOrder;
+                m_replicaHasFlyOrder[record.Key] = record.HasFlyOrder;
+                m_replicaFlyOrder[record.Key] = record.FlyOrder;
+                bool wasShifting = m_replicaShapeshifting.TryGetValue(record.Key, out bool previousShifting) &&
+                    previousShifting;
+                bool suppressShapeshift = m_suppressedShapeshiftKeys.Contains(record.Key);
+                if (suppressShapeshift && !record.Shapeshifting)
+                    m_suppressedShapeshiftKeys.Remove(record.Key);
+                if (record.Shapeshifting && !wasShifting && !suppressShapeshift)
+                    UpdateReplicaShapeshift(record.Key, true, body);
+                m_replicaShapeshifting[record.Key] = record.Shapeshifting;
+                if (!record.Shapeshifting || suppressShapeshift)
+                    StopReplicaShapeshiftParticles(record.Key);
                 m_replicaGrounded[record.Key] = record.Grounded;
             m_replicaDigIn[record.Key] = record.IsDigIn;
             m_replicaMaxDigIn[record.Key] = record.MaxDigIn;
@@ -1653,6 +1722,10 @@ namespace SuMultiplayer.Engine
             body.Position = position;
             body.Rotation = rotation;
             body.Velocity = velocity;
+            if (m_replicaShapeshifting.TryGetValue(key, out bool shifting) && shifting &&
+                m_replicaShapeshiftParticles.TryGetValue(key,
+                    out ShapeshiftParticleSystem shapeshiftParticles))
+                shapeshiftParticles.BoundingBox = body.BoundingBox;
             if (!m_replicaPresentation.TryGetValue(key, out ReplicaPresentationSnapshot presentation))
             {
                 presentation = new ReplicaPresentationSnapshot();
@@ -1732,13 +1805,39 @@ namespace SuMultiplayer.Engine
                 {
                     body.Velocity = Vector3.Zero;
                 }
+                if (m_replicaShapeshiftParticles.TryGetValue(pair.Key,
+                    out ShapeshiftParticleSystem shapeshiftParticles) &&
+                    m_replicaShapeshifting.TryGetValue(pair.Key, out bool shifting) && shifting)
+                    shapeshiftParticles.BoundingBox = body.BoundingBox;
                 ComponentCreatureModel model = entity.FindComponent<ComponentCreatureModel>();
                 if (model == null) continue;
                 if (m_replicaActivity.TryGetValue(pair.Key, out CreatureActivity activity))
                     ApplyReplicaActivity(entity, activity);
                 if (m_replicaFeedOrder.TryGetValue(pair.Key, out bool feedOrder))
                     model.FeedOrder = feedOrder;
+                if (m_replicaHasFlyOrder.TryGetValue(pair.Key, out bool hasFly))
+                {
+                    Vector3? flyOrder = hasFly &&
+                        m_replicaFlyOrder.TryGetValue(pair.Key, out Vector3 value)
+                        ? value : (Vector3?)null;
+                    ApplyReplicaFlyOrder(entity, flyOrder);
+                }
                 ApplyReplicaFishAnimation(pair.Key, entity);
+            }
+        }
+
+        private void ApplyReplicaFlyOrder(Entity entity, Vector3? value)
+        {
+            ComponentLocomotion locomotion = entity?.FindComponent<ComponentLocomotion>();
+            if (locomotion == null) return;
+            try
+            {
+                m_parentField.ModifyParentField(locomotion, "<LastFlyOrder>k__BackingField",
+                    value, typeof(ComponentLocomotion));
+            }
+            catch (Exception)
+            {
+                // The flight order is presentation-only; authoritative position remains intact.
             }
         }
 
@@ -1906,6 +2005,11 @@ namespace SuMultiplayer.Engine
             m_replicaTemplates.Remove(key);
             m_replicaActivity.Remove(key);
             m_replicaFeedOrder.Remove(key);
+            StopReplicaShapeshiftParticles(key);
+            m_replicaFlyOrder.Remove(key);
+            m_replicaHasFlyOrder.Remove(key);
+            m_replicaShapeshifting.Remove(key);
+            m_suppressedShapeshiftKeys.Remove(key);
             m_replicaGrounded.Remove(key);
             m_replicaPresentation.Remove(key);
             m_lastAnimationPosition.Remove(key);
@@ -1953,6 +2057,11 @@ namespace SuMultiplayer.Engine
                 m_replicaTemplates.Remove(key);
                 m_replicaActivity.Remove(key);
                 m_replicaFeedOrder.Remove(key);
+                StopReplicaShapeshiftParticles(key);
+                m_replicaFlyOrder.Remove(key);
+                m_replicaHasFlyOrder.Remove(key);
+                m_replicaShapeshifting.Remove(key);
+                m_suppressedShapeshiftKeys.Remove(key);
             m_replicaGrounded.Remove(key);
                 m_replicaPresentation.Remove(key);
                 m_lastAnimationPosition.Remove(key);
@@ -2114,6 +2223,7 @@ namespace SuMultiplayer.Engine
         private void RemoveAllReplicas(string reason)
         {
             Project project = m_project;
+            StopAllReplicaShapeshiftParticles();
             var keys = new List<int>(m_replicas.Keys);
             for (int i = 0; i < keys.Count; i++)
             {
@@ -2127,6 +2237,10 @@ namespace SuMultiplayer.Engine
             m_replicaTemplates.Clear();
             m_replicaActivity.Clear();
             m_replicaFeedOrder.Clear();
+            m_replicaFlyOrder.Clear();
+            m_replicaHasFlyOrder.Clear();
+            m_replicaShapeshifting.Clear();
+            m_suppressedShapeshiftKeys.Clear();
             m_replicaGrounded.Clear();
             m_replicaPresentation.Clear();
             m_lastAnimationPosition.Clear();
@@ -2218,6 +2332,48 @@ namespace SuMultiplayer.Engine
             {
                 // 死亡粒子是纯表现，失败不影响复制体已经被删除/尸体状态。
             }
+        }
+
+        private void UpdateReplicaShapeshift(int key, bool active, ComponentBody body)
+        {
+            if (!active)
+            {
+                StopReplicaShapeshiftParticles(key);
+                return;
+            }
+            if (m_replicaShapeshiftParticles.TryGetValue(key,
+                out ShapeshiftParticleSystem existing))
+            {
+                if (body != null) existing.BoundingBox = body.BoundingBox;
+                return;
+            }
+            try
+            {
+                SubsystemParticles particles = m_project?.FindSubsystem<SubsystemParticles>(false);
+                if (body == null || particles == null) return;
+                var system = new ShapeshiftParticleSystem { BoundingBox = body.BoundingBox };
+                particles.AddParticleSystem(system);
+                m_replicaShapeshiftParticles[key] = system;
+            }
+            catch (Exception)
+            {
+                // Entity state remains authoritative if the visual effect cannot be built.
+            }
+        }
+
+        private void StopReplicaShapeshiftParticles(int key)
+        {
+            if (!m_replicaShapeshiftParticles.TryGetValue(key,
+                out ShapeshiftParticleSystem system)) return;
+            system.Stopped = true;
+            m_replicaShapeshiftParticles.Remove(key);
+        }
+
+        private void StopAllReplicaShapeshiftParticles()
+        {
+            foreach (ShapeshiftParticleSystem system in m_replicaShapeshiftParticles.Values)
+                system.Stopped = true;
+            m_replicaShapeshiftParticles.Clear();
         }
 
         private static bool IsFinite(CreatureStateRecord record) =>

@@ -49,3 +49,15 @@ message SignEditResult {
   bool accepted = 2;
   string reason = 3;
 }
+
+// Host -> clients: a rising-edge circuit trigger on a sign board. Clients only
+// present the text and notification sound; they never run the sign element.
+message SignTriggerEvent {
+  int64 event_id = 1;
+  int64 server_tick = 2;
+  int32 x = 3;
+  int32 y = 4;
+  int32 z = 5;
+  repeated string lines = 6;
+  repeated uint32 colors = 7;
+}

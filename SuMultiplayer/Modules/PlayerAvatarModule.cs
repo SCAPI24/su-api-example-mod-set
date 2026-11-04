@@ -508,6 +508,7 @@ namespace SuMultiplayer.Modules
             // 地形更新位置，半径用玩家端上报的兴趣半径（没上报过 → 主机可见范围算出的默认半径）。
             m_spawner.ApplyTerrainUpdateLocations(isHost: true);
             RefreshHostRecords(now);
+            m_spawner.CaptureHostAuthorityImpulses();
             // 主机本机角色的名字/皮肤变化不再每秒轮询：由 Engine/PlayerEditWatcher 在
             // PlayerScreen 退出时调用 OnEditScreenExited（编辑器之外不会改名字/皮肤）。
         }
@@ -3746,6 +3747,10 @@ namespace SuMultiplayer.Modules
         /// </summary>
         public void NotePositionSkippedOwn(PlayerKey key) => m_spawner.NotePositionSkippedOwn(key);
 
+        public bool ApplyAuthoritativeLocalImpulse(PlayerKey key,
+            in PlayerPositionSnapshot snapshot) =>
+            m_spawner.ApplyAuthoritativeLocalImpulse(key, in snapshot);
+
         /// <summary>
         /// 主机：这个玩家端是否已经上报过本机槽位（false = 旧构建，只发/只收槽位 0）。
         /// </summary>
@@ -4368,6 +4373,11 @@ namespace SuMultiplayer.Modules
             // 2026-10-26 客户端推动物：客户端发出的"移动速度（碰撞前）"条数 / 主机写进化身 body 的次数。
             " moveVelSent=" + m_spawner.MoveVelocitySent +
             " moveVelApplied=" + m_spawner.MoveVelocityApplied +
+            " authorityImpulse(sent/applied/explicit/collision)=" +
+                m_spawner.AuthorityImpulsesCaptured + "/" +
+                m_spawner.AuthorityImpulsesApplied + "/" +
+                m_spawner.ExplicitImpulsesCaptured + "/" +
+                m_spawner.CollisionImpulsesCaptured +
             " slotsAnnounced=" + m_slotsAnnounced +
             " slotsRegistered=" + m_slotsRegistered +
             // Phase 2 客户端本机角色归一化：下载世界里的主机角色副本被摘掉了多少、

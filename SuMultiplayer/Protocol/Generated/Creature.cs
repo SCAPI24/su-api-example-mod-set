@@ -28,7 +28,7 @@ namespace SuMultiplayer.Protocol.Creature {
             "YnVmL2FueS5wcm90byIcCgRWZWMyEgkKAXgYASABKAISCQoBeRgCIAEoAiIn",
             "CgRWZWMzEgkKAXgYASABKAISCQoBeRgCIAEoAhIJCgF6GAMgASgCIjIKBFF1",
             "YXQSCQoBeBgBIAEoAhIJCgF5GAIgASgCEgkKAXoYAyABKAISCQoBdxgEIAEo",
-            "AiKyAwoOQ3JlYXR1cmVSZWNvcmQSLQoGYWN0aW9uGAEgASgOMh0uc3VtcC5j",
+            "AiKIBAoOQ3JlYXR1cmVSZWNvcmQSLQoGYWN0aW9uGAEgASgOMh0uc3VtcC5j",
             "cmVhdHVyZS5DcmVhdHVyZUFjdGlvbhILCgNrZXkYAiABKAUSFQoNdGVtcGxh",
             "dGVfbmFtZRgDIAEoCRIlCghwb3NpdGlvbhgEIAEoCzITLnN1bXAuY3JlYXR1",
             "cmUuVmVjMxIlCghyb3RhdGlvbhgFIAEoCzITLnN1bXAuY3JlYXR1cmUuUXVh",
@@ -37,24 +37,26 @@ namespace SuMultiplayer.Protocol.Creature {
             "dHkYCSABKA0SFgoOc3Bhd25fZHVyYXRpb24YCiABKAISKAoLbG9va19hbmds",
             "ZXMYCyABKAsyEy5zdW1wLmNyZWF0dXJlLlZlYzISEgoKZmVlZF9vcmRlchgM",
             "IAEoCBIQCghncm91bmRlZBgNIAEoCBIRCglpc19kaWdfaW4YDiABKAgSEgoK",
-            "bWF4X2RpZ19pbhgPIAEoAhIPCgdpc19iZW5kGBAgASgIIrwBCg1DcmVhdHVy",
-            "ZVN0YXRlEg8KB3ZlcnNpb24YASABKA0SEwoLc2VydmVyX3RpY2sYAiABKAUS",
-            "DQoFZmxhZ3MYAyABKA0SEwoLc25hcHNob3RfaWQYBCABKAUSLgoHcmVjb3Jk",
-            "cxgFIAMoCzIdLnN1bXAuY3JlYXR1cmUuQ3JlYXR1cmVSZWNvcmQSCwoDZXh0",
-            "GGQgASgMEiQKBmN1c3RvbRhlIAEoCzIULmdvb2dsZS5wcm90b2J1Zi5Bbnki",
-            "WgoVQ3JlYXR1cmVSZXN5bmNSZXF1ZXN0Eg4KBnJlYXNvbhgBIAEoCRILCgNl",
-            "eHQYZCABKAwSJAoGY3VzdG9tGGUgASgLMhQuZ29vZ2xlLnByb3RvYnVmLkFu",
-            "eSphCg5DcmVhdHVyZUFjdGlvbhIXChNDUkVBVFVSRV9BQ1RJT05fQUREEAAS",
-            "GgoWQ1JFQVRVUkVfQUNUSU9OX1VQREFURRABEhoKFkNSRUFUVVJFX0FDVElP",
-            "Tl9SRU1PVkUQAkIkSAGqAh9TdU11bHRpcGxheWVyLlByb3RvY29sLkNyZWF0",
-            "dXJlYgZwcm90bzM="));
+            "bWF4X2RpZ19pbhgPIAEoAhIPCgdpc19iZW5kGBAgASgIEiYKCWZseV9vcmRl",
+            "chgRIAEoCzITLnN1bXAuY3JlYXR1cmUuVmVjMxIVCg1oYXNfZmx5X29yZGVy",
+            "GBIgASgIEhUKDXNoYXBlc2hpZnRpbmcYEyABKAgivAEKDUNyZWF0dXJlU3Rh",
+            "dGUSDwoHdmVyc2lvbhgBIAEoDRITCgtzZXJ2ZXJfdGljaxgCIAEoBRINCgVm",
+            "bGFncxgDIAEoDRITCgtzbmFwc2hvdF9pZBgEIAEoBRIuCgdyZWNvcmRzGAUg",
+            "AygLMh0uc3VtcC5jcmVhdHVyZS5DcmVhdHVyZVJlY29yZBILCgNleHQYZCAB",
+            "KAwSJAoGY3VzdG9tGGUgASgLMhQuZ29vZ2xlLnByb3RvYnVmLkFueSJaChVD",
+            "cmVhdHVyZVJlc3luY1JlcXVlc3QSDgoGcmVhc29uGAEgASgJEgsKA2V4dBhk",
+            "IAEoDBIkCgZjdXN0b20YZSABKAsyFC5nb29nbGUucHJvdG9idWYuQW55KmEK",
+            "DkNyZWF0dXJlQWN0aW9uEhcKE0NSRUFUVVJFX0FDVElPTl9BREQQABIaChZD",
+            "UkVBVFVSRV9BQ1RJT05fVVBEQVRFEAESGgoWQ1JFQVRVUkVfQUNUSU9OX1JF",
+            "TU9WRRACQiRIAaoCH1N1TXVsdGlwbGF5ZXIuUHJvdG9jb2wuQ3JlYXR1cmVi",
+            "BnByb3RvMw=="));
       descriptor = pbr::FileDescriptor.FromGeneratedCode(descriptorData,
           new pbr::FileDescriptor[] { global::Google.Protobuf.WellKnownTypes.AnyReflection.Descriptor, },
           new pbr::GeneratedClrTypeInfo(new[] {typeof(global::SuMultiplayer.Protocol.Creature.CreatureAction), }, null, new pbr::GeneratedClrTypeInfo[] {
             new pbr::GeneratedClrTypeInfo(typeof(global::SuMultiplayer.Protocol.Creature.Vec2), global::SuMultiplayer.Protocol.Creature.Vec2.Parser, new[]{ "X", "Y" }, null, null, null, null),
             new pbr::GeneratedClrTypeInfo(typeof(global::SuMultiplayer.Protocol.Creature.Vec3), global::SuMultiplayer.Protocol.Creature.Vec3.Parser, new[]{ "X", "Y", "Z" }, null, null, null, null),
             new pbr::GeneratedClrTypeInfo(typeof(global::SuMultiplayer.Protocol.Creature.Quat), global::SuMultiplayer.Protocol.Creature.Quat.Parser, new[]{ "X", "Y", "Z", "W" }, null, null, null, null),
-            new pbr::GeneratedClrTypeInfo(typeof(global::SuMultiplayer.Protocol.Creature.CreatureRecord), global::SuMultiplayer.Protocol.Creature.CreatureRecord.Parser, new[]{ "Action", "Key", "TemplateName", "Position", "Rotation", "Velocity", "Health", "SpawnProgress", "Activity", "SpawnDuration", "LookAngles", "FeedOrder", "Grounded", "IsDigIn", "MaxDigIn", "IsBend" }, null, null, null, null),
+            new pbr::GeneratedClrTypeInfo(typeof(global::SuMultiplayer.Protocol.Creature.CreatureRecord), global::SuMultiplayer.Protocol.Creature.CreatureRecord.Parser, new[]{ "Action", "Key", "TemplateName", "Position", "Rotation", "Velocity", "Health", "SpawnProgress", "Activity", "SpawnDuration", "LookAngles", "FeedOrder", "Grounded", "IsDigIn", "MaxDigIn", "IsBend", "FlyOrder", "HasFlyOrder", "Shapeshifting" }, null, null, null, null),
             new pbr::GeneratedClrTypeInfo(typeof(global::SuMultiplayer.Protocol.Creature.CreatureState), global::SuMultiplayer.Protocol.Creature.CreatureState.Parser, new[]{ "Version", "ServerTick", "Flags", "SnapshotId", "Records", "Ext", "Custom" }, null, null, null, null),
             new pbr::GeneratedClrTypeInfo(typeof(global::SuMultiplayer.Protocol.Creature.CreatureResyncRequest), global::SuMultiplayer.Protocol.Creature.CreatureResyncRequest.Parser, new[]{ "Reason", "Ext", "Custom" }, null, null, null, null)
           }));
@@ -942,6 +944,9 @@ namespace SuMultiplayer.Protocol.Creature {
       isDigIn_ = other.isDigIn_;
       maxDigIn_ = other.maxDigIn_;
       isBend_ = other.isBend_;
+      flyOrder_ = other.flyOrder_ != null ? other.flyOrder_.Clone() : null;
+      hasFlyOrder_ = other.hasFlyOrder_;
+      shapeshifting_ = other.shapeshifting_;
       _unknownFields = pb::UnknownFieldSet.Clone(other._unknownFields);
     }
 
@@ -1190,6 +1195,48 @@ namespace SuMultiplayer.Protocol.Creature {
       }
     }
 
+    /// <summary>Field number for the "fly_order" field.</summary>
+    public const int FlyOrderFieldNumber = 17;
+    private global::SuMultiplayer.Protocol.Creature.Vec3 flyOrder_;
+    /// <summary>
+    /// Host ComponentLocomotion.LastFlyOrder; written before the client bird model updates.
+    /// </summary>
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public global::SuMultiplayer.Protocol.Creature.Vec3 FlyOrder {
+      get { return flyOrder_; }
+      set {
+        flyOrder_ = value;
+      }
+    }
+
+    /// <summary>Field number for the "has_fly_order" field.</summary>
+    public const int HasFlyOrderFieldNumber = 18;
+    private bool hasFlyOrder_;
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public bool HasFlyOrder {
+      get { return hasFlyOrder_; }
+      set {
+        hasFlyOrder_ = value;
+      }
+    }
+
+    /// <summary>Field number for the "shapeshifting" field.</summary>
+    public const int ShapeshiftingFieldNumber = 19;
+    private bool shapeshifting_;
+    /// <summary>
+    /// Host shapeshifter transition edge. Clients only show the particle effect.
+    /// </summary>
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public bool Shapeshifting {
+      get { return shapeshifting_; }
+      set {
+        shapeshifting_ = value;
+      }
+    }
+
     [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
     [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
     public override bool Equals(object other) {
@@ -1221,6 +1268,9 @@ namespace SuMultiplayer.Protocol.Creature {
       if (IsDigIn != other.IsDigIn) return false;
       if (!pbc::ProtobufEqualityComparers.BitwiseSingleEqualityComparer.Equals(MaxDigIn, other.MaxDigIn)) return false;
       if (IsBend != other.IsBend) return false;
+      if (!object.Equals(FlyOrder, other.FlyOrder)) return false;
+      if (HasFlyOrder != other.HasFlyOrder) return false;
+      if (Shapeshifting != other.Shapeshifting) return false;
       return Equals(_unknownFields, other._unknownFields);
     }
 
@@ -1244,6 +1294,9 @@ namespace SuMultiplayer.Protocol.Creature {
       if (IsDigIn != false) hash ^= IsDigIn.GetHashCode();
       if (MaxDigIn != 0F) hash ^= pbc::ProtobufEqualityComparers.BitwiseSingleEqualityComparer.GetHashCode(MaxDigIn);
       if (IsBend != false) hash ^= IsBend.GetHashCode();
+      if (flyOrder_ != null) hash ^= FlyOrder.GetHashCode();
+      if (HasFlyOrder != false) hash ^= HasFlyOrder.GetHashCode();
+      if (Shapeshifting != false) hash ^= Shapeshifting.GetHashCode();
       if (_unknownFields != null) {
         hash ^= _unknownFields.GetHashCode();
       }
@@ -1326,6 +1379,18 @@ namespace SuMultiplayer.Protocol.Creature {
         output.WriteRawTag(128, 1);
         output.WriteBool(IsBend);
       }
+      if (flyOrder_ != null) {
+        output.WriteRawTag(138, 1);
+        output.WriteMessage(FlyOrder);
+      }
+      if (HasFlyOrder != false) {
+        output.WriteRawTag(144, 1);
+        output.WriteBool(HasFlyOrder);
+      }
+      if (Shapeshifting != false) {
+        output.WriteRawTag(152, 1);
+        output.WriteBool(Shapeshifting);
+      }
       if (_unknownFields != null) {
         _unknownFields.WriteTo(output);
       }
@@ -1400,6 +1465,18 @@ namespace SuMultiplayer.Protocol.Creature {
         output.WriteRawTag(128, 1);
         output.WriteBool(IsBend);
       }
+      if (flyOrder_ != null) {
+        output.WriteRawTag(138, 1);
+        output.WriteMessage(FlyOrder);
+      }
+      if (HasFlyOrder != false) {
+        output.WriteRawTag(144, 1);
+        output.WriteBool(HasFlyOrder);
+      }
+      if (Shapeshifting != false) {
+        output.WriteRawTag(152, 1);
+        output.WriteBool(Shapeshifting);
+      }
       if (_unknownFields != null) {
         _unknownFields.WriteTo(ref output);
       }
@@ -1456,6 +1533,15 @@ namespace SuMultiplayer.Protocol.Creature {
         size += 1 + 4;
       }
       if (IsBend != false) {
+        size += 2 + 1;
+      }
+      if (flyOrder_ != null) {
+        size += 2 + pb::CodedOutputStream.ComputeMessageSize(FlyOrder);
+      }
+      if (HasFlyOrder != false) {
+        size += 2 + 1;
+      }
+      if (Shapeshifting != false) {
         size += 2 + 1;
       }
       if (_unknownFields != null) {
@@ -1529,6 +1615,18 @@ namespace SuMultiplayer.Protocol.Creature {
       }
       if (other.IsBend != false) {
         IsBend = other.IsBend;
+      }
+      if (other.flyOrder_ != null) {
+        if (flyOrder_ == null) {
+          FlyOrder = new global::SuMultiplayer.Protocol.Creature.Vec3();
+        }
+        FlyOrder.MergeFrom(other.FlyOrder);
+      }
+      if (other.HasFlyOrder != false) {
+        HasFlyOrder = other.HasFlyOrder;
+      }
+      if (other.Shapeshifting != false) {
+        Shapeshifting = other.Shapeshifting;
       }
       _unknownFields = pb::UnknownFieldSet.MergeFrom(_unknownFields, other._unknownFields);
     }
@@ -1625,6 +1723,21 @@ namespace SuMultiplayer.Protocol.Creature {
             IsBend = input.ReadBool();
             break;
           }
+          case 138: {
+            if (flyOrder_ == null) {
+              FlyOrder = new global::SuMultiplayer.Protocol.Creature.Vec3();
+            }
+            input.ReadMessage(FlyOrder);
+            break;
+          }
+          case 144: {
+            HasFlyOrder = input.ReadBool();
+            break;
+          }
+          case 152: {
+            Shapeshifting = input.ReadBool();
+            break;
+          }
         }
       }
     #endif
@@ -1718,6 +1831,21 @@ namespace SuMultiplayer.Protocol.Creature {
           }
           case 128: {
             IsBend = input.ReadBool();
+            break;
+          }
+          case 138: {
+            if (flyOrder_ == null) {
+              FlyOrder = new global::SuMultiplayer.Protocol.Creature.Vec3();
+            }
+            input.ReadMessage(FlyOrder);
+            break;
+          }
+          case 144: {
+            HasFlyOrder = input.ReadBool();
+            break;
+          }
+          case 152: {
+            Shapeshifting = input.ReadBool();
             break;
           }
         }

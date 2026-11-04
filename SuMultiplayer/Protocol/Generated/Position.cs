@@ -28,7 +28,7 @@ namespace SuMultiplayer.Protocol.Position {
             "YnVmL2FueS5wcm90byIcCgRWZWMyEgkKAXgYASABKAISCQoBeRgCIAEoAiIn",
             "CgRWZWMzEgkKAXgYASABKAISCQoBeRgCIAEoAhIJCgF6GAMgASgCIjIKBFF1",
             "YXQSCQoBeBgBIAEoAhIJCgF5GAIgASgCEgkKAXoYAyABKAISCQoBdxgEIAEo",
-            "AiLOAwoOUGxheWVyUG9zaXRpb24SEQoJY2xpZW50X2lkGAEgASgFEhMKC3Nl",
+            "AiKdBAoOUGxheWVyUG9zaXRpb24SEQoJY2xpZW50X2lkGAEgASgFEhMKC3Nl",
             "cnZlcl90aWNrGAIgASgFEiUKCHBvc2l0aW9uGAMgASgLMhMuc3VtcC5wb3Np",
             "dGlvbi5WZWMzEiUKCHJvdGF0aW9uGAQgASgLMhMuc3VtcC5wb3NpdGlvbi5R",
             "dWF0EiUKCHZlbG9jaXR5GAUgASgLMhMuc3VtcC5wb3NpdGlvbi5WZWMzEigK",
@@ -37,18 +37,20 @@ namespace SuMultiplayer.Protocol.Position {
             "dW5kZWQYCSABKAgSDAoEc2xvdBgKIAEoDRIqCg1tb3ZlX3ZlbG9jaXR5GAsg",
             "ASgLMhMuc3VtcC5wb3NpdGlvbi5WZWMzEhkKEWhhc19tb3ZlX3ZlbG9jaXR5",
             "GAwgASgIEhkKEXN0YW5kaW5nX29uX21vdW50GA0gASgIEhQKDGxhZGRlcl92",
-            "YWx1ZRgPIAEoBRILCgNleHQYZCABKAwSJAoGY3VzdG9tGGUgASgLMhQuZ29v",
-            "Z2xlLnByb3RvYnVmLkFueSJ0Cg9QbGF5ZXJQb3NpdGlvbnMSLgoHZW50cmll",
-            "cxgBIAMoCzIdLnN1bXAucG9zaXRpb24uUGxheWVyUG9zaXRpb24SCwoDZXh0",
-            "GGQgASgMEiQKBmN1c3RvbRhlIAEoCzIULmdvb2dsZS5wcm90b2J1Zi5BbnlC",
-            "JEgBqgIfU3VNdWx0aXBsYXllci5Qcm90b2NvbC5Qb3NpdGlvbmIGcHJvdG8z"));
+            "YWx1ZRgPIAEoBRIuChFhdXRob3JpdHlfaW1wdWxzZRgQIAEoCzITLnN1bXAu",
+            "cG9zaXRpb24uVmVjMxIdChVoYXNfYXV0aG9yaXR5X2ltcHVsc2UYESABKAgS",
+            "CwoDZXh0GGQgASgMEiQKBmN1c3RvbRhlIAEoCzIULmdvb2dsZS5wcm90b2J1",
+            "Zi5BbnkidAoPUGxheWVyUG9zaXRpb25zEi4KB2VudHJpZXMYASADKAsyHS5z",
+            "dW1wLnBvc2l0aW9uLlBsYXllclBvc2l0aW9uEgsKA2V4dBhkIAEoDBIkCgZj",
+            "dXN0b20YZSABKAsyFC5nb29nbGUucHJvdG9idWYuQW55QiRIAaoCH1N1TXVs",
+            "dGlwbGF5ZXIuUHJvdG9jb2wuUG9zaXRpb25iBnByb3RvMw=="));
       descriptor = pbr::FileDescriptor.FromGeneratedCode(descriptorData,
           new pbr::FileDescriptor[] { global::Google.Protobuf.WellKnownTypes.AnyReflection.Descriptor, },
           new pbr::GeneratedClrTypeInfo(null, null, new pbr::GeneratedClrTypeInfo[] {
             new pbr::GeneratedClrTypeInfo(typeof(global::SuMultiplayer.Protocol.Position.Vec2), global::SuMultiplayer.Protocol.Position.Vec2.Parser, new[]{ "X", "Y" }, null, null, null, null),
             new pbr::GeneratedClrTypeInfo(typeof(global::SuMultiplayer.Protocol.Position.Vec3), global::SuMultiplayer.Protocol.Position.Vec3.Parser, new[]{ "X", "Y", "Z" }, null, null, null, null),
             new pbr::GeneratedClrTypeInfo(typeof(global::SuMultiplayer.Protocol.Position.Quat), global::SuMultiplayer.Protocol.Position.Quat.Parser, new[]{ "X", "Y", "Z", "W" }, null, null, null, null),
-            new pbr::GeneratedClrTypeInfo(typeof(global::SuMultiplayer.Protocol.Position.PlayerPosition), global::SuMultiplayer.Protocol.Position.PlayerPosition.Parser, new[]{ "ClientId", "ServerTick", "Position", "Rotation", "Velocity", "LookAngles", "IsCrouching", "IsFlying", "IsGrounded", "Slot", "MoveVelocity", "HasMoveVelocity", "StandingOnMount", "LadderValue", "Ext", "Custom" }, null, null, null, null),
+            new pbr::GeneratedClrTypeInfo(typeof(global::SuMultiplayer.Protocol.Position.PlayerPosition), global::SuMultiplayer.Protocol.Position.PlayerPosition.Parser, new[]{ "ClientId", "ServerTick", "Position", "Rotation", "Velocity", "LookAngles", "IsCrouching", "IsFlying", "IsGrounded", "Slot", "MoveVelocity", "HasMoveVelocity", "StandingOnMount", "LadderValue", "AuthorityImpulse", "HasAuthorityImpulse", "Ext", "Custom" }, null, null, null, null),
             new pbr::GeneratedClrTypeInfo(typeof(global::SuMultiplayer.Protocol.Position.PlayerPositions), global::SuMultiplayer.Protocol.Position.PlayerPositions.Parser, new[]{ "Entries", "Ext", "Custom" }, null, null, null, null)
           }));
     }
@@ -924,6 +926,8 @@ namespace SuMultiplayer.Protocol.Position {
       hasMoveVelocity_ = other.hasMoveVelocity_;
       standingOnMount_ = other.standingOnMount_;
       ladderValue_ = other.ladderValue_;
+      authorityImpulse_ = other.authorityImpulse_ != null ? other.authorityImpulse_.Clone() : null;
+      hasAuthorityImpulse_ = other.hasAuthorityImpulse_;
       ext_ = other.ext_;
       custom_ = other.custom_ != null ? other.custom_.Clone() : null;
       _unknownFields = pb::UnknownFieldSet.Clone(other._unknownFields);
@@ -1126,6 +1130,35 @@ namespace SuMultiplayer.Protocol.Position {
       }
     }
 
+    /// <summary>Field number for the "authority_impulse" field.</summary>
+    public const int AuthorityImpulseFieldNumber = 16;
+    private global::SuMultiplayer.Protocol.Position.Vec3 authorityImpulse_;
+    /// <summary>
+    /// Host -> client: velocity impulse measured by the authoritative body after
+    /// a collision/attack. Clients apply it with ComponentBody.ApplyImpulse;
+    /// normal position snapshots never write the local position back.
+    /// </summary>
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public global::SuMultiplayer.Protocol.Position.Vec3 AuthorityImpulse {
+      get { return authorityImpulse_; }
+      set {
+        authorityImpulse_ = value;
+      }
+    }
+
+    /// <summary>Field number for the "has_authority_impulse" field.</summary>
+    public const int HasAuthorityImpulseFieldNumber = 17;
+    private bool hasAuthorityImpulse_;
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public bool HasAuthorityImpulse {
+      get { return hasAuthorityImpulse_; }
+      set {
+        hasAuthorityImpulse_ = value;
+      }
+    }
+
     /// <summary>Field number for the "ext" field.</summary>
     public const int ExtFieldNumber = 100;
     private pb::ByteString ext_ = pb::ByteString.Empty;
@@ -1182,6 +1215,8 @@ namespace SuMultiplayer.Protocol.Position {
       if (HasMoveVelocity != other.HasMoveVelocity) return false;
       if (StandingOnMount != other.StandingOnMount) return false;
       if (LadderValue != other.LadderValue) return false;
+      if (!object.Equals(AuthorityImpulse, other.AuthorityImpulse)) return false;
+      if (HasAuthorityImpulse != other.HasAuthorityImpulse) return false;
       if (Ext != other.Ext) return false;
       if (!object.Equals(Custom, other.Custom)) return false;
       return Equals(_unknownFields, other._unknownFields);
@@ -1205,6 +1240,8 @@ namespace SuMultiplayer.Protocol.Position {
       if (HasMoveVelocity != false) hash ^= HasMoveVelocity.GetHashCode();
       if (StandingOnMount != false) hash ^= StandingOnMount.GetHashCode();
       if (LadderValue != 0) hash ^= LadderValue.GetHashCode();
+      if (authorityImpulse_ != null) hash ^= AuthorityImpulse.GetHashCode();
+      if (HasAuthorityImpulse != false) hash ^= HasAuthorityImpulse.GetHashCode();
       if (Ext.Length != 0) hash ^= Ext.GetHashCode();
       if (custom_ != null) hash ^= Custom.GetHashCode();
       if (_unknownFields != null) {
@@ -1281,6 +1318,14 @@ namespace SuMultiplayer.Protocol.Position {
         output.WriteRawTag(120);
         output.WriteInt32(LadderValue);
       }
+      if (authorityImpulse_ != null) {
+        output.WriteRawTag(130, 1);
+        output.WriteMessage(AuthorityImpulse);
+      }
+      if (HasAuthorityImpulse != false) {
+        output.WriteRawTag(136, 1);
+        output.WriteBool(HasAuthorityImpulse);
+      }
       if (Ext.Length != 0) {
         output.WriteRawTag(162, 6);
         output.WriteBytes(Ext);
@@ -1355,6 +1400,14 @@ namespace SuMultiplayer.Protocol.Position {
         output.WriteRawTag(120);
         output.WriteInt32(LadderValue);
       }
+      if (authorityImpulse_ != null) {
+        output.WriteRawTag(130, 1);
+        output.WriteMessage(AuthorityImpulse);
+      }
+      if (HasAuthorityImpulse != false) {
+        output.WriteRawTag(136, 1);
+        output.WriteBool(HasAuthorityImpulse);
+      }
       if (Ext.Length != 0) {
         output.WriteRawTag(162, 6);
         output.WriteBytes(Ext);
@@ -1414,6 +1467,12 @@ namespace SuMultiplayer.Protocol.Position {
       }
       if (LadderValue != 0) {
         size += 1 + pb::CodedOutputStream.ComputeInt32Size(LadderValue);
+      }
+      if (authorityImpulse_ != null) {
+        size += 2 + pb::CodedOutputStream.ComputeMessageSize(AuthorityImpulse);
+      }
+      if (HasAuthorityImpulse != false) {
+        size += 2 + 1;
       }
       if (Ext.Length != 0) {
         size += 2 + pb::CodedOutputStream.ComputeBytesSize(Ext);
@@ -1489,6 +1548,15 @@ namespace SuMultiplayer.Protocol.Position {
       }
       if (other.LadderValue != 0) {
         LadderValue = other.LadderValue;
+      }
+      if (other.authorityImpulse_ != null) {
+        if (authorityImpulse_ == null) {
+          AuthorityImpulse = new global::SuMultiplayer.Protocol.Position.Vec3();
+        }
+        AuthorityImpulse.MergeFrom(other.AuthorityImpulse);
+      }
+      if (other.HasAuthorityImpulse != false) {
+        HasAuthorityImpulse = other.HasAuthorityImpulse;
       }
       if (other.Ext.Length != 0) {
         Ext = other.Ext;
@@ -1587,6 +1655,17 @@ namespace SuMultiplayer.Protocol.Position {
           }
           case 120: {
             LadderValue = input.ReadInt32();
+            break;
+          }
+          case 130: {
+            if (authorityImpulse_ == null) {
+              AuthorityImpulse = new global::SuMultiplayer.Protocol.Position.Vec3();
+            }
+            input.ReadMessage(AuthorityImpulse);
+            break;
+          }
+          case 136: {
+            HasAuthorityImpulse = input.ReadBool();
             break;
           }
           case 802: {
@@ -1688,6 +1767,17 @@ namespace SuMultiplayer.Protocol.Position {
           }
           case 120: {
             LadderValue = input.ReadInt32();
+            break;
+          }
+          case 130: {
+            if (authorityImpulse_ == null) {
+              AuthorityImpulse = new global::SuMultiplayer.Protocol.Position.Vec3();
+            }
+            input.ReadMessage(AuthorityImpulse);
+            break;
+          }
+          case 136: {
+            HasAuthorityImpulse = input.ReadBool();
             break;
           }
           case 802: {

@@ -33,8 +33,11 @@ namespace SuMultiplayer.Protocol {
             "YXNvbhgCIAEoCSJdCg9TaWduRWRpdFJlcXVlc3QSEAoIc2VxdWVuY2UYASAB",
             "KAMSKAoFc2lnbnMYAiADKAsyGS5zdW1wLnByb3RvY29sLlNpZ25SZWNvcmQS",
             "DgoGcmVhc29uGAMgASgJIkQKDlNpZ25FZGl0UmVzdWx0EhAKCHNlcXVlbmNl",
-            "GAEgASgDEhAKCGFjY2VwdGVkGAIgASgIEg4KBnJlYXNvbhgDIAEoCUIbSAGq",
-            "AhZTdU11bHRpcGxheWVyLlByb3RvY29sYgZwcm90bzM="));
+            "GAEgASgDEhAKCGFjY2VwdGVkGAIgASgIEg4KBnJlYXNvbhgDIAEoCSJ5ChBT",
+            "aWduVHJpZ2dlckV2ZW50EhAKCGV2ZW50X2lkGAEgASgDEhMKC3NlcnZlcl90",
+            "aWNrGAIgASgDEgkKAXgYAyABKAUSCQoBeRgEIAEoBRIJCgF6GAUgASgFEg0K",
+            "BWxpbmVzGAYgAygJEg4KBmNvbG9ycxgHIAMoDUIbSAGqAhZTdU11bHRpcGxh",
+            "eWVyLlByb3RvY29sYgZwcm90bzM="));
       descriptor = pbr::FileDescriptor.FromGeneratedCode(descriptorData,
           new pbr::FileDescriptor[] { },
           new pbr::GeneratedClrTypeInfo(null, null, new pbr::GeneratedClrTypeInfo[] {
@@ -42,7 +45,8 @@ namespace SuMultiplayer.Protocol {
             new pbr::GeneratedClrTypeInfo(typeof(global::SuMultiplayer.Protocol.SignState), global::SuMultiplayer.Protocol.SignState.Parser, new[]{ "Revision", "Full", "Signs", "Reason" }, null, null, null, null),
             new pbr::GeneratedClrTypeInfo(typeof(global::SuMultiplayer.Protocol.SignSyncRequest), global::SuMultiplayer.Protocol.SignSyncRequest.Parser, new[]{ "KnownRevision", "Reason" }, null, null, null, null),
             new pbr::GeneratedClrTypeInfo(typeof(global::SuMultiplayer.Protocol.SignEditRequest), global::SuMultiplayer.Protocol.SignEditRequest.Parser, new[]{ "Sequence", "Signs", "Reason" }, null, null, null, null),
-            new pbr::GeneratedClrTypeInfo(typeof(global::SuMultiplayer.Protocol.SignEditResult), global::SuMultiplayer.Protocol.SignEditResult.Parser, new[]{ "Sequence", "Accepted", "Reason" }, null, null, null, null)
+            new pbr::GeneratedClrTypeInfo(typeof(global::SuMultiplayer.Protocol.SignEditResult), global::SuMultiplayer.Protocol.SignEditResult.Parser, new[]{ "Sequence", "Accepted", "Reason" }, null, null, null, null),
+            new pbr::GeneratedClrTypeInfo(typeof(global::SuMultiplayer.Protocol.SignTriggerEvent), global::SuMultiplayer.Protocol.SignTriggerEvent.Parser, new[]{ "EventId", "ServerTick", "X", "Y", "Z", "Lines", "Colors" }, null, null, null, null)
           }));
     }
     #endregion
@@ -1487,6 +1491,410 @@ namespace SuMultiplayer.Protocol {
           }
           case 26: {
             Reason = input.ReadString();
+            break;
+          }
+        }
+      }
+    }
+    #endif
+
+  }
+
+  /// <summary>
+  /// Host -> clients: a rising-edge circuit trigger on a sign board. Clients only
+  /// present the text and notification sound; they never run the sign element.
+  /// </summary>
+  [global::System.Diagnostics.DebuggerDisplayAttribute("{ToString(),nq}")]
+  public sealed partial class SignTriggerEvent : pb::IMessage<SignTriggerEvent>
+  #if !GOOGLE_PROTOBUF_REFSTRUCT_COMPATIBILITY_MODE
+      , pb::IBufferMessage
+  #endif
+  {
+    private static readonly pb::MessageParser<SignTriggerEvent> _parser = new pb::MessageParser<SignTriggerEvent>(() => new SignTriggerEvent());
+    private pb::UnknownFieldSet _unknownFields;
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public static pb::MessageParser<SignTriggerEvent> Parser { get { return _parser; } }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public static pbr::MessageDescriptor Descriptor {
+      get { return global::SuMultiplayer.Protocol.SignReflection.Descriptor.MessageTypes[5]; }
+    }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    pbr::MessageDescriptor pb::IMessage.Descriptor {
+      get { return Descriptor; }
+    }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public SignTriggerEvent() {
+      OnConstruction();
+    }
+
+    partial void OnConstruction();
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public SignTriggerEvent(SignTriggerEvent other) : this() {
+      eventId_ = other.eventId_;
+      serverTick_ = other.serverTick_;
+      x_ = other.x_;
+      y_ = other.y_;
+      z_ = other.z_;
+      lines_ = other.lines_.Clone();
+      colors_ = other.colors_.Clone();
+      _unknownFields = pb::UnknownFieldSet.Clone(other._unknownFields);
+    }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public SignTriggerEvent Clone() {
+      return new SignTriggerEvent(this);
+    }
+
+    /// <summary>Field number for the "event_id" field.</summary>
+    public const int EventIdFieldNumber = 1;
+    private long eventId_;
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public long EventId {
+      get { return eventId_; }
+      set {
+        eventId_ = value;
+      }
+    }
+
+    /// <summary>Field number for the "server_tick" field.</summary>
+    public const int ServerTickFieldNumber = 2;
+    private long serverTick_;
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public long ServerTick {
+      get { return serverTick_; }
+      set {
+        serverTick_ = value;
+      }
+    }
+
+    /// <summary>Field number for the "x" field.</summary>
+    public const int XFieldNumber = 3;
+    private int x_;
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public int X {
+      get { return x_; }
+      set {
+        x_ = value;
+      }
+    }
+
+    /// <summary>Field number for the "y" field.</summary>
+    public const int YFieldNumber = 4;
+    private int y_;
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public int Y {
+      get { return y_; }
+      set {
+        y_ = value;
+      }
+    }
+
+    /// <summary>Field number for the "z" field.</summary>
+    public const int ZFieldNumber = 5;
+    private int z_;
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public int Z {
+      get { return z_; }
+      set {
+        z_ = value;
+      }
+    }
+
+    /// <summary>Field number for the "lines" field.</summary>
+    public const int LinesFieldNumber = 6;
+    private static readonly pb::FieldCodec<string> _repeated_lines_codec
+        = pb::FieldCodec.ForString(50);
+    private readonly pbc::RepeatedField<string> lines_ = new pbc::RepeatedField<string>();
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public pbc::RepeatedField<string> Lines {
+      get { return lines_; }
+    }
+
+    /// <summary>Field number for the "colors" field.</summary>
+    public const int ColorsFieldNumber = 7;
+    private static readonly pb::FieldCodec<uint> _repeated_colors_codec
+        = pb::FieldCodec.ForUInt32(58);
+    private readonly pbc::RepeatedField<uint> colors_ = new pbc::RepeatedField<uint>();
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public pbc::RepeatedField<uint> Colors {
+      get { return colors_; }
+    }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public override bool Equals(object other) {
+      return Equals(other as SignTriggerEvent);
+    }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public bool Equals(SignTriggerEvent other) {
+      if (ReferenceEquals(other, null)) {
+        return false;
+      }
+      if (ReferenceEquals(other, this)) {
+        return true;
+      }
+      if (EventId != other.EventId) return false;
+      if (ServerTick != other.ServerTick) return false;
+      if (X != other.X) return false;
+      if (Y != other.Y) return false;
+      if (Z != other.Z) return false;
+      if(!lines_.Equals(other.lines_)) return false;
+      if(!colors_.Equals(other.colors_)) return false;
+      return Equals(_unknownFields, other._unknownFields);
+    }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public override int GetHashCode() {
+      int hash = 1;
+      if (EventId != 0L) hash ^= EventId.GetHashCode();
+      if (ServerTick != 0L) hash ^= ServerTick.GetHashCode();
+      if (X != 0) hash ^= X.GetHashCode();
+      if (Y != 0) hash ^= Y.GetHashCode();
+      if (Z != 0) hash ^= Z.GetHashCode();
+      hash ^= lines_.GetHashCode();
+      hash ^= colors_.GetHashCode();
+      if (_unknownFields != null) {
+        hash ^= _unknownFields.GetHashCode();
+      }
+      return hash;
+    }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public override string ToString() {
+      return pb::JsonFormatter.ToDiagnosticString(this);
+    }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public void WriteTo(pb::CodedOutputStream output) {
+    #if !GOOGLE_PROTOBUF_REFSTRUCT_COMPATIBILITY_MODE
+      output.WriteRawMessage(this);
+    #else
+      if (EventId != 0L) {
+        output.WriteRawTag(8);
+        output.WriteInt64(EventId);
+      }
+      if (ServerTick != 0L) {
+        output.WriteRawTag(16);
+        output.WriteInt64(ServerTick);
+      }
+      if (X != 0) {
+        output.WriteRawTag(24);
+        output.WriteInt32(X);
+      }
+      if (Y != 0) {
+        output.WriteRawTag(32);
+        output.WriteInt32(Y);
+      }
+      if (Z != 0) {
+        output.WriteRawTag(40);
+        output.WriteInt32(Z);
+      }
+      lines_.WriteTo(output, _repeated_lines_codec);
+      colors_.WriteTo(output, _repeated_colors_codec);
+      if (_unknownFields != null) {
+        _unknownFields.WriteTo(output);
+      }
+    #endif
+    }
+
+    #if !GOOGLE_PROTOBUF_REFSTRUCT_COMPATIBILITY_MODE
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    void pb::IBufferMessage.InternalWriteTo(ref pb::WriteContext output) {
+      if (EventId != 0L) {
+        output.WriteRawTag(8);
+        output.WriteInt64(EventId);
+      }
+      if (ServerTick != 0L) {
+        output.WriteRawTag(16);
+        output.WriteInt64(ServerTick);
+      }
+      if (X != 0) {
+        output.WriteRawTag(24);
+        output.WriteInt32(X);
+      }
+      if (Y != 0) {
+        output.WriteRawTag(32);
+        output.WriteInt32(Y);
+      }
+      if (Z != 0) {
+        output.WriteRawTag(40);
+        output.WriteInt32(Z);
+      }
+      lines_.WriteTo(ref output, _repeated_lines_codec);
+      colors_.WriteTo(ref output, _repeated_colors_codec);
+      if (_unknownFields != null) {
+        _unknownFields.WriteTo(ref output);
+      }
+    }
+    #endif
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public int CalculateSize() {
+      int size = 0;
+      if (EventId != 0L) {
+        size += 1 + pb::CodedOutputStream.ComputeInt64Size(EventId);
+      }
+      if (ServerTick != 0L) {
+        size += 1 + pb::CodedOutputStream.ComputeInt64Size(ServerTick);
+      }
+      if (X != 0) {
+        size += 1 + pb::CodedOutputStream.ComputeInt32Size(X);
+      }
+      if (Y != 0) {
+        size += 1 + pb::CodedOutputStream.ComputeInt32Size(Y);
+      }
+      if (Z != 0) {
+        size += 1 + pb::CodedOutputStream.ComputeInt32Size(Z);
+      }
+      size += lines_.CalculateSize(_repeated_lines_codec);
+      size += colors_.CalculateSize(_repeated_colors_codec);
+      if (_unknownFields != null) {
+        size += _unknownFields.CalculateSize();
+      }
+      return size;
+    }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public void MergeFrom(SignTriggerEvent other) {
+      if (other == null) {
+        return;
+      }
+      if (other.EventId != 0L) {
+        EventId = other.EventId;
+      }
+      if (other.ServerTick != 0L) {
+        ServerTick = other.ServerTick;
+      }
+      if (other.X != 0) {
+        X = other.X;
+      }
+      if (other.Y != 0) {
+        Y = other.Y;
+      }
+      if (other.Z != 0) {
+        Z = other.Z;
+      }
+      lines_.Add(other.lines_);
+      colors_.Add(other.colors_);
+      _unknownFields = pb::UnknownFieldSet.MergeFrom(_unknownFields, other._unknownFields);
+    }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public void MergeFrom(pb::CodedInputStream input) {
+    #if !GOOGLE_PROTOBUF_REFSTRUCT_COMPATIBILITY_MODE
+      input.ReadRawMessage(this);
+    #else
+      uint tag;
+      while ((tag = input.ReadTag()) != 0) {
+      if ((tag & 7) == 4) {
+        // Abort on any end group tag.
+        return;
+      }
+      switch(tag) {
+          default:
+            _unknownFields = pb::UnknownFieldSet.MergeFieldFrom(_unknownFields, input);
+            break;
+          case 8: {
+            EventId = input.ReadInt64();
+            break;
+          }
+          case 16: {
+            ServerTick = input.ReadInt64();
+            break;
+          }
+          case 24: {
+            X = input.ReadInt32();
+            break;
+          }
+          case 32: {
+            Y = input.ReadInt32();
+            break;
+          }
+          case 40: {
+            Z = input.ReadInt32();
+            break;
+          }
+          case 50: {
+            lines_.AddEntriesFrom(input, _repeated_lines_codec);
+            break;
+          }
+          case 58:
+          case 56: {
+            colors_.AddEntriesFrom(input, _repeated_colors_codec);
+            break;
+          }
+        }
+      }
+    #endif
+    }
+
+    #if !GOOGLE_PROTOBUF_REFSTRUCT_COMPATIBILITY_MODE
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    void pb::IBufferMessage.InternalMergeFrom(ref pb::ParseContext input) {
+      uint tag;
+      while ((tag = input.ReadTag()) != 0) {
+      if ((tag & 7) == 4) {
+        // Abort on any end group tag.
+        return;
+      }
+      switch(tag) {
+          default:
+            _unknownFields = pb::UnknownFieldSet.MergeFieldFrom(_unknownFields, ref input);
+            break;
+          case 8: {
+            EventId = input.ReadInt64();
+            break;
+          }
+          case 16: {
+            ServerTick = input.ReadInt64();
+            break;
+          }
+          case 24: {
+            X = input.ReadInt32();
+            break;
+          }
+          case 32: {
+            Y = input.ReadInt32();
+            break;
+          }
+          case 40: {
+            Z = input.ReadInt32();
+            break;
+          }
+          case 50: {
+            lines_.AddEntriesFrom(ref input, _repeated_lines_codec);
+            break;
+          }
+          case 58:
+          case 56: {
+            colors_.AddEntriesFrom(ref input, _repeated_colors_codec);
             break;
           }
         }

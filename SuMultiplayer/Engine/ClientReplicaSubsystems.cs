@@ -1830,7 +1830,6 @@ namespace SuMultiplayer.Engine
             element is FenceGateElectricElement ||
             element is TrapDoorElectricElement ||
             element is GunpowderKegElectricElement ||
-            element is SoundGeneratorElectricElement ||
             element is ChristmasTreeElectricElement ||
             element is LightBulbElectricElement ||
             element is HygrometerElectricElement ||

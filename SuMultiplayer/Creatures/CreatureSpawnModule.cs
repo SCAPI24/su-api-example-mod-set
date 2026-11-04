@@ -115,6 +115,7 @@ namespace SuMultiplayer.Creatures
 
             /// <summary>上次发送时的 FeedOrder（吃东西动画；不比较会等心跳才发）。</summary>
             public bool FeedOrder;
+            public bool Shapeshifting;
         }
 
         // 客户端：key → 最近一次权威记录（用于幂等更新 / 全量裁剪）。
@@ -496,7 +497,10 @@ namespace SuMultiplayer.Creatures
                         (MathUtils.Abs(state.LookAngles.X - record.LookAngles.X) > 0.0087f ||
                          MathUtils.Abs(state.LookAngles.Y - record.LookAngles.Y) > 0.0087f);
                     bool feedChanged = state.HasSent && state.FeedOrder != record.FeedOrder;
+                    bool shapeshiftChanged = state.HasSent &&
+                        state.Shapeshifting != record.Shapeshifting;
                     bool changed = state.HasSent && (activityChanged || lookChanged || feedChanged ||
+                        shapeshiftChanged ||
                         CreatureSyncCadence.ValuesDiffer(state.Position, state.Rotation,
                             state.Velocity, state.Health, record));
                     bool changeDue = !state.HasSent ||
@@ -549,7 +553,10 @@ namespace SuMultiplayer.Creatures
                     (MathUtils.Abs(state.LookAngles.X - record.LookAngles.X) > 0.0087f ||
                      MathUtils.Abs(state.LookAngles.Y - record.LookAngles.Y) > 0.0087f);
                 bool feedChanged = state.HasSent && state.FeedOrder != record.FeedOrder;
+                bool shapeshiftChanged = state.HasSent &&
+                    state.Shapeshifting != record.Shapeshifting;
                 bool changed = state.HasSent && (activityChanged || lookChanged || feedChanged ||
+                    shapeshiftChanged ||
                     CreatureSyncCadence.ValuesDiffer(state.Position, state.Rotation,
                         state.Velocity, state.Health, record));
                 if (entry.Action == CreatureSyncAction.Add)
@@ -572,6 +579,7 @@ namespace SuMultiplayer.Creatures
                 state.LastActivity = record.Activity;
                 state.LookAngles = record.LookAngles;
                 state.FeedOrder = record.FeedOrder;
+                state.Shapeshifting = record.Shapeshifting;
                 state.FeedOrder = record.FeedOrder;
                 state.LastSendMs = nowMs;
                 state.Position = record.Position;
@@ -604,6 +612,7 @@ namespace SuMultiplayer.Creatures
                     Velocity = record.Velocity,
                     Health = record.Health,
                     FeedOrder = record.FeedOrder
+                    ,Shapeshifting = record.Shapeshifting
                 };
             }
         }

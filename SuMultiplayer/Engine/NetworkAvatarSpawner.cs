@@ -53,6 +53,27 @@ namespace SuMultiplayer.Engine
         /// <summary>玩家键 → 网络化身的 PlayerData（只在本机存在，不落 Project.xml）。</summary>
         private readonly Dictionary<PlayerKey, PlayerData> m_avatars =
             new Dictionary<PlayerKey, PlayerData>();
+        private sealed class HostImpulseState
+        {
+            public Vector3 Accumulated;
+            public Vector3 LastPending;
+            public Vector3 CollisionPending;
+            public long LastCollisionSentMs;
+            public bool PendingObserved;
+        }
+        private readonly Dictionary<ComponentBody, HostImpulseState> m_hostImpulseStates =
+            new Dictionary<ComponentBody, HostImpulseState>();
+        private readonly List<PlayerKey> m_hostImpulseKeyScratch = new List<PlayerKey>(8);
+        private readonly Dictionary<ComponentBody, Action<ComponentBody>> m_hostCollisionHandlers =
+            new Dictionary<ComponentBody, Action<ComponentBody>>();
+        private readonly Dictionary<ComponentBody, bool> m_hostRelevantCollisionThisFrame =
+            new Dictionary<ComponentBody, bool>();
+        private readonly Dictionary<PlayerKey, long> m_preserveCollisionVelocityUntilMs =
+            new Dictionary<PlayerKey, long>();
+        public long AuthorityImpulsesCaptured { get; private set; }
+        public long ExplicitImpulsesCaptured { get; private set; }
+        public long CollisionImpulsesCaptured { get; private set; }
+        public long AuthorityImpulsesApplied { get; private set; }
         /// <summary>玩家键 → 该化身的角色记录键（身份键 + 槽位后缀，绝不用 index 拼）。</summary>
         private readonly Dictionary<PlayerKey, string> m_clientRecordKeys =
             new Dictionary<PlayerKey, string>();
@@ -800,6 +821,8 @@ namespace SuMultiplayer.Engine
                     componentPlayers.Add(playerData.ComponentPlayer);
 
                 m_avatars.Add(key, playerData);
+                if (isHost && playerData.ComponentPlayer?.ComponentBody is ComponentBody hostBody)
+                    AttachHostCollisionWatcher(hostBody);
                 m_clientRecordKeys[key] = recordKey;
                 m_slotCountsByClient.TryGetValue(key.ClientId, out int existingSlots);
                 m_slotCountsByClient[key.ClientId] = existingSlots + 1;
@@ -882,6 +905,8 @@ namespace SuMultiplayer.Engine
         public bool Remove(PlayerKey key)
         {
             if (!m_avatars.TryGetValue(key, out PlayerData playerData)) return false;
+            if (playerData.ComponentPlayer?.ComponentBody is ComponentBody hostBody)
+                DetachHostCollisionWatcher(hostBody);
             m_skinMaterializer?.Forget(playerData);
             m_avatars.Remove(key);
             m_clientRecordKeys.Remove(key);
@@ -935,6 +960,9 @@ namespace SuMultiplayer.Engine
         {
             m_skinMaterializer?.ForgetAll();
             m_avatars.Clear();
+                DetachAllHostCollisionWatchers();
+                m_hostImpulseStates.Clear();
+                m_preserveCollisionVelocityUntilMs.Clear();
             m_clientRecordKeys.Clear();
             m_creating.Clear();
             m_slotCountsByClient.Clear();
@@ -1632,7 +1660,7 @@ namespace SuMultiplayer.Engine
             {
                 // 客户端 → 主机：带上"移动速度（碰撞前）"——主机 avatar 用它作为物理速度推动物
                 // （2026-10-26，客户端推不动动物修复；详见 PlayerPositionSnapshot.MoveVelocity 注释）。
-                if (!TryCapturePlayerPosition(localPlayers[slot], serverTick, true,
+                if (!TryCapturePlayerPosition(localPlayers[slot], serverTick, true, false,
                         out PlayerPositionSnapshot snapshot, out string slotReason))
                 {
                     ReportProblemOnce("position-local-slot:" + slot,
@@ -1645,6 +1673,163 @@ namespace SuMultiplayer.Engine
                 MoveVelocitySent++;
             }
             return count;
+        }
+
+        /// <summary>
+        /// Called once per host frame. Collects only explicit engine impulses queued through
+        /// ComponentBody.ApplyImpulse and collisions that fired CollidedWithBody. Ordinary
+        /// movement velocity changes never enter the authority impulse stream.
+        /// </summary>
+        public void CaptureHostAuthorityImpulses()
+        {
+            foreach (KeyValuePair<PlayerKey, PlayerData> pair in m_avatars)
+            {
+                ComponentBody body = pair.Value?.ComponentPlayer?.ComponentBody;
+                if (body == null) continue;
+                if (!m_hostImpulseStates.TryGetValue(body, out HostImpulseState state))
+                {
+                    state = new HostImpulseState();
+                    m_hostImpulseStates.Add(body, state);
+                }
+
+                try
+                {
+                    Vector3 pending = m_parentField.GetParentField<Vector3>(body,
+                        "m_totalImpulse", typeof(ComponentBody));
+                    if (pending.LengthSquared() > 0.0001f)
+                    {
+                        Vector3 delta = state.PendingObserved ? pending - state.LastPending : pending;
+                        if (delta.LengthSquared() > 0.0001f)
+                        {
+                            state.Accumulated += delta;
+                            ExplicitImpulsesCaptured++;
+                        }
+                        state.LastPending = pending;
+                        state.PendingObserved = true;
+                    }
+                    else
+                    {
+                        state.LastPending = Vector3.Zero;
+                        state.PendingObserved = false;
+                    }
+                }
+                catch (Exception error)
+                {
+                    ReportProblemOnce("authority-impulse-read",
+                        "读取 ComponentBody.m_totalImpulse 失败（" + error.GetType().Name +
+                        ": " + error.Message + "）；不会从普通速度变化猜击退");
+                }
+
+                long nowMs = (long)(Time.RealTime * 1000.0);
+                if (m_hostRelevantCollisionThisFrame.TryGetValue(body, out bool collided) && collided)
+                {
+                    Vector3 collision = body.CollisionVelocityChange;
+                    if (body.StandingOnValue.HasValue) collision.Y = 0f;
+                    if (collision.LengthSquared() >= 0.64f)
+                        state.CollisionPending = collision;
+                }
+                m_hostRelevantCollisionThisFrame.Remove(body);
+                if (nowMs - state.LastCollisionSentMs >= 120 &&
+                    state.CollisionPending.LengthSquared() >= 0.64f)
+                {
+                    Vector3 collisionImpulse = 0.5f * state.CollisionPending;
+                    float collisionMagnitude = collisionImpulse.Length();
+                    if (collisionMagnitude > 1.5f)
+                        collisionImpulse *= 1.5f / collisionMagnitude;
+                    state.Accumulated += collisionImpulse;
+                    CollisionImpulsesCaptured++;
+                    state.CollisionPending = Vector3.Zero;
+                    state.LastCollisionSentMs = nowMs;
+                }
+                float magnitude = state.Accumulated.Length();
+                if (magnitude > ComponentBody.MaxSpeed)
+                    state.Accumulated *= ComponentBody.MaxSpeed / magnitude;
+                if (state.Accumulated.LengthSquared() > 0.25f)
+                {
+                    m_preserveCollisionVelocityUntilMs[pair.Key] =
+                        nowMs + 100;
+                    AuthorityImpulsesCaptured++;
+                }
+            }
+            m_hostImpulseKeyScratch.Clear();
+            foreach (KeyValuePair<PlayerKey, long> item in m_preserveCollisionVelocityUntilMs)
+                if (item.Value < (long)(Time.RealTime * 1000.0)) m_hostImpulseKeyScratch.Add(item.Key);
+            for (int i = 0; i < m_hostImpulseKeyScratch.Count; i++)
+                m_preserveCollisionVelocityUntilMs.Remove(m_hostImpulseKeyScratch[i]);
+        }
+
+        /// <summary>Records the exact impulse added by a host attack adjudication.</summary>
+        public bool RecordAuthoritativeImpulse(ComponentBody body, Vector3 impulse)
+        {
+            if (body == null || !float.IsFinite(impulse.X) || !float.IsFinite(impulse.Y) ||
+                !float.IsFinite(impulse.Z) || impulse.LengthSquared() <= 0.0001f ||
+                !m_hostCollisionHandlers.ContainsKey(body)) return false;
+            if (!m_hostImpulseStates.TryGetValue(body, out HostImpulseState state))
+            {
+                state = new HostImpulseState();
+                m_hostImpulseStates.Add(body, state);
+            }
+            state.Accumulated += impulse;
+            try
+            {
+                state.LastPending = m_parentField.GetParentField<Vector3>(body,
+                    "m_totalImpulse", typeof(ComponentBody));
+                state.PendingObserved = true;
+            }
+            catch (Exception error)
+            {
+                ReportProblemOnce("authority-impulse-baseline",
+                    "读取攻击后的 ComponentBody.m_totalImpulse 基线失败（" +
+                    error.GetType().Name + ": " + error.Message + "）；后续仅按可观测差值计数");
+                state.PendingObserved = false;
+            }
+            float magnitude = state.Accumulated.Length();
+            if (magnitude > ComponentBody.MaxSpeed)
+                state.Accumulated *= ComponentBody.MaxSpeed / magnitude;
+            ExplicitImpulsesCaptured++;
+            AuthorityImpulsesCaptured++;
+            m_preserveCollisionVelocityUntilMs[FindKey(body)] =
+                (long)(Time.RealTime * 1000.0) + 100;
+            return true;
+        }
+
+        private PlayerKey FindKey(ComponentBody body)
+        {
+            foreach (KeyValuePair<PlayerKey, PlayerData> pair in m_avatars)
+                if (ReferenceEquals(pair.Value?.ComponentPlayer?.ComponentBody, body)) return pair.Key;
+            return default;
+        }
+
+        private void AttachHostCollisionWatcher(ComponentBody body)
+        {
+            if (m_hostCollisionHandlers.ContainsKey(body)) return;
+            Action<ComponentBody> handler = other =>
+            {
+                if (other?.Entity == null) return;
+                if (other.Entity.FindComponent<ComponentPlayer>() == null &&
+                    other.Entity.FindComponent<ComponentCreature>() == null) return;
+                m_hostRelevantCollisionThisFrame[body] = true;
+            };
+            body.CollidedWithBody += handler;
+            m_hostCollisionHandlers.Add(body, handler);
+        }
+
+        private void DetachHostCollisionWatcher(ComponentBody body)
+        {
+            if (!m_hostCollisionHandlers.TryGetValue(body, out Action<ComponentBody> handler)) return;
+            body.CollidedWithBody -= handler;
+            m_hostCollisionHandlers.Remove(body);
+            m_hostImpulseStates.Remove(body);
+            m_hostRelevantCollisionThisFrame.Remove(body);
+        }
+
+        private void DetachAllHostCollisionWatchers()
+        {
+            foreach (KeyValuePair<ComponentBody, Action<ComponentBody>> item in m_hostCollisionHandlers)
+                item.Key.CollidedWithBody -= item.Value;
+            m_hostCollisionHandlers.Clear();
+            m_hostRelevantCollisionThisFrame.Clear();
+            m_hostImpulseKeyScratch.Clear();
         }
 
         /// <summary>
@@ -1690,7 +1875,7 @@ namespace SuMultiplayer.Engine
                 {
                     // 主机 → 客户端：不填"移动速度"（客户端不拿它覆盖主机化身；主机本机玩家的
                     // 推挤由主机世界原生物理负责，不需要回传意图）。
-                    if (!TryCapturePlayerPosition(localPlayers[slot], serverTick, false,
+                    if (!TryCapturePlayerPosition(localPlayers[slot], serverTick, false, false,
                             out PlayerPositionSnapshot localSnapshot, out string slotReason))
                     {
                         ReportProblemOnce("position-batch-local:" + slot,
@@ -1706,7 +1891,7 @@ namespace SuMultiplayer.Engine
             {
                 PlayerData playerData = item.Value;
                 // 主机 → 客户端：不填"移动速度"（同上，客户端侧不覆盖任何化身速度）。
-                if (!TryCapturePlayerPosition(playerData, serverTick, false,
+                if (!TryCapturePlayerPosition(playerData, serverTick, false, true,
                     out PlayerPositionSnapshot snapshot, out string avatarReason))
                 {
                     ReportProblemOnce("position-batch-avatar:" + item.Key,
@@ -1722,8 +1907,9 @@ namespace SuMultiplayer.Engine
 
         // Source: Mod/ScMultiplayer/Modules/Player/PlayerReadOnlyStateCapture.cs:12-32（TryCapture）
         //         + ScMultiplayerSupportTypes.cs:118-156（NetworkPlayerState 的位置字段）
-        private bool TryCapturePlayerPosition(PlayerData playerData, int serverTick,
-            bool includeMoveVelocity, out PlayerPositionSnapshot snapshot, out string reason)
+    private bool TryCapturePlayerPosition(PlayerData playerData, int serverTick,
+            bool includeMoveVelocity, bool includeAuthorityImpulse,
+            out PlayerPositionSnapshot snapshot, out string reason)
         {
             snapshot = default;
             ComponentPlayer player = playerData?.ComponentPlayer;
@@ -1765,10 +1951,22 @@ namespace SuMultiplayer.Engine
                 : Vector3.Zero;
             Vector3 snapshotVelocity = standingOnBody ? Vector3.Zero : body.Velocity;
             int ladderValue = locomotion.LadderValue.HasValue ? locomotion.LadderValue.Value : 0;
+            Vector3 authorityImpulse = Vector3.Zero;
+            bool hasAuthorityImpulse = false;
+            if (includeAuthorityImpulse)
+            {
+                if (m_hostImpulseStates.TryGetValue(body, out HostImpulseState impulseState) &&
+                    impulseState.Accumulated.LengthSquared() > 0.0001f)
+                {
+                    authorityImpulse = impulseState.Accumulated;
+                    impulseState.Accumulated = Vector3.Zero;
+                    hasAuthorityImpulse = true;
+                }
+            }
             snapshot = new PlayerPositionSnapshot(serverTick, body.Position, body.Rotation, snapshotVelocity,
                 locomotion.LookAngles, body.TargetCrouchFactor > 0f, locomotion.IsCreativeFlyEnabled,
                 isGrounded, moveVelocity, includeMoveVelocity && !standingOnBody,
-                standingOnMount, ladderValue);
+                standingOnMount, ladderValue, authorityImpulse, hasAuthorityImpulse);
             // Source: PlayerReadOnlyStateCapture.cs:31（TryCapture 返回 snapshot.IsFinite）
             if (!snapshot.IsFinite)
             {
@@ -1815,6 +2013,25 @@ namespace SuMultiplayer.Engine
             state.Apply(in snapshot, arrivalAge, now);
             ApplyRemotePlayerPose(playerData, state, key.ClientId);
             RemotePositionsApplied++;
+        }
+
+        /// <summary>
+        /// Applies only a large authoritative displacement to the local player. Normal
+        /// movement stays client-owned; the threshold catches host-side knockback and
+        /// collision impulses that cannot be reproduced by the client replica.
+        /// </summary>
+        public bool ApplyAuthoritativeLocalImpulse(PlayerKey key,
+            in PlayerPositionSnapshot snapshot)
+        {
+            Project project = GameManager.Project;
+            if (project == null || !TryGetLocalPlayer(project, key.Slot,
+                out PlayerData local, out _)) return false;
+            ComponentBody body = local?.ComponentPlayer?.ComponentBody;
+            if (body == null) return false;
+            if (!snapshot.HasAuthorityImpulse) return false;
+            body.ApplyImpulse(snapshot.AuthorityImpulse);
+            AuthorityImpulsesApplied++;
+            return true;
         }
 
         // Source: Mod/ScMultiplayer/Modules/Network/ScMultiplayerMessageHandlers.cs:129-153
@@ -1928,6 +2145,17 @@ namespace SuMultiplayer.Engine
                 if (mountedRider != null && mountedRider.Mount != null) continue;
                 ComponentBody body = playerData.ComponentPlayer.ComponentBody;
                 ComponentLocomotion locomotion = playerData.ComponentPlayer.ComponentLocomotion;
+                if (m_preserveCollisionVelocityUntilMs.TryGetValue(
+                    item.Key, out long preserveUntil))
+                {
+                    if ((long)(now * 1000.0) < preserveUntil)
+                    {
+                        // Let host physics carry a just-collided remote avatar briefly;
+                        // the authority impulse packet gives its owner the same impulse.
+                        continue;
+                    }
+                    m_preserveCollisionVelocityUntilMs.Remove(item.Key);
+                }
                 // 下梯子瞬间（远端快照 true→false）：跳过死区/平滑，直接落到客户端报告的落地点。
                 // 否则离开梯子的位移可能小于远端表现死区，主机/其他客户端会一直把化身画在梯子前，
                 // 直到玩家走出很大距离才被 3m 大误差强制对齐（实机 C1 问题）。

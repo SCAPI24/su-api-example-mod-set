@@ -1,4 +1,6 @@
 using System;
+using System.Collections;
+using System.Reflection;
 using Game;
 
 namespace SuMultiplayer.Engine
@@ -22,6 +24,11 @@ namespace SuMultiplayer.Engine
     /// </summary>
     public sealed class SuSubsystemAudio : SubsystemAudio, IUpdateable
     {
+        private static readonly FieldInfo s_queueField = typeof(SubsystemAudio).GetField(
+            "m_queuedSounds", BindingFlags.Instance | BindingFlags.NonPublic);
+        private static readonly FieldInfo s_nameField = typeof(SubsystemAudio)
+            .GetNestedType("SoundInfo", BindingFlags.NonPublic)?.GetField("Name",
+                BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
         private IHostAudioCaptureSink m_sink;
 
         public void AttachCaptureSink(IHostAudioCaptureSink sink) => m_sink = sink;
@@ -47,6 +54,8 @@ namespace SuMultiplayer.Engine
             }
             try
             {
+                if (ReplicaGates.IsClient(Project?.FindSubsystem<SubsystemTerrain>(false)))
+                    SuppressClientSoundGeneratorSounds();
                 base.Update(dt);
             }
             finally
@@ -64,6 +73,18 @@ namespace SuMultiplayer.Engine
                         try { sink.NoteCaptureFault(e); } catch (Exception) { }
                     }
                 }
+            }
+        }
+
+        private void SuppressClientSoundGeneratorSounds()
+        {
+            if (s_queueField?.GetValue(this) is not IList queue || s_nameField == null) return;
+            for (int i = queue.Count - 1; i >= 0; i--)
+            {
+                object entry = queue[i];
+                string name = s_nameField.GetValue(entry) as string;
+                if (name != null && name.StartsWith("Audio/SoundGenerator/",
+                    StringComparison.Ordinal)) queue.RemoveAt(i);
             }
         }
     }

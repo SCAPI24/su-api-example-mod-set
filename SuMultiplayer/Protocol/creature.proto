@@ -80,6 +80,11 @@ message CreatureRecord {
   float max_dig_in = 15;
   // 主机 ComponentFishOutOfWaterBehavior 的离水挣扎表现（状态机 "Jump"）。
   bool is_bend = 16;
+  // Host ComponentLocomotion.LastFlyOrder; written before the client bird model updates.
+  Vec3 fly_order = 17;
+  bool has_fly_order = 18;
+  // Host shapeshifter transition edge. Clients only show the particle effect.
+  bool shapeshifting = 19;
 }
 
 // Host -> client: creature state batch.

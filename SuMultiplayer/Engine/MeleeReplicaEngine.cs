@@ -1030,8 +1030,16 @@ namespace SuMultiplayer.Engine
                 {
                     // Source: Survivalcraft/Game/ComponentMiner.cs:472（AttackBody：护甲 / 韧性 /
                     //   Injure / 击退 / 眩晕）——公开静态方法，主机唯一伤害通路。
+                    bool hasImpulseBefore = TryReadPendingImpulse(targetBody,
+                        out Vector3 impulseBefore);
                     ComponentMiner.AttackBody(targetBody, miner.ComponentCreature, hitPoint,
                         request.LookDirection, settlement.Power, isMeleeAttack: true);
+                    if (hasImpulseBefore && TryReadPendingImpulse(targetBody,
+                        out Vector3 impulseAfter))
+                    {
+                        Vector3 attackImpulse = impulseAfter - impulseBefore;
+                        m_spawner.RecordAuthoritativeImpulse(targetBody, attackImpulse);
+                    }
                     miner.DamageActiveTool(1);
                 }
                 else
@@ -1085,6 +1093,24 @@ namespace SuMultiplayer.Engine
                 rollReserved: settlement.Rolls.Reserved, hitProbability: settlement.Probability,
                 hasRolls: true);
             return true;
+        }
+
+        private bool TryReadPendingImpulse(ComponentBody body, out Vector3 impulse)
+        {
+            impulse = Vector3.Zero;
+            try
+            {
+                impulse = m_parentField.GetParentField<Vector3>(body, "m_totalImpulse",
+                    typeof(ComponentBody));
+                return float.IsFinite(impulse.X) && float.IsFinite(impulse.Y) &&
+                    float.IsFinite(impulse.Z);
+            }
+            catch (Exception error)
+            {
+                Problem("host-impulse-read", "读取攻击目标的 ComponentBody.m_totalImpulse 失败（" +
+                    error.GetType().Name + ": " + error.Message + "）→ 不会伪造客户端冲量");
+                return false;
+            }
         }
 
         /// <summary>
