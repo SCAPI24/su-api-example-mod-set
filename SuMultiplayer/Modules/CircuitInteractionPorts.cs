@@ -100,7 +100,7 @@ namespace SuMultiplayer.Modules
         // Source: Survivalcraft/Game/TerrainChunk.cs:TerrainChunk.State
         bool IsChunkReady(ChunkKey key);
         // Source: Survivalcraft/Game/SubsystemElectricity.cs:SubsystemElectricity.GetElectricElement
-        bool AreElementsReady(IList<CircuitElementState> states);
+        bool AreElementsReady(IList<CircuitElementState> states, out string failure);
         bool TryCaptureChunk(ChunkKey key, List<CircuitElementState> target,
             out string error);
         bool TryCaptureElements(IList<CircuitElementState> identities,

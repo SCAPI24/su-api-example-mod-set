@@ -271,21 +271,65 @@ namespace SuMultiplayer.Engine
         }
 
         // Source: Survivalcraft/Game/SubsystemElectricity.cs:SubsystemElectricity.GetElectricElement
-        public bool AreElementsReady(IList<CircuitElementState> states)
+        public bool AreElementsReady(IList<CircuitElementState> states, out string failure)
         {
             EnsureMainThread(nameof(AreElementsReady));
             if (states == null) throw new ArgumentNullException(nameof(states));
+            failure = null;
             Project project = GameManager.Project;
             SubsystemElectricity electricity = project?.FindSubsystem<SubsystemElectricity>(false);
-            if (electricity == null) return false;
+            if (electricity == null)
+            {
+                failure = "subsystem-unavailable";
+                return false;
+            }
             foreach (CircuitElementState state in states)
             {
-                if (state == null || state.MountingFace > 5 ||
-                    electricity.GetElectricElement(state.X, state.Y, state.Z,
-                        (int)state.MountingFace) == null)
+                if (state == null)
+                {
+                    failure = "state-null";
                     return false;
+                }
+                if (state.MountingFace > 5)
+                {
+                    failure = "invalid-face=" + state.MountingFace;
+                    return false;
+                }
+                if (electricity.GetElectricElement(state.X, state.Y, state.Z,
+                        (int)state.MountingFace) != null)
+                    continue;
+
+                failure = DescribeMissingElement(state);
+                return false;
             }
             return true;
+        }
+
+        // Source: Survivalcraft/Game/SubsystemElectricity.cs:SubsystemElectricity.GetElectricElement
+        // Source: Survivalcraft/Game/Terrain.cs:Terrain.GetCellValueFast
+        private static string DescribeMissingElement(CircuitElementState state)
+        {
+            Project project = GameManager.Project;
+            Game.Terrain terrain = project?.FindSubsystem<SubsystemTerrain>(false)?.Terrain;
+            string blockType = "unavailable";
+            int contents = -1;
+            if (terrain != null && terrain.IsCellValid(state.X, state.Y, state.Z))
+            {
+                TerrainChunk chunk = terrain.GetChunkAtCell(state.X, state.Z);
+                if (chunk != null && ChunkContentStages.IsContentValid((int)chunk.State))
+                {
+                    int value = terrain.GetCellValueFast(state.X, state.Y, state.Z);
+                    contents = Game.Terrain.ExtractContents(value);
+                    Block[] blocks = BlocksManager.Blocks;
+                    if (blocks != null && contents >= 0 && contents < blocks.Length &&
+                        blocks[contents] != null)
+                        blockType = blocks[contents].GetType().Name;
+                }
+            }
+            return "missing-element x=" + state.X + " y=" + state.Y + " z=" + state.Z +
+                " face=" + state.MountingFace + " expectedType=0x" +
+                state.ElementType.ToString("X8", System.Globalization.CultureInfo.InvariantCulture) +
+                " blockContents=" + contents + " blockType=" + blockType;
         }
 
         // Source: Mod/SuMultiplayer/Engine/CircuitStateCodec.cs:CircuitStateCodec.CaptureChunk

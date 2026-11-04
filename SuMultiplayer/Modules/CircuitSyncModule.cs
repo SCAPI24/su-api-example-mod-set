@@ -22,7 +22,8 @@ namespace SuMultiplayer.Modules
         private const int HashIntervalMs = 200;
         private const int MaximumSnapshotElements = 128;
         private const int MaximumInterestChunks = 512;
-        private const int MaximumPendingSnapshots = 1024;
+        private const int MaximumPendingSnapshots = MaximumInterestChunks;
+        private const int ClientFullScopeSnapshotRefreshMs = 5000;
         private const int MaximumPendingOperations = 256;
         private const int MaximumCircuitFrameBytes = 60 * 1024;
         private const int SnapshotTimeoutMs = 10000;
@@ -47,6 +48,13 @@ namespace SuMultiplayer.Modules
             public long RequiredTopologyGeneration;
             public readonly SortedDictionary<int, CircuitSnapshotPart> Parts =
                 new SortedDictionary<int, CircuitSnapshotPart>();
+        }
+
+        private struct SnapshotVersion
+        {
+            public int TimelineGeneration;
+            public int HostStep;
+            public ulong SnapshotId;
         }
 
         private sealed class PeerState
@@ -222,6 +230,12 @@ namespace SuMultiplayer.Modules
             new Dictionary<ulong, CircuitOperationResult>();
         private readonly Dictionary<ulong, SnapshotAssembly> m_snapshotAssemblies =
             new Dictionary<ulong, SnapshotAssembly>();
+        private readonly Dictionary<ChunkKey, SnapshotVersion> m_clientLatestFullSnapshots =
+            new Dictionary<ChunkKey, SnapshotVersion>();
+        private readonly HashSet<ChunkKey> m_clientFullScopeSnapshotApplied =
+            new HashSet<ChunkKey>();
+        private readonly HashSet<ulong> m_clientPrevalidatedSnapshots =
+            new HashSet<ulong>();
         // Snapshot parts are assembled in PartIndex order; reuse this main-thread scratch list.
         private readonly List<CircuitElementState> m_snapshotStates =
             new List<CircuitElementState>(MaximumSnapshotElements);
@@ -297,6 +311,12 @@ namespace SuMultiplayer.Modules
         private bool m_clientClockPaused;
         private bool m_clientClockAccelerated;
         private bool m_clientResumePending;
+        private bool m_clientFullScopeSnapshotPending;
+        private bool m_clientElementRecoveryAttempted;
+        private string m_lastWarnedElementNotReady = "none";
+        private int m_clientFullScopeSnapshotStep = int.MinValue;
+        private int m_clientFullScopeSnapshotMinimumStep;
+        private long m_nextClientFullScopeCheckMs;
         private bool m_hostWasAccelerated;
         private bool m_hostCircuitIndexInitialized;
         private uint m_configuredRandomSeed;
@@ -353,7 +373,7 @@ namespace SuMultiplayer.Modules
         private long m_clientSnapshotTimeouts;
         private long m_clientTopologyGenerationAlignments;
         private long m_clientStaleDeltasDiscarded;
-        private long m_lastClientElementRecoveryMs;
+        private long m_nextClientFullScopeSnapshotRequestMs;
         private long m_nextHostCaptureWarningMs;
         private int m_activePeerSyncScopeCount;
         private string m_probeTrigger = "none";
@@ -365,6 +385,7 @@ namespace SuMultiplayer.Modules
         private string m_clientSimulationBlockReason = "not-client";
         private string m_lastTopologyMismatch = "none";
         private string m_lastCheckpointMismatch = "none";
+        private string m_lastElementNotReady = "none";
         private long m_hostTopologyBumps;
         private long m_hostUnknownTopologyBumps;
         private long m_clientTopologyBumps;
@@ -402,6 +423,7 @@ namespace SuMultiplayer.Modules
             " lastHostTopologyBump=" + m_lastHostTopologyBump +
             " lastClientTopologyBump=" + m_lastClientTopologyBump +
             " lastCheckpointMismatch=" + m_lastCheckpointMismatch +
+            " lastElementNotReady=" + m_lastElementNotReady +
             " accelerated=" + CircuitSimulationPauseSignal.ClientAccelerated + ")" +
             " debugPaused=" + m_debugPauseRequested +
             " " + m_world.DescribeDiagnostics();
@@ -627,6 +649,11 @@ namespace SuMultiplayer.Modules
                 m_deferredOperationResults.Clear();
                 m_deferredEvents.Clear();
                 m_snapshotAssemblies.Clear();
+                m_clientLatestFullSnapshots.Clear();
+                m_clientPrevalidatedSnapshots.Clear();
+                m_clientFullScopeSnapshotApplied.Clear();
+                m_clientFullScopeSnapshotPending = false;
+                m_clientElementRecoveryAttempted = false;
                 m_clientChunkBoundaries.Clear();
                 m_clientRequestedScope.Clear();
                 m_clientInitializedScope.Clear();
@@ -693,6 +720,9 @@ namespace SuMultiplayer.Modules
             probeStarted = m_probe.Start();
             UpdateClientSimulationClock();
             RecordProbe("simulation-clock", probeStarted);
+            if (m_transport.IsClient && m_clientFullScopeSnapshotPending &&
+                nowMs >= m_nextClientFullScopeSnapshotRequestMs)
+                RequestClientFullScopeSnapshot(nowMs);
         }
 
         private void RecordProbe(string id, long started)
@@ -732,6 +762,12 @@ namespace SuMultiplayer.Modules
             m_peerStates.Clear();
             m_pendingOperations.Clear();
             m_snapshotAssemblies.Clear();
+            m_clientLatestFullSnapshots.Clear();
+            m_clientPrevalidatedSnapshots.Clear();
+            m_clientFullScopeSnapshotApplied.Clear();
+            m_clientFullScopeSnapshotPending = false;
+            m_clientFullScopeSnapshotStep = int.MinValue;
+            m_clientFullScopeSnapshotMinimumStep = 0;
             m_clientChunkBoundaries.Clear();
             m_clientRequestedScope.Clear();
             m_clientInitializedScope.Clear();
@@ -2070,7 +2106,8 @@ namespace SuMultiplayer.Modules
 
         private void RequestChunkSnapshot(ChunkKey chunk, bool hashMismatch = false)
         {
-            if (!m_clientCircuitScope.Contains(chunk)) return;
+            if (!m_clientCircuitScope.Contains(chunk) ||
+                m_clientFullScopeSnapshotPending) return;
             var request = new CircuitSnapshotRequest
             {
                 Epoch = m_epoch,
@@ -2081,6 +2118,151 @@ namespace SuMultiplayer.Modules
             request.Chunks.Add(new CircuitChunkKey { X = chunk.X, Z = chunk.Z });
             if (!SendHost(MessageType.CircuitSnapshotRequest, request.ToByteArray()))
                 Warn("Circuit repair request could not be queued for " + chunk + ".");
+        }
+
+        private void BeginClientFullScopeSnapshotRefresh(long nowMs, string reason)
+        {
+            if (m_transport?.IsClient != true) return;
+            bool refreshDue = !m_clientFullScopeSnapshotPending ||
+                nowMs >= m_nextClientFullScopeSnapshotRequestMs;
+            m_snapshotAssemblies.Clear();
+            m_clientPrevalidatedSnapshots.Clear();
+            m_clientFullScopeSnapshotApplied.Clear();
+            m_clientFullScopeSnapshotStep = int.MinValue;
+            m_clientFullScopeSnapshotMinimumStep = m_lastCircuitStep;
+            if (m_clientCircuitScope.Count == 0)
+            {
+                m_clientFullScopeSnapshotPending = false;
+                m_clientLatestFullSnapshots.Clear();
+                m_clientSimulationBlockReason = "waiting-client-circuit-scope";
+                return;
+            }
+            m_clientFullScopeSnapshotPending = true;
+            m_nextClientFullScopeCheckMs = nowMs;
+            m_clientSimulationBlockReason = "waiting-full-scope-snapshot:" + reason;
+            if (refreshDue)
+                RequestClientFullScopeSnapshot(nowMs);
+        }
+
+        private void RequestClientFullScopeSnapshot(long nowMs)
+        {
+            if (m_transport?.IsClient != true || !m_clientFullScopeSnapshotPending ||
+                m_clientCircuitScope.Count == 0) return;
+            if (!m_clientScopeAcknowledged || !m_clientScopeRequested) return;
+            m_nextClientFullScopeSnapshotRequestMs = nowMs +
+                ClientFullScopeSnapshotRefreshMs;
+            var request = new CircuitSnapshotRequest
+            {
+                Epoch = m_epoch,
+                RequestId = NextSnapshotId(),
+                ReplaceScope = false
+            };
+            foreach (ChunkKey key in m_clientCircuitScope.OrderBy(key => key.X)
+                         .ThenBy(key => key.Z))
+                request.Chunks.Add(new CircuitChunkKey { X = key.X, Z = key.Z });
+            if (!SendHost(MessageType.CircuitSnapshotRequest, request.ToByteArray()))
+                Warn("Latest full circuit scope snapshot request could not be queued.");
+        }
+
+        private int PendingSnapshotLimit => Math.Min(MaximumPendingSnapshots,
+            Math.Max(16, m_clientCircuitScope.Count * 2));
+
+        private static int CompareSnapshotVersion(SnapshotVersion left,
+            SnapshotVersion right)
+        {
+            int result = left.TimelineGeneration.CompareTo(right.TimelineGeneration);
+            if (result != 0) return result;
+            result = left.HostStep.CompareTo(right.HostStep);
+            return result != 0 ? result : left.SnapshotId.CompareTo(right.SnapshotId);
+        }
+
+        private bool IsOlderThanClientFullSnapshot(ChunkKey chunk, int timelineGeneration,
+            int hostStep, ulong snapshotId)
+        {
+            if (!m_clientLatestFullSnapshots.TryGetValue(chunk,
+                    out SnapshotVersion latest)) return false;
+            return CompareSnapshotVersion(new SnapshotVersion
+            {
+                TimelineGeneration = timelineGeneration,
+                HostStep = hostStep,
+                SnapshotId = snapshotId
+            }, latest) < 0;
+        }
+
+        private void RememberClientFullSnapshot(ChunkKey chunk, int timelineGeneration,
+            int hostStep, ulong snapshotId)
+        {
+            var version = new SnapshotVersion
+            {
+                TimelineGeneration = timelineGeneration,
+                HostStep = hostStep,
+                SnapshotId = snapshotId
+            };
+            if (m_clientLatestFullSnapshots.TryGetValue(chunk,
+                    out SnapshotVersion previous) &&
+                CompareSnapshotVersion(version, previous) <= 0)
+                return;
+            m_clientLatestFullSnapshots[chunk] = version;
+            foreach (ulong olderId in m_snapshotAssemblies.Values
+                         .Where(candidate => candidate.SnapshotId != snapshotId &&
+                             candidate.ChunkX == chunk.X && candidate.ChunkZ == chunk.Z &&
+                             CompareSnapshotVersion(new SnapshotVersion
+                             {
+                                 TimelineGeneration = candidate.TimelineGeneration,
+                                 HostStep = candidate.HostStep,
+                                 SnapshotId = candidate.SnapshotId
+                             }, version) < 0)
+                         .Select(candidate => candidate.SnapshotId).ToArray())
+                m_snapshotAssemblies.Remove(olderId);
+        }
+
+        private bool TryGetClientFullScopeSnapshotSet(out SnapshotAssembly[] assemblies,
+            out int hostStep, out string waitReason)
+        {
+            assemblies = null;
+            hostStep = 0;
+            waitReason = "no-common-full-snapshot-step";
+            if (m_clientCircuitScope.Count == 0)
+            {
+                assemblies = Array.Empty<SnapshotAssembly>();
+                return true;
+            }
+
+            var candidatesByStep = new Dictionary<int, Dictionary<ChunkKey,
+                SnapshotAssembly>>();
+            foreach (SnapshotAssembly candidate in m_snapshotAssemblies.Values)
+            {
+                if (!candidate.Full || candidate.TimelineGeneration != m_timelineGeneration ||
+                    candidate.HostStep < m_clientFullScopeSnapshotMinimumStep ||
+                    candidate.Parts.Count != candidate.PartCount ||
+                    m_transport.TerrainSequence < RequiredClientTerrainSequence(
+                        candidate.RequiredTerrainSequence)) continue;
+                var chunk = new ChunkKey(candidate.ChunkX, candidate.ChunkZ);
+                if (!m_clientCircuitScope.Contains(chunk)) continue;
+                if (!candidatesByStep.TryGetValue(candidate.HostStep,
+                        out Dictionary<ChunkKey, SnapshotAssembly> candidates))
+                {
+                    candidates = new Dictionary<ChunkKey, SnapshotAssembly>();
+                    candidatesByStep.Add(candidate.HostStep, candidates);
+                }
+                if (!candidates.TryGetValue(chunk, out SnapshotAssembly previous) ||
+                    previous.SnapshotId < candidate.SnapshotId)
+                    candidates[chunk] = candidate;
+            }
+            foreach (KeyValuePair<int, Dictionary<ChunkKey, SnapshotAssembly>> pair in
+                         candidatesByStep.OrderByDescending(item => item.Key))
+            {
+                if (pair.Value.Count != m_clientCircuitScope.Count) continue;
+                var selected = new SnapshotAssembly[m_clientCircuitScope.Count];
+                int index = 0;
+                foreach (ChunkKey chunk in m_clientCircuitScope)
+                    selected[index++] = pair.Value[chunk];
+                assemblies = selected;
+                hostStep = pair.Key;
+                waitReason = null;
+                return true;
+            }
+            return false;
         }
 
         private static bool IsSnapshotExpired(SnapshotAssembly assembly, long nowMs) =>
@@ -3259,6 +3441,15 @@ namespace SuMultiplayer.Modules
                 m_pendingScopeSnapshot = snapshot;
                 return;
             }
+            if (snapshot.RequestId != 0)
+            {
+                m_clientFullScopeSnapshotApplied.Clear();
+                m_clientFullScopeSnapshotPending = nextCircuitScope.Count > 0;
+                m_clientFullScopeSnapshotStep = int.MinValue;
+                m_clientFullScopeSnapshotMinimumStep = 0;
+                m_clientElementRecoveryAttempted = false;
+                m_nextClientFullScopeCheckMs = (long)(m_clock() * 1000.0);
+            }
             foreach (ChunkKey key in nextTerrainScope)
                 if (m_captureStatesByChunk.TryGetValue(key,
                         out List<CircuitElementState> states))
@@ -3290,6 +3481,20 @@ namespace SuMultiplayer.Modules
             m_clientDesiredCircuitScope.Clear();
             m_clientDesiredCircuitScope.UnionWith(nextCircuitScope);
             m_clientInitializedScope.IntersectWith(nextCircuitScope);
+            if (snapshot.RequestId != 0)
+                foreach (ChunkKey old in m_clientLatestFullSnapshots.Keys.Where(key =>
+                             !nextCircuitScope.Contains(key)).ToArray())
+                    m_clientLatestFullSnapshots.Remove(old);
+            if (snapshot.RequestId != 0 && nextCircuitScope.Count > 0)
+            {
+                long nowMs = (long)(m_clock() * 1000.0);
+                if (TryGetClientFullScopeSnapshotSet(out _, out _, out _))
+                    m_nextClientFullScopeSnapshotRequestMs = nowMs +
+                        ClientFullScopeSnapshotRefreshMs;
+                else
+                    m_nextClientFullScopeSnapshotRequestMs = nowMs +
+                        ClientScopeRequestTimeoutMs;
+            }
             RefreshClientStepBarrier();
             UpdateClientSimulationClock();
         }
@@ -3446,10 +3651,19 @@ namespace SuMultiplayer.Modules
             if (m_clientScopeAcknowledged && !m_clientCircuitScope.Contains(chunk) &&
                 !string.Equals(barrier.Reason, "full", StringComparison.Ordinal)) return;
             ulong key = barrier.SnapshotId;
+            bool full = string.Equals(barrier.Reason, "full", StringComparison.Ordinal);
+            if (full && IsOlderThanClientFullSnapshot(chunk, m_timelineGeneration,
+                    barrier.HostCircuitStep, barrier.SnapshotId)) return;
+            if (!full && !m_clientInitializedScope.Contains(chunk) &&
+                !m_clientFullScopeSnapshotPending) return;
             if (!m_snapshotAssemblies.TryGetValue(key, out SnapshotAssembly assembly))
             {
-                if (m_snapshotAssemblies.Count >= MaximumPendingSnapshots)
-                    m_snapshotAssemblies.Remove(m_snapshotAssemblies.Keys.First());
+                if (m_snapshotAssemblies.Count >= PendingSnapshotLimit)
+                {
+                    BeginClientFullScopeSnapshotRefresh((long)(m_clock() * 1000.0),
+                        "snapshot-queue-limit");
+                    return;
+                }
                 assembly = new SnapshotAssembly
                 {
                     Epoch = barrier.Epoch,
@@ -3460,7 +3674,7 @@ namespace SuMultiplayer.Modules
                     PartCount = (int)barrier.PartCount
                 };
                 assembly.CreatedMs = (long)(m_clock() * 1000.0);
-                assembly.Full = string.Equals(barrier.Reason, "full", StringComparison.Ordinal);
+                assembly.Full = full;
                 m_snapshotAssemblies.Add(key, assembly);
             }
             else if (assembly.PartCount != (int)barrier.PartCount ||
@@ -3477,13 +3691,34 @@ namespace SuMultiplayer.Modules
         {
             if (part == null || part.Epoch != m_epoch || part.PartCount == 0 ||
                 part.PartCount > 4096 || part.PartIndex >= part.PartCount) return;
+            if (part.TimelineGeneration < m_timelineGeneration ||
+                m_clientFullScopeSnapshotPending &&
+                part.TimelineGeneration == m_timelineGeneration &&
+                part.HostCircuitStep < m_clientFullScopeSnapshotMinimumStep)
+                return;
             var chunk = new ChunkKey(part.ChunkX, part.ChunkZ);
             if (m_clientScopeAcknowledged && !m_clientCircuitScope.Contains(chunk) &&
                 !part.Full) return;
+            if (part.Full)
+            {
+                if (IsOlderThanClientFullSnapshot(chunk, part.TimelineGeneration,
+                        part.HostCircuitStep, part.SnapshotId)) return;
+            }
+            else if (!m_clientInitializedScope.Contains(chunk) &&
+                    !m_clientFullScopeSnapshotPending ||
+                m_clientLatestFullSnapshots.TryGetValue(chunk,
+                    out SnapshotVersion latestFull) &&
+                latestFull.TimelineGeneration == part.TimelineGeneration &&
+                part.HostCircuitStep <= latestFull.HostStep)
+                return;
             if (!m_snapshotAssemblies.TryGetValue(part.SnapshotId, out SnapshotAssembly assembly))
             {
-                if (m_snapshotAssemblies.Count >= MaximumPendingSnapshots)
-                    m_snapshotAssemblies.Remove(m_snapshotAssemblies.Keys.First());
+                if (m_snapshotAssemblies.Count >= PendingSnapshotLimit)
+                {
+                    BeginClientFullScopeSnapshotRefresh((long)(m_clock() * 1000.0),
+                        "snapshot-queue-limit");
+                    return;
+                }
                 assembly = new SnapshotAssembly
                 {
                     Epoch = part.Epoch,
@@ -3520,6 +3755,9 @@ namespace SuMultiplayer.Modules
                 Warn("Circuit snapshot parts disagree on metadata.");
                 return;
             }
+            if (part.Full)
+                RememberClientFullSnapshot(chunk, part.TimelineGeneration,
+                    part.HostCircuitStep, part.SnapshotId);
             assembly.LastCommittedEventSequence = part.LastCommittedEventSequence;
             assembly.ChunkCommittedEventSequence = part.ChunkCommittedEventSequence;
             assembly.TimelineGeneration = part.TimelineGeneration;
@@ -3538,15 +3776,114 @@ namespace SuMultiplayer.Modules
             bool displayRefreshNeeded = false;
             bool replayingAcceleratedState = m_clientClockAccelerated ||
                 m_clientResumePending;
-            foreach (SnapshotAssembly assembly in m_snapshotAssemblies.Values
-                         .OrderBy(candidate => candidate.HostStep)
-                         .ThenBy(candidate => candidate.SnapshotId).ToArray())
+            if (m_clientFullScopeSnapshotPending)
+            {
+                if (nowMs < m_nextClientFullScopeCheckMs) return;
+                m_nextClientFullScopeCheckMs = nowMs + 100;
+                if (TryGetClientFullScopeSnapshotSet(out SnapshotAssembly[] fullScope,
+                        out int fullScopeStep, out string waitReason))
+                {
+                    if (m_clientFullScopeSnapshotStep != int.MinValue &&
+                        m_clientFullScopeSnapshotStep != fullScopeStep)
+                    {
+                        m_clientFullScopeSnapshotApplied.Clear();
+                        m_clientPrevalidatedSnapshots.Clear();
+                    }
+                    foreach (SnapshotAssembly assembly in fullScope)
+                    {
+                        m_snapshotStates.Clear();
+                        var chunk = new ChunkKey(assembly.ChunkX, assembly.ChunkZ);
+                        foreach (ulong obsoleteId in m_snapshotAssemblies.Values
+                                     .Where(candidate => !candidate.Full &&
+                                         candidate.ChunkX == chunk.X &&
+                                         candidate.ChunkZ == chunk.Z &&
+                                         candidate.TimelineGeneration ==
+                                             assembly.TimelineGeneration &&
+                                         candidate.HostStep <= fullScopeStep)
+                                     .Select(candidate => candidate.SnapshotId).ToArray())
+                            m_snapshotAssemblies.Remove(obsoleteId);
+                        if (m_clientFullScopeSnapshotApplied.Contains(chunk))
+                        {
+                            m_clientPrevalidatedSnapshots.Add(assembly.SnapshotId);
+                            continue;
+                        }
+                        m_snapshotStates.Clear();
+                        foreach (CircuitSnapshotPart part in assembly.Parts.Values)
+                            m_snapshotStates.AddRange(part.Elements);
+                        if (!m_world.IsChunkReady(chunk))
+                        {
+                            waitReason = "chunk-not-ready:" + chunk;
+                            break;
+                        }
+                        if (!m_world.AreElementsReady(m_snapshotStates,
+                                out string missingElement))
+                        {
+                            m_lastElementNotReady = chunk + " " + missingElement;
+                            waitReason = m_lastElementNotReady;
+                            if (!m_clientElementRecoveryAttempted)
+                            {
+                                m_world.ResetClientCircuitState();
+                                m_clientElementRecoveryAttempted = true;
+                                Warn("Client circuit element is absent after topology rebuild: " +
+                                    waitReason + "; requested latest full-scope state after one rebuild.");
+                                m_lastWarnedElementNotReady = waitReason;
+                            }
+                            if (!string.Equals(m_lastWarnedElementNotReady, waitReason,
+                                    StringComparison.Ordinal))
+                            {
+                                Warn("Client circuit element is still absent: " + waitReason + ".");
+                            }
+                            m_lastWarnedElementNotReady = waitReason;
+                            break;
+                        }
+                        m_clientPrevalidatedSnapshots.Add(assembly.SnapshotId);
+                    }
+                    if (!string.IsNullOrEmpty(waitReason))
+                    {
+                        m_clientSimulationBlockReason =
+                            "waiting-full-scope-snapshot:" + waitReason;
+                        if (nowMs >= m_nextClientFullScopeSnapshotRequestMs)
+                            RequestClientFullScopeSnapshot(nowMs);
+                        return;
+                    }
+
+                    if (m_clientFullScopeSnapshotStep != fullScopeStep &&
+                        !m_world.AlignClientCircuitStep(fullScopeStep, false,
+                            out string alignError))
+                    {
+                        Warn("Client initial full-scope snapshot step alignment failed: " +
+                            alignError);
+                        if (nowMs >= m_nextClientFullScopeSnapshotRequestMs)
+                            RequestClientFullScopeSnapshot(nowMs);
+                        return;
+                    }
+                    m_clientFullScopeSnapshotStep = fullScopeStep;
+                }
+                else
+                {
+                    m_clientSimulationBlockReason = "waiting-full-scope-snapshot:" + waitReason;
+                    return;
+                }
+            }
+
+            SnapshotAssembly[] assemblies = m_snapshotAssemblies.Values
+                .Where(candidate => !m_clientFullScopeSnapshotPending ||
+                    m_clientPrevalidatedSnapshots.Contains(candidate.SnapshotId))
+                .OrderBy(candidate => candidate.HostStep)
+                .ThenBy(candidate => candidate.SnapshotId).ToArray();
+            foreach (SnapshotAssembly assembly in assemblies)
             {
                 m_snapshotStates.Clear();
                 ChunkKey key = new ChunkKey(assembly.ChunkX, assembly.ChunkZ);
+                bool initializingFullScope = m_clientFullScopeSnapshotPending &&
+                    assembly.Full && assembly.HostStep == m_clientFullScopeSnapshotStep &&
+                    m_clientCircuitScope.Contains(key);
+                if (initializingFullScope &&
+                    m_clientFullScopeSnapshotApplied.Contains(key)) continue;
                 if (m_transport?.IsClient == true && !m_clientClockInitialized)
                     continue;
-                if (m_transport?.IsClient == true && !replayingAcceleratedState)
+                if (m_transport?.IsClient == true && !replayingAcceleratedState &&
+                    !initializingFullScope)
                 {
                     if (!m_world.TryGetClock(out int clientStep, out _, out _, out _, out _))
                         continue;
@@ -3635,20 +3972,26 @@ namespace SuMultiplayer.Modules
                     }
                     continue;
                 }
-                if (!m_world.AreElementsReady(m_snapshotStates))
+                if (!initializingFullScope &&
+                    !m_world.AreElementsReady(m_snapshotStates,
+                        out string missingElement))
                 {
-                    if (nowMs - m_lastClientElementRecoveryMs >= 250)
-                    {
-                        m_world.ResetClientCircuitState();
-                        m_lastClientElementRecoveryMs = nowMs;
-                    }
+                    m_lastElementNotReady = key + " " + missingElement;
+                    if (!string.Equals(m_lastWarnedElementNotReady,
+                            m_lastElementNotReady, StringComparison.Ordinal))
+                        Warn("Circuit snapshot waits for local element " +
+                            m_lastElementNotReady + ".");
+                    m_lastWarnedElementNotReady = m_lastElementNotReady;
                     if (IsSnapshotExpired(assembly, nowMs))
                     {
-                        m_snapshotAssemblies.Remove(assembly.SnapshotId);
-                        RequestSnapshotRecovery(key, assembly, "elements-not-ready");
+                        BeginClientFullScopeSnapshotRefresh(nowMs,
+                            "elements-not-ready:" + m_lastElementNotReady);
+                        break;
                     }
                     continue;
                 }
+                if (initializingFullScope)
+                    m_clientPrevalidatedSnapshots.Remove(assembly.SnapshotId);
                 if (assembly.Full)
                 {
                     if (!SnapshotTopologyMatches(key, m_snapshotStates,
@@ -3770,6 +4113,9 @@ namespace SuMultiplayer.Modules
                     if (assembly.Full)
                     {
                         m_clientInitializedScope.Add(key);
+                        if (m_clientFullScopeSnapshotPending &&
+                            assembly.HostStep == m_clientFullScopeSnapshotStep)
+                            m_clientFullScopeSnapshotApplied.Add(key);
                         m_clientRepairRequests.Remove(key);
                         foreach (SnapshotAssembly older in m_snapshotAssemblies.Values
                                      .Where(candidate => candidate.SnapshotId != assembly.SnapshotId &&
@@ -3849,7 +4195,34 @@ namespace SuMultiplayer.Modules
                     RequestChunkSnapshot(key);
                     Warn("Circuit snapshot apply or acknowledgment verification failed; requested a full chunk snapshot.");
                 }
-                m_snapshotAssemblies.Remove(assembly.SnapshotId);
+                if (!initializingFullScope)
+                    m_snapshotAssemblies.Remove(assembly.SnapshotId);
+            }
+            if (m_clientFullScopeSnapshotPending &&
+                m_clientFullScopeSnapshotApplied.SetEquals(m_clientCircuitScope))
+            {
+                foreach (ulong appliedId in m_snapshotAssemblies.Values
+                             .Where(candidate => candidate.Full &&
+                                 candidate.TimelineGeneration == m_timelineGeneration &&
+                                 candidate.HostStep == m_clientFullScopeSnapshotStep &&
+                                 m_clientCircuitScope.Contains(new ChunkKey(
+                                     candidate.ChunkX, candidate.ChunkZ)))
+                             .Select(candidate => candidate.SnapshotId).ToArray())
+                    m_snapshotAssemblies.Remove(appliedId);
+                foreach (ulong obsoleteId in m_snapshotAssemblies.Values
+                             .Where(candidate => candidate.TimelineGeneration ==
+                                     m_timelineGeneration &&
+                                 candidate.HostStep <= m_clientFullScopeSnapshotStep &&
+                                 m_clientCircuitScope.Contains(new ChunkKey(
+                                     candidate.ChunkX, candidate.ChunkZ)))
+                             .Select(candidate => candidate.SnapshotId).ToArray())
+                    m_snapshotAssemblies.Remove(obsoleteId);
+                m_lastCircuitStep = Math.Max(m_lastCircuitStep,
+                    m_clientFullScopeSnapshotStep);
+                m_clientFullScopeSnapshotPending = false;
+                m_clientElementRecoveryAttempted = false;
+                m_clientPrevalidatedSnapshots.Clear();
+                m_clientSimulationBlockReason = "ready";
             }
             if (displayRefreshNeeded)
                 m_world.RefreshClientDisplayElements();
@@ -3873,6 +4246,13 @@ namespace SuMultiplayer.Modules
                 m_deferredOperationResults.Clear();
                 m_deferredEvents.Clear();
                 m_snapshotAssemblies.Clear();
+                m_clientLatestFullSnapshots.Clear();
+                m_clientPrevalidatedSnapshots.Clear();
+                m_clientFullScopeSnapshotApplied.Clear();
+                m_clientFullScopeSnapshotPending = false;
+                m_clientFullScopeSnapshotStep = int.MinValue;
+                m_clientFullScopeSnapshotMinimumStep = message.HostCircuitStep;
+                m_clientElementRecoveryAttempted = false;
                 m_clientChunkBoundaries.Clear();
                 m_clientInitializedScope.Clear();
                 m_clientHashCheckpoints.Clear();
@@ -4272,10 +4652,14 @@ namespace SuMultiplayer.Modules
             m_chunks.Clear();
             m_chunks.AddRange(m_clientCircuitScope);
             bool scopeReady = m_clientScopeAcknowledged && m_clientScopeRequested &&
-                m_chunks.Count <= MaximumInterestChunks;
+                m_chunks.Count <= MaximumInterestChunks &&
+                !m_clientFullScopeSnapshotPending;
             if (!scopeReady)
-                m_clientSimulationBlockReason = "scope-not-ready:" +
-                    (m_clientScopeAcknowledged ? m_chunks.Count.ToString() : "unacknowledged");
+                m_clientSimulationBlockReason = m_clientFullScopeSnapshotPending
+                    ? "waiting-full-scope-snapshot"
+                    : "scope-not-ready:" +
+                        (m_clientScopeAcknowledged ? m_chunks.Count.ToString() :
+                            "unacknowledged");
             if (scopeReady && m_clientTopologyAwaitingSnapshot.Any(
                     key => m_clientCircuitScope.Contains(key) &&
                         !HasPendingFullSnapshotForChunk(key)))
@@ -4440,6 +4824,12 @@ namespace SuMultiplayer.Modules
             m_clientPendingScopeRequestId = 0;
             m_clientScopeRequestSentMs = 0;
             m_wasCircuitAttached = false;
+            m_clientFullScopeSnapshotPending = false;
+            m_clientElementRecoveryAttempted = false;
+            m_clientFullScopeSnapshotStep = int.MinValue;
+            m_clientFullScopeSnapshotApplied.Clear();
+            m_clientPrevalidatedSnapshots.Clear();
+            m_clientLatestFullSnapshots.Clear();
             m_clientClockInitialized = false;
             m_clientClockPaused = false;
             m_clientClockAccelerated = false;
@@ -4455,6 +4845,12 @@ namespace SuMultiplayer.Modules
             m_lateCommittedOperations.Clear();
             m_pendingOperations.Clear();
             m_snapshotAssemblies.Clear();
+            m_clientLatestFullSnapshots.Clear();
+            m_clientPrevalidatedSnapshots.Clear();
+            m_clientFullScopeSnapshotApplied.Clear();
+            m_clientFullScopeSnapshotPending = false;
+            m_clientElementRecoveryAttempted = false;
+            m_clientFullScopeSnapshotStep = int.MinValue;
             m_clientChunkBoundaries.Clear();
             m_clientHashCheckpoints.Clear();
             m_clientChunkCommittedEventSequences.Clear();

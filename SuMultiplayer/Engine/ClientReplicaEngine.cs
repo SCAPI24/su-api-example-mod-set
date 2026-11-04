@@ -453,12 +453,11 @@ namespace SuMultiplayer.Engine
                 }
                 else
                 {
-                    if (!SetMember(weather, "m_fogEndTime", now + 3.0, typeof(SubsystemWeather)))
+                    if (!SetMember(weather, "m_fogEndTime", now + fogRamp,
+                            typeof(SubsystemWeather)))
                         failures++;
-                    // 状态已明确结束：本地强度必须立刻归零（客户端不跑 base.Update，
-                    // 不能指望本地 ramp 一定还能把旧浓度降下来）。
-                    if (!SetMember(weather, "FogIntensity", 0f, typeof(SubsystemWeather)))
-                        failures++;
+                    // IsFogStarted flips off at the beginning of the host's fade-out window.
+                    // Keep the current intensity; SuSubsystemWeather advances the same ramp per frame.
                 }
                 if (first)
                 {
@@ -490,15 +489,8 @@ namespace SuMultiplayer.Engine
             int failures = 0;
             if (!fog)
             {
-                if (weather.FogIntensity > 0.01f)
-                {
-                    float local = weather.FogIntensity;
-                    if (!SetMember(weather, "FogIntensity", 0f, typeof(SubsystemWeather)))
-                        failures++;
-                    else
-                        ModLog.VerboseInfo("[SuMP][fog] 客户端雾对账：主机 fog=off，本地 " +
-                            local.ToString("F2") + " → 0");
-                }
+                // The authoritative off state means fade-out is active, not that intensity is zero.
+                // Preserve the client ramp instead of snapping each 2 Hz snapshot to clear fog.
             }
             else
             {
