@@ -51,6 +51,8 @@ message ChunkDigestReport {
     // 客户端整块摘要仍不同 → 重报 → 无限循环（实机实测：每秒 101 次上报、Match 0、回传 0 片）。
     uint32 client_top_height_hash = 5;
     uint32 client_top_block_hash = 6;
+    // 1 = final footprint digest (center chunk and four orthogonal neighbors).
+    uint32 purpose = 7;
   }
   repeated Entry entries = 1;
   // Third-party extension points: see doc/message-protocol.md.
@@ -67,9 +69,53 @@ message ChunkVerdict {
     // 主机裁决时该块的地形改动序号。客户端可据此确认"主机看到的是最新内容"，
     // 以及诊断"这条 Mismatch 是不是迟到的裁决"。0 = 未提供。
     int64 host_change_sequence = 4;
+    // Echo of ChunkDigestReport.Entry.purpose.
+    uint32 purpose = 5;
   }
   repeated Entry entries = 1;
   // Third-party extension points: see doc/message-protocol.md.
+  bytes ext = 100;
+  google.protobuf.Any custom = 101;
+}
+
+enum TopLayerDigestKind {
+  TOP_LAYER_DIGEST_KIND_INITIAL = 0;
+  TOP_LAYER_DIGEST_KIND_CONFIRMATION = 1;
+}
+
+enum TopLayerDigestStatus {
+  TOP_LAYER_DIGEST_STATUS_PENDING = 0;
+  TOP_LAYER_DIGEST_STATUS_CONFIRMED = 1;
+  TOP_LAYER_DIGEST_STATUS_NOT_READY = 2;
+}
+
+// Client -> host: first/top-layer sync for newly loaded chunks and patch confirmations.
+message TopLayerDigestReport {
+  message Entry {
+    ChunkKey key = 1;
+    uint32 top_height_hash = 2;
+    uint32 top_block_hash = 3;
+    int64 client_change_sequence = 4;
+    TopLayerDigestKind kind = 5;
+    bool top_ready = 6;
+    uint32 confirmation_purpose = 7;
+  }
+  repeated Entry entries = 1;
+  bytes ext = 100;
+  google.protobuf.Any custom = 101;
+}
+
+// Host -> client: explicit result for top-layer first sync / patch confirmation.
+message TopLayerDigestVerdict {
+  message Entry {
+    ChunkKey key = 1;
+    TopLayerDigestStatus status = 2;
+    uint32 host_top_height_hash = 3;
+    uint32 host_top_block_hash = 4;
+    int64 host_change_sequence = 5;
+    uint32 confirmation_purpose = 6;
+  }
+  repeated Entry entries = 1;
   bytes ext = 100;
   google.protobuf.Any custom = 101;
 }
@@ -105,6 +151,9 @@ message TopLayerFix {
   repeated CellEdit cells = 2;
   uint32 host_top_height_hash = 3;
   uint32 host_top_block_hash = 4;
+  bool require_top_layer_confirmation = 5;
+  uint32 confirmation_purpose = 6;
+  uint32 digest_purpose = 7;
   // Third-party extension points: see doc/message-protocol.md.
   bytes ext = 100;
   google.protobuf.Any custom = 101;
@@ -129,6 +178,9 @@ message ChunkResync {
   // 用于"季节驱动的树叶季相变化"：客户端按轻量路径落地（只写数组、不派发电路/行为/副本事件），
   // 落地后不重算整块摘要。见 doc/leaves-layer-resync-plan.md 第 5、6 章。
   bool leaves_only = 7;
+  // 0 = normal/explicit resync; 1 = final-footprint full verification repair.
+  uint32 digest_purpose = 8;
+  bool require_top_layer_confirmation = 9;
   // Third-party extension points: see doc/message-protocol.md.
   bytes ext = 100;
   google.protobuf.Any custom = 101;

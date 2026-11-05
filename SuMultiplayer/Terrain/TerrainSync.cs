@@ -372,7 +372,7 @@ namespace SuMultiplayer.Terrain
         /// </param>
         public static List<List<byte[]>> Encode(ChunkKey key, ITerrainWorld world, out bool useRle,
             out int runCount, out int expandedCells, bool captureDiagnostics, long watermark,
-            bool leavesOnly)
+            bool leavesOnly, uint digestPurpose = 0u, bool requireTopLayerConfirmation = false)
         {
             useRle = true;
             List<byte> records;
@@ -406,7 +406,9 @@ namespace SuMultiplayer.Terrain
                     Entries = take,
                     Records = ByteString.CopyFrom(records.GetRange(from * RecordBytes,
                         take * RecordBytes).ToArray()),
-                    LeavesOnly = leavesOnly
+                    LeavesOnly = leavesOnly,
+                    DigestPurpose = digestPurpose,
+                    RequireTopLayerConfirmation = requireTopLayerConfirmation
                 };
                 // 只有"编码时确实有水位"才写这个 optional 字段；-1 = 未知（字段缺席）。
                 if (watermark >= 0) message.Watermark = watermark;
@@ -1147,6 +1149,14 @@ namespace SuMultiplayer.Terrain
         /// 只增不减（卸载不上报），随身份跨重连保留。
         /// </summary>
         public readonly HashSet<ChunkKey> ReportedLoaded = new HashSet<ChunkKey>();
+        /// <summary>初次顶层同步/补丁确认尚未完成的区块（按客户端身份保存）。</summary>
+        public readonly HashSet<ChunkKey> TopLayerSyncPending = new HashSet<ChunkKey>();
+        public readonly HashSet<ChunkKey> TopLayerSyncClients = new HashSet<ChunkKey>();
+        public readonly HashSet<ChunkKey> TopLayerSyncConfirmedClients = new HashSet<ChunkKey>();
+        public readonly HashSet<ChunkKey> ResyncAwaitingConfirmation = new HashSet<ChunkKey>();
+        public readonly HashSet<ChunkKey> FootprintVerified = new HashSet<ChunkKey>();
+        public readonly HashSet<ChunkKey> FootprintPendingConfirmation = new HashSet<ChunkKey>();
+        public readonly HashSet<ChunkKey> DigestJobs = new HashSet<ChunkKey>();
 
         /// <summary>
         /// 该身份**当前存在于客户端内存**（引擎已分配）的区块集合 —— v8 实时地图客户端线框的
@@ -1270,6 +1280,9 @@ namespace SuMultiplayer.Terrain
         /// </summary>
         public uint ClientTopHeightHash;
         public uint ClientTopBlockHash;
+        public long ClientChangeSequence;
+        public uint Purpose;
+        public int Revision;
         /// <summary>第一次登记的时刻（TickCount64 口径），用于"欠了多久"。</summary>
         public long FirstSeenMs;
         /// <summary>
@@ -1917,6 +1930,25 @@ namespace SuMultiplayer.Terrain
             /// 顺序由 TCP 保序保证：客户端一定先落地树叶段，再落地顶层。
             /// </summary>
             public byte[] TopLayerFixAfter;
+            public bool AfterTopLayerConfirmation;
+            public uint DigestPurpose;
+            public bool RequireTopLayerConfirmation;
+        }
+
+        private readonly struct HostDigestWork
+        {
+            public HostDigestWork(PlayerSessionRecord session, ChunkKey key, int revision,
+                int generation)
+            {
+                Session = session;
+                Key = key;
+                Revision = revision;
+                Generation = generation;
+            }
+            public PlayerSessionRecord Session { get; }
+            public ChunkKey Key { get; }
+            public int Revision { get; }
+            public int Generation { get; }
         }
 
         /// <summary>
@@ -1953,6 +1985,15 @@ namespace SuMultiplayer.Terrain
             new Dictionary<int, PlayerSessionRecord>();
         private readonly Dictionary<ChunkKey, HashSet<int>> m_subscribers = new Dictionary<ChunkKey, HashSet<int>>();
         private readonly object m_gate = new object();
+        private readonly ChunkDigestPool m_hostDigestPool = new ChunkDigestPool();
+        private readonly Queue<ChunkKey> m_hostDigestQueue = new Queue<ChunkKey>();
+        private readonly HashSet<ChunkKey> m_hostDigestQueued = new HashSet<ChunkKey>();
+        private readonly HashSet<ChunkKey> m_hostDigestInFlight = new HashSet<ChunkKey>();
+        private readonly Dictionary<ChunkKey, int> m_hostDigestGenerations = new Dictionary<ChunkKey, int>();
+        private readonly Dictionary<ChunkKey, long> m_hostDigestChangeSequences =
+            new Dictionary<ChunkKey, long>();
+        private readonly List<DigestWorkResult> m_hostDigestResults = new List<DigestWorkResult>(16);
+        private int m_nextHostDigestGeneration;
 
         /// <summary>
         /// 逐区块**欠更新身份集合**（实时地图格内数字的唯一来源；**只在内存里，绝不落盘**）。
@@ -1992,6 +2033,10 @@ namespace SuMultiplayer.Terrain
         // 见 doc/leaves-layer-resync-plan.md 第 3.6、4.4、10 章。
         private readonly Dictionary<ChunkKey, Dictionary<string, ChunkMutationKind>> m_pendingKinds =
             new Dictionary<ChunkKey, Dictionary<string, ChunkMutationKind>>();
+        private readonly Dictionary<ChunkKey, ChunkMutationKind> m_chunkMutationKinds =
+            new Dictionary<ChunkKey, ChunkMutationKind>();
+        private readonly Dictionary<ChunkKey, HashSet<string>> m_chunkMutationClients =
+            new Dictionary<ChunkKey, HashSet<string>>();
 
         private long m_leavesMarked;
         private long m_leavesMarkedUnroutable;
@@ -2187,6 +2232,8 @@ namespace SuMultiplayer.Terrain
                 new DelegateMessageHandler<InterestUpdate>(OnInterest), MessageOwner);
             registry.Register((int)MessageType.ChunkDigestReport, PT.ChunkDigestReport.Parser,
                 new DelegateMessageHandler<PT.ChunkDigestReport>(OnDigestReport), MessageOwner);
+            registry.Register((int)MessageType.TopLayerDigestReport, PT.TopLayerDigestReport.Parser,
+                new DelegateMessageHandler<PT.TopLayerDigestReport>(OnTopLayerDigestReport), MessageOwner);
             registry.Register((int)MessageType.TopLayerMismatchReport, PT.TopLayerMismatchReport.Parser,
                 new DelegateMessageHandler<PT.TopLayerMismatchReport>(OnTopLayerMismatchReport),
                 MessageOwner);
@@ -2284,6 +2331,11 @@ namespace SuMultiplayer.Terrain
         private void OnDigestReport(MessageContext context, PT.ChunkDigestReport message)
         {
             lock (m_gate) HandleDigestReport(GetOrCreateState(context.ClientId), message);
+        }
+
+        private void OnTopLayerDigestReport(MessageContext context, PT.TopLayerDigestReport message)
+        {
+            lock (m_gate) HandleTopLayerDigestReport(GetOrCreateState(context.ClientId), message);
         }
 
         private void OnClientChunks(MessageContext context, PT.ClientChunks message)
@@ -2790,6 +2842,8 @@ namespace SuMultiplayer.Terrain
         {
             int work = 0;
             long nowMs = Environment.TickCount64;
+            DrainHostDigestResults();
+            SubmitHostDigestJobs();
             // 这一拍判定为"已经不可达"的玩家端（连接 Failed / 已关闭）：循环里只登记，
             // 出锁之后再抛 ClientLost —— 事件处理方要拆引擎实体（联机角色），不能在 m_gate 里做。
             List<KeyValuePair<int, string>> lost = null;
@@ -2859,7 +2913,9 @@ namespace SuMultiplayer.Terrain
                             List<List<byte[]>> encoded = ChunkPayloadCodec.Encode(job.Key,
                                 m_world, out _, out int runCount, out int expandedCells,
                                 captureDiagnostics: m_resyncEncodeDiagnosticsEnabled,
-                                watermark: job.EncodeSequence, leavesOnly: job.LeavesOnly);
+                                watermark: job.EncodeSequence, leavesOnly: job.LeavesOnly,
+                                digestPurpose: job.DigestPurpose,
+                                requireTopLayerConfirmation: job.RequireTopLayerConfirmation);
                             if (m_resyncEncodeDiagnosticsEnabled)
                             {
                                 m_resyncEncodeTicks += System.Diagnostics.Stopwatch.GetTimestamp() - encodeStarted;
@@ -2880,7 +2936,17 @@ namespace SuMultiplayer.Terrain
                                     state.PendingResync.Dequeue();
                                     m_leavesZeroRunFallback++;
                                     NoteLeavesZeroRunFallback(state, job.Key);
-                                    state.PendingResync.Enqueue(new PendingResyncJob { Key = job.Key });
+                                    state.PendingResync.Enqueue(new PendingResyncJob
+                                    {
+                                        Key = job.Key,
+                                        DigestPurpose = 3u,
+                                        RequireTopLayerConfirmation = true
+                                    });
+                                    if (state.Session != null && state.Session.CurrentClientId == state.Id)
+                                    {
+                                        state.Session.TopLayerSyncPending.Add(job.Key);
+                                        state.Session.ResyncAwaitingConfirmation.Add(job.Key);
+                                    }
                                     work++;
                                     continue;
                                 }
@@ -2935,13 +3001,19 @@ namespace SuMultiplayer.Terrain
                                 if (state.Session != null &&
                                     state.Session.CurrentClientId == state.Id)
                                 {
-                                    ClearPendingKindLocked(state.Session, job.Key,
-                                        ChunkMutationKind.Leaves);
+                                    if (job.RequireTopLayerConfirmation)
+                                        state.Session.ResyncAwaitingConfirmation.Add(job.Key);
                                 }
-                                // 树叶段补丁落地即收尾：**不**要求客户端重算整块摘要
-                                // （与结冰的顶层修复一致，只修复这部分就行）。
                                 work++;
                                 continue;
+                            }
+                            if (job.RequireTopLayerConfirmation && state.Session != null &&
+                                state.Session.CurrentClientId == state.Id)
+                            {
+                                if (job.DigestPurpose == 1u)
+                                    state.Session.FootprintPendingConfirmation.Add(job.Key);
+                                else
+                                    state.Session.ResyncAwaitingConfirmation.Add(job.Key);
                             }
                             // 整块快照已经全部发给它：这块如果还停在红（Mismatch），那条结论可能已经过期
                             // （客户端内容刚被主机内容覆盖），必须重新裁决（见 TickStaleVerdicts）。
@@ -3055,37 +3127,149 @@ namespace SuMultiplayer.Terrain
         private int ResolveOnDemandServed(ChunkKey key)
         {
             if (!m_world.HasContents(key)) return 0;      // 台账判定后又被引擎回收：不裁决（下一拍再判）
-            uint hostHash = HostDigest(key);
-            int sent = ResolveServedForSessions(m_sessions.Values, key, hostHash);
-            sent += ResolveServedForSessions(m_degradedSessions.Values, key, hostHash);
-            return sent;
+            QueueHostDigest(key);
+            return 0;
         }
 
-        private int ResolveServedForSessions(IEnumerable<PlayerSessionRecord> sessions, ChunkKey key,
-            uint hostHash)
+        private void QueueHostDigest(ChunkKey key)
         {
-            int sent = 0;
-            foreach (PlayerSessionRecord session in sessions)
+            if (!m_world.HasContents(key) || m_hostDigestQueued.Contains(key) ||
+                m_hostDigestInFlight.Contains(key)) return;
+            m_hostDigestQueued.Add(key);
+            m_hostDigestQueue.Enqueue(key);
+        }
+
+        private void SubmitHostDigestJobs()
+        {
+            lock (m_gate) SubmitHostDigestJobsLocked();
+        }
+
+        private void SubmitHostDigestJobsLocked()
+        {
+            int budget = Math.Max(1, m_options.PendingResolvesPerTick);
+            while (budget-- > 0 && m_hostDigestQueue.Count > 0)
             {
-                if (!session.Pending.TryGetValue(key, out PendingReport report)) continue;
-                State state = CurrentStateOf(session);
-                // 这条身份已经没有可达连接：**保留**待裁决（重连后按常规扫描继续用真实摘要作答），
-                // 这里不发（发也发不出去）。
-                if (state == null || !CanStillReachPeer(state)) continue;
-                // clientHash==0 的语义是"客户端未知"，CompareReport 会回 NotReady（不伪造裁决）。
-                DigestVerdict verdict = CompareReport(report.ClientHash, hostHash);
-                if (!SendVerdict(state, key, verdict, hostHash))
+                ChunkKey key = m_hostDigestQueue.Peek();
+                if (!m_world.HasContents(key) || !(m_world is IPackedTerrainWorld packed))
                 {
-                    // 显式背压：没发出去就还欠着（条目留在待裁决里，下一拍按常规扫描补发真实摘要）。
+                    m_hostDigestQueue.Dequeue();
+                    m_hostDigestQueued.Remove(key);
                     continue;
                 }
-                // 顶层摘要从**待裁决记录**里取：它是客户端最近一次上报带的，
-                // 主机靠它判断"差异是否只在顶层"（缺了就会白走一次 NotReady 往返）。
-                ApplyVerdict(state, key, verdict,
-                    report.ClientTopHeightHash, report.ClientTopBlockHash);
-                sent++;
+                ChunkPackedValueSource source = packed.GetPackedCellSource(key);
+                if (source == null) throw new InvalidOperationException(
+                    "Packed cell source is unavailable for host digest " + key + ".");
+                int generation = ++m_nextHostDigestGeneration;
+                if (!m_hostDigestPool.TrySubmitFull(key, generation, source, DigestWorkKind.FullExplicit)) break;
+                m_hostDigestQueue.Dequeue();
+                m_hostDigestQueued.Remove(key);
+                m_hostDigestGenerations[key] = generation;
+                m_hostDigestChangeSequences[key] = m_chunkChangeSequence.TryGetValue(key,
+                    out long hostSequence) ? hostSequence : 0L;
+                m_hostDigestInFlight.Add(key);
             }
-            return sent;
+        }
+
+        private void DrainHostDigestResults()
+        {
+            lock (m_gate)
+            {
+                m_hostDigestResults.Clear();
+                m_hostDigestPool.DrainCompleted(m_hostDigestResults, Math.Max(1, m_options.DigestBatch));
+                for (int i = 0; i < m_hostDigestResults.Count; i++)
+                {
+                    DigestWorkResult result = m_hostDigestResults[i];
+                    if (result.Kind != DigestWorkKind.FullExplicit) continue;
+                    if (!m_hostDigestGenerations.TryGetValue(result.Key, out int generation) ||
+                        generation != result.Generation) continue;
+                    m_hostDigestGenerations.Remove(result.Key);
+                    m_hostDigestInFlight.Remove(result.Key);
+                    long digestSequence = m_hostDigestChangeSequences.TryGetValue(result.Key,
+                        out long capturedSequence) ? capturedSequence : 0L;
+                    m_hostDigestChangeSequences.Remove(result.Key);
+                    if (!result.Succeeded)
+                    {
+                        ReportUnresolved?.Invoke("主机完整摘要后台计算失败（" + result.Key + "）: " + result.Error);
+                        ReleaseHostDigestJobs(m_sessions.Values, result.Key);
+                        ReleaseHostDigestJobs(m_degradedSessions.Values, result.Key);
+                        continue;
+                    }
+                    List<HostDigestWork> waiters = CollectHostDigestJobs(m_sessions.Values,
+                        result.Key, generation);
+                    waiters.AddRange(CollectHostDigestJobs(m_degradedSessions.Values,
+                        result.Key, generation));
+                    for (int j = 0; j < waiters.Count; j++)
+                        ResolveHostDigestWaiter(waiters[j], result.Value, digestSequence);
+                }
+            }
+        }
+
+        private static List<HostDigestWork> CollectHostDigestJobs(
+            IEnumerable<PlayerSessionRecord> sessions, ChunkKey key, int generation)
+        {
+            var result = new List<HostDigestWork>();
+            foreach (PlayerSessionRecord session in sessions)
+                if (session.DigestJobs.Contains(key) &&
+                    session.Pending.TryGetValue(key, out PendingReport report) && report.Purpose == 1u)
+                    result.Add(new HostDigestWork(session, key, report.Revision, generation));
+            return result;
+        }
+
+        private static void ReleaseHostDigestJobs(IEnumerable<PlayerSessionRecord> sessions, ChunkKey key)
+        {
+            foreach (PlayerSessionRecord session in sessions)
+            {
+                if (!session.DigestJobs.Remove(key)) continue;
+                if (session.Pending.TryGetValue(key, out PendingReport report))
+                    session.PendingScan.Enqueue(key);
+            }
+        }
+
+        private void ResolveHostDigestWaiter(HostDigestWork work, uint hostHash, long digestSequence)
+        {
+            PlayerSessionRecord session = work.Session;
+            ChunkKey key = work.Key;
+            if (session == null || !session.Pending.TryGetValue(key, out PendingReport report) ||
+                report.Purpose != 1u || report.Revision != work.Revision) return;
+            session.DigestJobs.Remove(key);
+            State state = CurrentStateOf(session);
+            if (state == null || !CanStillReachPeer(state)) return;
+            long sequence = m_chunkChangeSequence.TryGetValue(key, out long current) ? current : 0L;
+            if (sequence != digestSequence || (report.ClientChangeSequence > 0 &&
+                digestSequence > report.ClientChangeSequence))
+            {
+                SendVerdict(state, key, DigestVerdict.NotReady, 0u, sequence, 1u);
+                report.ClientHash = 0u;
+                report.ClientChangeSequence = sequence;
+                report.Revision++;
+                session.PendingScan.Enqueue(key);
+                return;
+            }
+            DigestVerdict verdict = CompareReport(report.ClientHash, hostHash);
+            if (!SendVerdict(state, key, verdict, hostHash, sequence, 1u))
+            {
+                session.DigestJobs.Add(key);
+                QueueHostDigest(key);
+                return;
+            }
+            session.Pending.Remove(key);
+            if (verdict == DigestVerdict.Match)
+            {
+                MarkTopLayerVerifiedLocked(session, key);
+                session.FootprintVerified.Add(key);
+                session.FootprintPendingConfirmation.Remove(key);
+            }
+            else if (verdict == DigestVerdict.Mismatch)
+            {
+                session.Verdicts[key] = (byte)ChunkVerifyState.Failed;
+                session.FootprintPendingConfirmation.Add(key);
+                session.TopLayerSyncPending.Add(key);
+                if (!QueueWholeChunkResync(state, key, 1u, requireTopLayerConfirmation: true))
+                {
+                    session.FootprintPendingConfirmation.Remove(key);
+                    SendVerdict(state, key, DigestVerdict.NotReady, 0u, sequence, 1u);
+                }
+            }
         }
 
         /// <summary>
@@ -4449,6 +4633,24 @@ namespace SuMultiplayer.Terrain
                     return;
                 }
                 var key = new ChunkKey(entry.Key.X, entry.Key.Z);
+                if (entry.Purpose != 1u)
+                {
+                    ReportUnresolved?.Invoke("clientId=" + state.Id + " 的完整摘要用途非法（" +
+                        entry.Purpose + "）→ 整帧拒绝");
+                    return;
+                }
+                if (!ChunkDigestFootprint.Contains(state.Center, key))
+                {
+                    ReportUnresolved?.Invoke("clientId=" + state.Id + " 对脚下最终核验范围外区块 " +
+                        key + " 上报完整 hash → 拒绝该用途（显式重核使用 purpose=0）");
+                    return;
+                }
+                if (!session.TopLayerSyncConfirmedClients.Contains(key))
+                {
+                    ReportUnresolved?.Invoke("clientId=" + state.Id + " 对区块 " + key +
+                        " 请求脚下完整核验，但初次顶层同步尚未完成登记 → 拒绝该用途");
+                    return;
+                }
                 uint clientHash = entry.Hash;
                 m_digestReports++;
                 // "这个身份加载完的区块" = 它上报过摘要的区块（实时地图画客户端区域只认这一份）。
@@ -4470,13 +4672,478 @@ namespace SuMultiplayer.Terrain
                     // **Requested（黄）的唯一来源**：客户端确实上报了这一块、主机还没有内容可裁决。
                     session.Verdicts[key] = (byte)ChunkVerifyState.Requested;   // 等主机加载后才能核对
                     RememberReport(session, key, clientHash, nowMs,
-                        entry.ClientTopHeightHash, entry.ClientTopBlockHash);      // 摘要留着，别丢
-                    SendVerdict(state, key, DigestVerdict.NotReady, 0u);       // 明确的"还没好"
+                        entry.ClientTopHeightHash, entry.ClientTopBlockHash, entry.Purpose,
+                        entry.ClientChangeSequence);
+                    SendVerdict(state, key, DigestVerdict.NotReady, 0u, 0L, entry.Purpose);
                     continue;
                 }
                 ResolveReport(state, key, clientHash, nowMs, entry.ClientChangeSequence,
-                    entry.ClientTopHeightHash, entry.ClientTopBlockHash);
+                    entry.ClientTopHeightHash, entry.ClientTopBlockHash, entry.Purpose);
             }
+        }
+
+        private void HandleTopLayerDigestReport(State state, PT.TopLayerDigestReport report)
+        {
+            PlayerSessionRecord session = state.Session;
+            if (session == null)
+            {
+                ReportUnresolved?.Invoke("clientId=" + state.Id + " 顶层摘要消息没有身份会话记录 → 忽略");
+                return;
+            }
+            if (report.Entries.Count == 0 || report.Entries.Count > TerrainSyncOptions.MaxDigestEntriesPerMessage)
+            {
+                ReportUnresolved?.Invoke("clientId=" + state.Id + " 顶层摘要条目数非法（" +
+                    report.Entries.Count + ") → 整帧拒绝");
+                return;
+            }
+            for (int i = 0; i < report.Entries.Count; i++)
+            {
+                PT.TopLayerDigestReport.Types.Entry entry = report.Entries[i];
+                if (entry?.Key == null || (entry.Kind != PT.TopLayerDigestKind.Initial &&
+                    entry.Kind != PT.TopLayerDigestKind.Confirmation))
+                {
+                    ReportUnresolved?.Invoke("clientId=" + state.Id + " 顶层摘要第 " + (i + 1) +
+                        " 条 key/kind 非法 → 整帧拒绝");
+                    return;
+                }
+            }
+            for (int i = 0; i < report.Entries.Count; i++)
+                HandleTopLayerDigestEntry(state, session, report.Entries[i]);
+        }
+
+        private void HandleTopLayerDigestEntry(State state, PlayerSessionRecord session,
+            PT.TopLayerDigestReport.Types.Entry entry)
+        {
+            var key = new ChunkKey(entry.Key.X, entry.Key.Z);
+            session.TopLayerSyncClients.Add(key);
+            session.ReportedLoaded.Add(key);
+            if (!session.Verdicts.TryGetValue(key, out byte currentVerdict) ||
+                currentVerdict == (byte)ChunkVerifyState.None)
+                session.Verdicts[key] = (byte)ChunkVerifyState.Requested;
+            long hostSequence = m_chunkChangeSequence.TryGetValue(key, out long sequence) ? sequence : 0L;
+            if (!entry.TopReady || (entry.ClientChangeSequence > 0 &&
+                hostSequence > entry.ClientChangeSequence))
+            {
+                SendTopLayerDigestVerdict(state, key, PT.TopLayerDigestStatus.NotReady, 0u, 0u,
+                    hostSequence, entry.ConfirmationPurpose);
+                return;
+            }
+            if (!TryGetHostTopHashes(key, out uint hostHeight, out uint hostBlock))
+            {
+                SendTopLayerDigestVerdict(state, key, PT.TopLayerDigestStatus.NotReady, 0u, 0u,
+                    hostSequence, entry.ConfirmationPurpose);
+                return;
+            }
+
+            bool topMatches = entry.TopHeightHash == hostHeight && entry.TopBlockHash == hostBlock;
+            if (entry.Kind == PT.TopLayerDigestKind.Confirmation)
+            {
+                if (entry.ConfirmationPurpose == 1u &&
+                    session.FootprintPendingConfirmation.Contains(key))
+                {
+                    if (!topMatches || (entry.ClientChangeSequence > 0 &&
+                        entry.ClientChangeSequence < hostSequence))
+                    {
+                        if (!HasQueuedResyncLocked(state, key) &&
+                            !QueueWholeChunkResync(state, key, 1u, requireTopLayerConfirmation: true))
+                            SendTopLayerDigestVerdict(state, key, PT.TopLayerDigestStatus.NotReady,
+                                hostHeight, hostBlock, hostSequence, 1u);
+                        return;
+                    }
+                    session.FootprintPendingConfirmation.Remove(key);
+                    session.FootprintVerified.Add(key);
+                    session.ResyncAwaitingConfirmation.Remove(key);
+                    session.TopLayerSyncConfirmedClients.Add(key);
+                    MarkTopLayerVerifiedLocked(session, key);
+                    SendTopLayerDigestVerdict(state, key, PT.TopLayerDigestStatus.Confirmed,
+                        hostHeight, hostBlock, hostSequence, 1u);
+                    return;
+                }
+
+                if (entry.ConfirmationPurpose == 4u && session.TopLayerSyncPending.Contains(key))
+                {
+                    if (entry.ClientChangeSequence > 0 &&
+                        entry.ClientChangeSequence < hostSequence)
+                    {
+                        if (!HasQueuedResyncLocked(state, key) &&
+                            !QueueResyncJob(state, key, leavesOnly: true, topLayerFixAfter: null,
+                                requireTopLayerConfirmation: true, digestPurpose: 4u))
+                        {
+                            SendTopLayerDigestVerdict(state, key, PT.TopLayerDigestStatus.NotReady,
+                                hostHeight, hostBlock, hostSequence, 4u);
+                            return;
+                        }
+                        session.ResyncAwaitingConfirmation.Add(key);
+                        SendTopLayerDigestVerdict(state, key, PT.TopLayerDigestStatus.Pending,
+                            hostHeight, hostBlock, hostSequence, 4u);
+                        return;
+                    }
+                    session.TopLayerSyncPending.Remove(key);
+                    session.ResyncAwaitingConfirmation.Remove(key);
+                    ClearPendingKindLocked(session, key, ChunkMutationKind.Leaves);
+                    ClearMutationClientLocked(session, key);
+                    session.TopLayerSyncConfirmedClients.Add(key);
+                    MarkTopLayerVerifiedLocked(session, key);
+                    SendTopLayerDigestVerdict(state, key, PT.TopLayerDigestStatus.Confirmed,
+                        hostHeight, hostBlock, hostSequence, 4u);
+                    return;
+                }
+                if (entry.ConfirmationPurpose == 5u && session.TopLayerSyncPending.Contains(key))
+                {
+                    if (!topMatches)
+                    {
+                        if (!TryBuildTopLayerFixPayload(key, hostHeight, hostBlock, out byte[] followupTopFix))
+                        {
+                            SendTopLayerDigestVerdict(state, key, PT.TopLayerDigestStatus.NotReady,
+                                hostHeight, hostBlock, hostSequence, 5u);
+                            return;
+                        }
+                        PT.TopLayerFix fix = PT.TopLayerFix.Parser.ParseFrom(followupTopFix);
+                        fix.RequireTopLayerConfirmation = true;
+                        fix.ConfirmationPurpose = 3u;
+                        if (!m_server.TrySend(state.Id, MessageType.TopLayerFix, fix.ToByteArray()))
+                        {
+                            m_topLayerFixSendFailures++;
+                            SendTopLayerDigestVerdict(state, key, PT.TopLayerDigestStatus.NotReady,
+                                hostHeight, hostBlock, hostSequence, 5u);
+                            return;
+                        }
+                        m_topLayerFixesSent++;
+                        session.ResyncAwaitingConfirmation.Add(key);
+                        SendTopLayerDigestVerdict(state, key, PT.TopLayerDigestStatus.Pending,
+                            hostHeight, hostBlock, hostSequence, 5u);
+                        return;
+                    }
+                    session.TopLayerSyncPending.Remove(key);
+                    session.ResyncAwaitingConfirmation.Remove(key);
+                    ClearPendingKindLocked(session, key, ChunkMutationKind.Leaves);
+                    ClearMutationClientLocked(session, key);
+                    session.TopLayerSyncConfirmedClients.Add(key);
+                    MarkTopLayerVerifiedLocked(session, key);
+                    SendTopLayerDigestVerdict(state, key, PT.TopLayerDigestStatus.Confirmed,
+                        hostHeight, hostBlock, hostSequence, 5u);
+                    return;
+                }
+                if (entry.ConfirmationPurpose == 2u)
+                {
+                    session.TopLayerSyncPending.Add(key);
+                    if (!HasQueuedResyncLocked(state, key) &&
+                        !QueueWholeChunkResync(state, key, 3u, requireTopLayerConfirmation: true))
+                    {
+                        SendTopLayerDigestVerdict(state, key, PT.TopLayerDigestStatus.NotReady,
+                            hostHeight, hostBlock, hostSequence, 2u);
+                        return;
+                    }
+                    if (HasQueuedResyncLocked(state, key))
+                        session.ResyncAwaitingConfirmation.Add(key);
+                    SendTopLayerDigestVerdict(state, key, PT.TopLayerDigestStatus.Pending,
+                        hostHeight, hostBlock, hostSequence, 2u);
+                    return;
+                }
+                if (entry.ConfirmationPurpose == 3u &&
+                    session.TopLayerSyncPending.Contains(key))
+                {
+                    if (!topMatches || (entry.ClientChangeSequence > 0 &&
+                        entry.ClientChangeSequence < hostSequence))
+                    {
+                        session.TopLayerFixAttempts.TryGetValue(key, out int attempts);
+                        if (attempts >= TopLayerFixAttemptLimit)
+                        {
+                            session.TopLayerFixAttempts.Remove(key);
+                            session.ResyncAwaitingConfirmation.Remove(key);
+                            if (QueueWholeChunkResync(state, key, 3u,
+                                requireTopLayerConfirmation: true))
+                            {
+                                session.ResyncAwaitingConfirmation.Add(key);
+                                SendTopLayerDigestVerdict(state, key, PT.TopLayerDigestStatus.Pending,
+                                    hostHeight, hostBlock, hostSequence, 3u);
+                            }
+                            else
+                            {
+                                SendTopLayerDigestVerdict(state, key, PT.TopLayerDigestStatus.NotReady,
+                                    hostHeight, hostBlock, hostSequence, 3u);
+                            }
+                            return;
+                        }
+                        if (TryBuildTopLayerFixPayload(key, hostHeight, hostBlock, out byte[] topFix))
+                        {
+                            PT.TopLayerFix fix = PT.TopLayerFix.Parser.ParseFrom(topFix);
+                            fix.RequireTopLayerConfirmation = true;
+                            fix.ConfirmationPurpose = 3u;
+                            if (!m_server.TrySend(state.Id, MessageType.TopLayerFix, fix.ToByteArray()))
+                            {
+                                m_topLayerFixSendFailures++;
+                                SendTopLayerDigestVerdict(state, key, PT.TopLayerDigestStatus.NotReady,
+                                    hostHeight, hostBlock, hostSequence, 3u);
+                                return;
+                            }
+                            m_topLayerFixesSent++;
+                            session.TopLayerFixAttempts[key] = attempts + 1;
+                            session.ResyncAwaitingConfirmation.Add(key);
+                        }
+                        else
+                        {
+                            SendTopLayerDigestVerdict(state, key, PT.TopLayerDigestStatus.NotReady,
+                                hostHeight, hostBlock, hostSequence, 3u);
+                            return;
+                        }
+                        SendTopLayerDigestVerdict(state, key, PT.TopLayerDigestStatus.Pending,
+                            hostHeight, hostBlock, hostSequence, 3u);
+                        return;
+                    }
+                    session.TopLayerSyncPending.Remove(key);
+                    session.ResyncAwaitingConfirmation.Remove(key);
+                    ClearPendingKindLocked(session, key, ChunkMutationKind.Leaves);
+                    ClearMutationClientLocked(session, key);
+                    ClearPendingOnChunkLoaded(session, key, out _);
+                    session.TopLayerSyncConfirmedClients.Add(key);
+                    MarkTopLayerVerifiedLocked(session, key);
+                    SendTopLayerDigestVerdict(state, key, PT.TopLayerDigestStatus.Confirmed,
+                        hostHeight, hostBlock, hostSequence, 3u);
+                    return;
+                }
+                if (!topMatches || (entry.ClientChangeSequence > 0 &&
+                    entry.ClientChangeSequence < hostSequence))
+                {
+                    session.TopLayerSyncPending.Remove(key);
+                    HandleTopLayerInitial(state, session, key, entry.TopHeightHash,
+                        entry.TopBlockHash, entry.ClientChangeSequence,
+                        hostHeight, hostBlock, hostSequence);
+                    return;
+                }
+                if (m_chunkMutationKinds.TryGetValue(key, out ChunkMutationKind confirmedKind) &&
+                    (confirmedKind & ChunkMutationKind.Content) != 0 &&
+                    !session.ResyncAwaitingConfirmation.Contains(key) &&
+                    !HasQueuedResyncLocked(state, key))
+                {
+                    if (QueueResyncJob(state, key, leavesOnly: false, topLayerFixAfter: null,
+                            requireTopLayerConfirmation: true))
+                        session.ResyncAwaitingConfirmation.Add(key);
+                    SendTopLayerDigestVerdict(state, key, PT.TopLayerDigestStatus.Pending,
+                        hostHeight, hostBlock, hostSequence, 3u);
+                    return;
+                }
+                if (!session.TopLayerSyncPending.Contains(key))
+                {
+                    SendTopLayerDigestVerdict(state, key, PT.TopLayerDigestStatus.NotReady,
+                        hostHeight, hostBlock, hostSequence);
+                    return;
+                }
+                session.TopLayerSyncPending.Remove(key);
+                session.ResyncAwaitingConfirmation.Remove(key);
+                ClearPendingKindLocked(session, key, ChunkMutationKind.Leaves);
+                ClearPendingOnChunkLoaded(session, key, out _);
+                if (session.Verdicts.TryGetValue(key, out byte previous) &&
+                    previous == (byte)ChunkVerifyState.Failed)
+                    session.Verdicts[key] = (byte)ChunkVerifyState.ReVerified;
+                else
+                    MarkTopLayerVerifiedLocked(session, key);
+                SendTopLayerDigestVerdict(state, key, PT.TopLayerDigestStatus.Confirmed,
+                    hostHeight, hostBlock, hostSequence);
+                return;
+            }
+
+            HandleTopLayerInitial(state, session, key, entry.TopHeightHash,
+                entry.TopBlockHash, entry.ClientChangeSequence,
+                hostHeight, hostBlock, hostSequence);
+        }
+
+        private void HandleTopLayerInitial(State state, PlayerSessionRecord session, ChunkKey key,
+            uint clientTopHeightHash, uint clientTopBlockHash, long clientChangeSequence,
+            uint hostHeight, uint hostBlock, long hostSequence)
+        {
+            if (!session.TopLayerSyncPending.Add(key) && HasQueuedResyncLocked(state, key))
+            {
+                SendTopLayerDigestVerdict(state, key, PT.TopLayerDigestStatus.Pending,
+                    hostHeight, hostBlock, hostSequence);
+                return;
+            }
+
+            bool topMatches = clientTopHeightHash == hostHeight && clientTopBlockHash == hostBlock;
+            ChunkMutationKind kind = PendingMutationKindLocked(session, key);
+            bool hasLeaves = (PendingKindLocked(session, key) & ChunkMutationKind.Leaves) != 0;
+            bool hasContent = (kind & ChunkMutationKind.Content) != 0;
+            bool seasonOnly = (kind & ChunkMutationKind.Content) == 0 &&
+                (kind & ChunkMutationKind.Season) != 0;
+            bool sendTopFix = !hasContent && !topMatches && (seasonOnly || !hasLeaves);
+            uint patchPurpose = hasLeaves && seasonOnly && sendTopFix
+                ? 5u : hasLeaves && !seasonOnly && !hasContent ? 4u : 3u;
+
+            byte[] topFix = null;
+            if (sendTopFix && !TryBuildTopLayerFixPayload(key, hostHeight, hostBlock, out topFix))
+            {
+                session.TopLayerSyncPending.Remove(key);
+                SendTopLayerDigestVerdict(state, key, PT.TopLayerDigestStatus.NotReady,
+                    hostHeight, hostBlock, hostSequence);
+                return;
+            }
+            if (topFix != null)
+            {
+                PT.TopLayerFix fix = PT.TopLayerFix.Parser.ParseFrom(topFix);
+                fix.RequireTopLayerConfirmation = true;
+                fix.ConfirmationPurpose = patchPurpose;
+                topFix = fix.ToByteArray();
+            }
+
+            bool queuedAny = false;
+            if (hasLeaves)
+            {
+                if (!QueueResyncJob(state, key, leavesOnly: true, topLayerFixAfter: null,
+                        requireTopLayerConfirmation: !hasContent,
+                        digestPurpose: patchPurpose))
+                {
+                    session.TopLayerSyncPending.Remove(key);
+                    SendTopLayerDigestVerdict(state, key, PT.TopLayerDigestStatus.NotReady,
+                        hostHeight, hostBlock, hostSequence);
+                    return;
+                }
+                queuedAny = true;
+                if (patchPurpose == 5u) topFix = null;
+            }
+            if (topFix != null)
+            {
+                if (!m_server.TrySend(state.Id, MessageType.TopLayerFix, topFix))
+                {
+                    session.TopLayerSyncPending.Remove(key);
+                    SendTopLayerDigestVerdict(state, key, PT.TopLayerDigestStatus.NotReady,
+                        hostHeight, hostBlock, hostSequence);
+                    return;
+                }
+                m_topLayerFixesSent++;
+                session.ResyncAwaitingConfirmation.Add(key);
+                queuedAny = true;
+            }
+            if (hasContent)
+            {
+                if (!QueueWholeChunkResync(state, key, 3u, requireTopLayerConfirmation: true))
+                {
+                    session.TopLayerSyncPending.Remove(key);
+                    SendTopLayerDigestVerdict(state, key, PT.TopLayerDigestStatus.NotReady,
+                        hostHeight, hostBlock, hostSequence);
+                    return;
+                }
+                session.ResyncAwaitingConfirmation.Add(key);
+                queuedAny = true;
+            }
+
+            if (queuedAny)
+            {
+                SendTopLayerDigestVerdict(state, key, PT.TopLayerDigestStatus.Pending,
+                    hostHeight, hostBlock, hostSequence);
+                return;
+            }
+            if ((kind == ChunkMutationKind.None || seasonOnly) && topMatches)
+            {
+                session.TopLayerSyncPending.Remove(key);
+                session.TopLayerSyncConfirmedClients.Add(key);
+                ClearPendingKindLocked(session, key, ChunkMutationKind.Leaves);
+                ClearMutationClientLocked(session, key);
+                ClearPendingOnChunkLoaded(session, key, out _);
+                MarkTopLayerVerifiedLocked(session, key);
+                SendTopLayerDigestVerdict(state, key, PT.TopLayerDigestStatus.Confirmed,
+                    hostHeight, hostBlock, hostSequence);
+                return;
+            }
+            session.TopLayerSyncPending.Remove(key);
+            SendTopLayerDigestVerdict(state, key, PT.TopLayerDigestStatus.Pending,
+                hostHeight, hostBlock, hostSequence);
+        }
+
+        private bool TryGetHostTopHashes(ChunkKey key, out uint heightHash, out uint blockHash)
+        {
+            heightHash = 0u;
+            blockHash = 0u;
+            if (!m_world.HasContents(key) || !(m_world is ITopLayerTerrainWorld topWorld) ||
+                !topWorld.TryGetChunkArrays(key, out int[] cells, out int[] shafts)) return false;
+            var digest = new ChunkDigest();
+            digest.ComputeTopLayer(cells, shafts);
+            heightHash = digest.TopHeightHash;
+            blockHash = digest.TopBlockHash;
+            return digest.HasTopLayer;
+        }
+
+        private bool TryGetHostDigest(ChunkKey key, out uint hash)
+        {
+            hash = 0u;
+            if (!m_world.HasContents(key)) return false;
+            hash = HostDigest(key);
+            return hash != 0u;
+        }
+
+        private bool QueueWholeChunkResync(State state, ChunkKey key, uint purpose,
+            bool requireTopLayerConfirmation)
+        {
+            if (state == null || !m_world.HasContents(key)) return false;
+            foreach (PendingResyncJob queued in state.PendingResync)
+            {
+                if (!queued.Key.Equals(key) || queued.LeavesOnly) continue;
+                queued.DigestPurpose = purpose;
+                queued.RequireTopLayerConfirmation |= requireTopLayerConfirmation;
+                return true;
+            }
+            state.PendingResync.Enqueue(new PendingResyncJob
+            {
+                Key = key,
+                DigestPurpose = purpose,
+                RequireTopLayerConfirmation = requireTopLayerConfirmation
+            });
+            return true;
+        }
+
+        private bool TryBuildTopLayerFixPayload(ChunkKey key, uint hostHeight, uint hostBlock,
+            out byte[] payload)
+        {
+            payload = null;
+            if (!(m_world is ITopLayerTerrainWorld topWorld) ||
+                !topWorld.TryGetChunkArrays(key, out int[] cells, out int[] shafts)) return false;
+            payload = BuildTopLayerFixPayload(key, hostHeight, hostBlock, cells, shafts);
+            return true;
+        }
+
+        private byte[] BuildTopLayerFixPayloadFromCurrentArrays(ChunkKey key,
+            uint hostHeight, uint hostBlock)
+        {
+            return TryBuildTopLayerFixPayload(key, hostHeight, hostBlock, out byte[] payload)
+                ? payload : null;
+        }
+
+        private bool QueueResyncJob(State state, ChunkKey key, bool leavesOnly, byte[] topLayerFixAfter,
+            bool requireTopLayerConfirmation = false, uint digestPurpose = 0u)
+        {
+            foreach (PendingResyncJob queued in state.PendingResync)
+            {
+                if (!queued.Key.Equals(key) || queued.LeavesOnly != leavesOnly) continue;
+                if (topLayerFixAfter != null) queued.TopLayerFixAfter = topLayerFixAfter;
+                queued.RequireTopLayerConfirmation |= requireTopLayerConfirmation;
+                if (digestPurpose != 0u) queued.DigestPurpose = digestPurpose;
+                return true;
+            }
+            state.PendingResync.Enqueue(new PendingResyncJob
+            {
+                Key = key,
+                LeavesOnly = leavesOnly,
+                TopLayerFixAfter = topLayerFixAfter,
+                RequireTopLayerConfirmation = requireTopLayerConfirmation,
+                DigestPurpose = digestPurpose
+            });
+            return true;
+        }
+
+        private bool SendTopLayerDigestVerdict(State state, ChunkKey key,
+            PT.TopLayerDigestStatus status, uint hostHeight, uint hostBlock, long hostSequence,
+            uint confirmationPurpose = 0u)
+        {
+            var message = new PT.TopLayerDigestVerdict();
+            message.Entries.Add(new PT.TopLayerDigestVerdict.Types.Entry
+            {
+                Key = new PT.ChunkKey { X = key.X, Z = key.Z },
+                Status = status,
+                HostTopHeightHash = hostHeight,
+                HostTopBlockHash = hostBlock,
+                HostChangeSequence = hostSequence,
+                ConfirmationPurpose = confirmationPurpose
+            });
+            return m_server.TrySend(state.Id, MessageType.TopLayerDigestVerdict, message.ToByteArray());
         }
 
         // ------------------------------------------------------------ 客户端当前内存区块集合（v8 实时地图）
@@ -4557,7 +5224,6 @@ namespace SuMultiplayer.Terrain
                     if (session.MemoryChunks.Add(key))
                     {
                         added++;
-                        QueueOwedSnapshotIfNeeded(state, session, key);
                     }
                 }
                 else
@@ -4640,7 +5306,6 @@ namespace SuMultiplayer.Terrain
             foreach (ChunkKey key in session.ClientChunkFullBuffer)
             {
                 session.MemoryChunks.Add(key);
-                if (!previousChunks.Contains(key)) QueueOwedSnapshotIfNeeded(state, session, key);
             }
             session.ClientChunkFullSets++;
             m_clientChunkFullSets++;
@@ -4660,22 +5325,6 @@ namespace SuMultiplayer.Terrain
             session.ClientChunkFullExpectedParts = 0;
             session.ClientChunkFullParts.Clear();
             session.ClientChunkFullBuffer.Clear();
-        }
-
-        /// <summary>
-        /// 客户端重新持有区块时，如果它离开期间主机记录过权威改动，直接补当前快照。
-        /// 主机暂时没有内容时保留欠更新标记，等内容可用后由摘要裁决路径处理。
-        /// </summary>
-        private void QueueOwedSnapshotIfNeeded(State state, PlayerSessionRecord session, ChunkKey key)
-        {
-            if (state == null || session == null) return;
-            if (!m_pendingClients.TryGetValue(key, out Dictionary<string, long> pending) ||
-                !pending.TryGetValue(session.StableKey, out long owedSequence)) return;
-            if (!m_world.HasContents(key)) return;
-            if (!EnqueueChunkSnapshotLocked(state, key, owedSequence) &&
-                !HasQueuedResyncLocked(state, key)) return;
-            pending.Remove(session.StableKey);
-            if (pending.Count == 0) m_pendingClients.Remove(key);
         }
 
         /// <summary>
@@ -4713,7 +5362,8 @@ namespace SuMultiplayer.Terrain
         ///         （旧实现按坐标去重：pending/queued 里已有的块不再排队）
         /// </summary>
         private void RememberReport(PlayerSessionRecord session, ChunkKey key, uint clientHash,
-            long nowMs, uint clientTopHeightHash = 0u, uint clientTopBlockHash = 0u)
+            long nowMs, uint clientTopHeightHash = 0u, uint clientTopBlockHash = 0u,
+            uint purpose = 0u, long clientChangeSequence = 0L)
         {
             if (session.Pending.TryGetValue(key, out PendingReport existing))
             {
@@ -4722,12 +5372,17 @@ namespace SuMultiplayer.Terrain
                 // 顶层摘要同样以最新一次为准（客户端重报时可能已经补算了它）
                 existing.ClientTopHeightHash = clientTopHeightHash;
                 existing.ClientTopBlockHash = clientTopBlockHash;
+                existing.ClientChangeSequence = clientChangeSequence;
+                existing.Purpose = purpose;
+                existing.Revision++;
                 return;
             }
             session.Pending[key] = new PendingReport
             {
                 Key = key, ClientHash = clientHash, FirstSeenMs = nowMs,
-                ClientTopHeightHash = clientTopHeightHash, ClientTopBlockHash = clientTopBlockHash
+                ClientTopHeightHash = clientTopHeightHash, ClientTopBlockHash = clientTopBlockHash,
+                ClientChangeSequence = clientChangeSequence,
+                Purpose = purpose
             };
             session.PendingScan.Enqueue(key);
         }
@@ -4928,7 +5583,8 @@ namespace SuMultiplayer.Terrain
         /// </summary>
         private void ResolveReport(State state, ChunkKey key, uint clientHash, long nowMs,
             long clientChangeSequence = 0L,
-            uint clientTopHeightHash = 0u, uint clientTopBlockHash = 0u)
+            uint clientTopHeightHash = 0u, uint clientTopBlockHash = 0u,
+            uint purpose = 0u)
         {
             PlayerSessionRecord session = state.Session;
             if (session == null) return;
@@ -4942,27 +5598,22 @@ namespace SuMultiplayer.Terrain
             if (clientChangeSequence > 0 && hostSequence > 0 && clientChangeSequence < hostSequence)
             {
                 state.NotReady++;
-                SendVerdict(state, key, DigestVerdict.NotReady, 0u, hostSequence);
+                SendVerdict(state, key, DigestVerdict.NotReady, 0u, hostSequence, purpose);
                 RememberReport(session, key, clientHash, nowMs,
-                    clientTopHeightHash, clientTopBlockHash);
+                    clientTopHeightHash, clientTopBlockHash, purpose, clientChangeSequence);
                 return;
             }
 
-            uint hostHash = HostDigest(key);
-            if (clientHash == 0u) m_clientHashZeroVerdicts++;
-            DigestVerdict verdict = CompareReport(clientHash, hostHash);
-            if (!SendVerdict(state, key, verdict, hostHash, hostSequence))
+            if (purpose == 1u)
             {
-                // 发送队列满：这条上报还没被回答，留在待办里，下一拍补真实主机摘要。
-                // 它同样是"客户端确实上报过、还没裁决"→ 没有历史结论时记 Requested（黄），
-                // 这样"待裁决条数 = 黄框块数"在背压时也成立；已有结论（绿/红/蓝）不覆盖，
-                // 免得把二次验证（蓝）洗成黄。
-                if (!session.Verdicts.ContainsKey(key)) session.Verdicts[key] = (byte)ChunkVerifyState.Requested;
                 RememberReport(session, key, clientHash, nowMs,
-                    clientTopHeightHash, clientTopBlockHash);
+                    clientTopHeightHash, clientTopBlockHash, purpose, clientChangeSequence);
+                session.DigestJobs.Add(key);
+                QueueHostDigest(key);
                 return;
             }
-            ApplyVerdict(state, key, verdict, clientTopHeightHash, clientTopBlockHash);
+            throw new InvalidOperationException("Legacy full-digest report purpose 0 is no longer supported.");
+
         }
 
         /// <summary>
@@ -5029,18 +5680,17 @@ namespace SuMultiplayer.Terrain
                     session.PendingScan.Enqueue(key);      // 下一轮继续核（有界：台账负责重试与超时）
                     continue;
                 }
-                uint hostHash = HostDigest(key);
-                DigestVerdict verdict = CompareReport(report.ClientHash, hostHash);
-                if (!SendVerdict(state, key, verdict, hostHash))
+                if (report.Purpose == 1u)
                 {
-                    // 显式背压（TrySend=false）：没发出去就还欠着，下一轮补发真实主机摘要
-                    session.PendingScan.Enqueue(key);
+                    if (!session.DigestJobs.Contains(key))
+                    {
+                        session.DigestJobs.Add(key);
+                        QueueHostDigest(key);
+                    }
+                    resolved++;
                     continue;
                 }
-                // 顶层摘要从待裁决记录里取（客户端最近一次上报带的）。
-                ApplyVerdict(state, key, verdict,
-                    report.ClientTopHeightHash, report.ClientTopBlockHash);
-                resolved++;
+                throw new InvalidOperationException("Pending legacy full-digest report purpose 0 is no longer supported.");
             }
             return resolved;
         }
@@ -5127,7 +5777,7 @@ namespace SuMultiplayer.Terrain
         /// 发送一条裁决。返回 false = 发送队列满（**显式背压**，调用方必须保留这条上报，不能当已裁决）。
         /// </summary>
         private bool SendVerdict(State state, ChunkKey key, DigestVerdict verdict, uint hostHash,
-            long hostChangeSequence = 0L)
+            long hostChangeSequence = 0L, uint purpose = 0u)
         {
             var message = new PT.ChunkVerdict();
             message.Entries.Add(new PT.ChunkVerdict.Types.Entry
@@ -5135,7 +5785,8 @@ namespace SuMultiplayer.Terrain
                 Key = new PT.ChunkKey { X = key.X, Z = key.Z },
                 Verdict = (PT.ChunkDigestVerdict)(int)verdict,
                 HostHash = hostHash,
-                HostChangeSequence = hostChangeSequence
+                HostChangeSequence = hostChangeSequence,
+                Purpose = purpose
             });
             return m_server.TrySend(state.Id, MessageType.ChunkVerdict, message.ToByteArray());
         }
@@ -5800,6 +6451,9 @@ namespace SuMultiplayer.Terrain
                 // 变更类别标记（树叶季相）不跨会话：不落盘，下次加入一定是"全图最新"。
                 int kindMarks = m_pendingKinds.Count;
                 m_pendingKinds.Clear();
+                int mutationMarks = m_chunkMutationKinds.Count;
+                m_chunkMutationKinds.Clear();
+                m_chunkMutationClients.Clear();
                 if (kindMarks > 0)
                 {
                     PendingTrace?.Invoke("会话结束：变更类别标记整体清空（清掉 " + kindMarks +
@@ -5820,7 +6474,8 @@ namespace SuMultiplayer.Terrain
                 }
                 // 会话结束是一次性事件（不是热路径）：**无论有没有标记都写一行**，让"清空了"这件事有据可查。
                 PendingTrace?.Invoke("会话结束：欠更新计数整体清空（清掉 " + marks +
-                    " 个区块的标记；该计数只在内存里，不落盘、不进 Project.xml / 世界目录）");
+                    " 个区块的标记；分类标记清掉 " + mutationMarks +
+                    " 块；这些状态只在内存里，不落盘、不进 Project.xml / 世界目录）");
                 SessionTrace?.Invoke("会话结束：身份会话记录整体清空（清掉 " + sessions + " 条身份记录 / " +
                     degraded + " 条无身份退化记录；被引用的已上报区块共 " + reported +
                     " 条 —— 这些状态只在内存里，下次加入从头开始）");
@@ -5935,41 +6590,6 @@ namespace SuMultiplayer.Terrain
         }
 
         /// <summary>
-        /// 身份刚"开始持有"这块、而主机在它没有这块时记过一笔改动 → 直接补一份**当前整块快照**。
-        /// 为什么需要：ClientChunks 的增量可能还在路上，主机当时按"它没有这块"处理了那次改动
-        /// （不投递 + 记欠账）；增量到达时欠账被清掉，但改动本身不会自动补 —— 这一份快照就是补齐。
-        /// 快照在 Tick 里**发送时才编码**（编码水位 = 当时的改动水位），客户端若已应用更新的改动会丢弃它并强制核对。
-        /// 主机自己没有该块内容 → 不假装补过：明确计数，由客户端加载时的摘要核对兜住。
-        /// 队列里已有同一块的快照则不重复排队。调用方已持有 m_gate。
-        /// </summary>
-        private bool EnqueueChunkSnapshotLocked(State state, ChunkKey key, long owedSequence)
-        {
-            if (state == null) return false;
-            if (!m_world.HasContents(key))
-            {
-                m_owedSnapshotsSkippedNoContent++;
-                return false;
-            }
-            foreach (PendingResyncJob queued in state.PendingResync)
-                if (queued.Key.Equals(key)) return false;
-            state.PendingResync.Enqueue(new PendingResyncJob { Key = key });
-            m_owedSnapshotsQueued++;
-            // 这份快照把"它开始持有这块时可能错过的那次改动"补上了：这块若还是红，必须重新裁决。
-            NoteVerdictNeedsRejudge(state, key, "补发整块快照（清除欠账）");
-            long nowMs = Environment.TickCount64;
-            if (m_lastOwedSnapshotLogMs == 0 ||
-                nowMs - m_lastOwedSnapshotLogMs >= m_options.ClientChunkLogIntervalMs)
-            {
-                m_lastOwedSnapshotLogMs = nowMs;
-                ClientChunkSetTrace?.Invoke("身份开始持有区块 " + key +
-                    "（清除欠账；最早欠账改动序号 " + owedSequence +
-                    "）→ 已排队一份当前整块快照（发送时取最新水位；累计 " + m_owedSnapshotsQueued +
-                    " 份 · 主机无内容跳过 " + m_owedSnapshotsSkippedNoContent + " 次）");
-            }
-            return true;
-        }
-
-        /// <summary>
         /// 某身份的当前内存集合**新增**了区块 X（<c>ClientChunks</c> 增量 add；整集替换时对新集合逐块调用）
         /// → 从 X 的欠更新集合里去掉它（用户口径："走进 A 的区域、当前加载集合包含该块 → 它的欠账清零"）。
         /// 集合里存身份稳定键，所以重连前后是同一个标记；移掉最后一个后计数为 0（网页不画数字）。
@@ -6068,6 +6688,62 @@ namespace SuMultiplayer.Terrain
             }
         }
 
+        /// <summary>主机：记录真实捕获格子的季节/内容类别；内容改动优先于季节改动。</summary>
+        public void MarkChunkMutation(ChunkKey key, ChunkMutationKind kind)
+        {
+            if (kind == ChunkMutationKind.None) return;
+            lock (m_gate)
+            {
+                m_chunkMutationKinds.TryGetValue(key, out ChunkMutationKind globalPrevious);
+                m_chunkMutationKinds[key] = AggregateMutationKind(globalPrevious, kind);
+                foreach (KeyValuePair<int, State> pair in m_clients)
+                {
+                    State state = pair.Value;
+                    PlayerSessionRecord session = state.Session;
+                    if (state.Kind != ClientKind.Player || session == null ||
+                        session.CurrentClientId != state.Id || !CanStillReachPeer(state) ||
+                        (session.MemoryChunks.Contains(key) && !session.TopLayerSyncPending.Contains(key)))
+                        continue;
+                    if (!m_chunkMutationClients.TryGetValue(key, out HashSet<string> clients))
+                    {
+                        clients = new HashSet<string>(StringComparer.Ordinal);
+                        m_chunkMutationClients[key] = clients;
+                    }
+                    clients.Add(session.StableKey);
+                }
+                if (!m_chunkMutationClients.TryGetValue(key, out HashSet<string> mutationClients) ||
+                    mutationClients.Count == 0)
+                {
+                    m_chunkMutationKinds.Remove(key);
+                    m_chunkMutationClients.Remove(key);
+                }
+            }
+        }
+
+        private void MarkChunkPendingKindLocked(ChunkKey key, string stableKey,
+            ChunkMutationKind kind)
+        {
+            MarkPendingKindLocked(key, stableKey, kind);
+        }
+
+        private bool HasPendingKindLocked(ChunkKey key, string stableKey, ChunkMutationKind kind)
+        {
+            if (!m_pendingKinds.TryGetValue(key, out Dictionary<string, ChunkMutationKind> set) ||
+                !set.TryGetValue(stableKey, out ChunkMutationKind current)) return false;
+            return (current & kind) != 0;
+        }
+
+        private static ChunkMutationKind AggregateMutationKind(ChunkMutationKind previous,
+            ChunkMutationKind next)
+        {
+            ChunkMutationKind union = previous | next;
+            ChunkMutationKind leaves = union & ChunkMutationKind.Leaves;
+            ChunkMutationKind combined = union &
+                (ChunkMutationKind.Season | ChunkMutationKind.Content);
+            if ((combined & ChunkMutationKind.Content) != 0) combined &= ~ChunkMutationKind.Season;
+            return combined | leaves;
+        }
+
         /// <summary>主机：该**身份**在这块上的类别标记（没有就是 None）。调用方已持有 m_gate。</summary>
         private ChunkMutationKind PendingKindLocked(PlayerSessionRecord session, ChunkKey key)
         {
@@ -6075,7 +6751,36 @@ namespace SuMultiplayer.Terrain
             if (!m_pendingKinds.TryGetValue(key, out Dictionary<string, ChunkMutationKind> set))
                 return ChunkMutationKind.None;
             return set.TryGetValue(session.StableKey, out ChunkMutationKind kind)
+                ? kind & ChunkMutationKind.Leaves : ChunkMutationKind.None;
+        }
+
+        private ChunkMutationKind PendingMutationKindLocked(PlayerSessionRecord session,
+            ChunkKey key)
+        {
+            if (session == null || !m_chunkMutationClients.TryGetValue(key,
+                out HashSet<string> clients) || !clients.Contains(session.StableKey))
+                return ChunkMutationKind.None;
+            return m_chunkMutationKinds.TryGetValue(key, out ChunkMutationKind kind)
                 ? kind : ChunkMutationKind.None;
+        }
+
+        private static void MarkTopLayerVerifiedLocked(PlayerSessionRecord session, ChunkKey key)
+        {
+            if (session.Verdicts.TryGetValue(key, out byte previous) &&
+                previous == (byte)ChunkVerifyState.Failed)
+                session.Verdicts[key] = (byte)ChunkVerifyState.ReVerified;
+            else if (previous != (byte)ChunkVerifyState.ReVerified)
+                session.Verdicts[key] = (byte)ChunkVerifyState.Verified;
+        }
+
+        private void ClearMutationClientLocked(PlayerSessionRecord session, ChunkKey key)
+        {
+            if (session == null || !m_chunkMutationClients.TryGetValue(key,
+                out HashSet<string> clients)) return;
+            clients.Remove(session.StableKey);
+            if (clients.Count != 0) return;
+            m_chunkMutationClients.Remove(key);
+            m_chunkMutationKinds.Remove(key);
         }
 
         private void MarkPendingKindLocked(ChunkKey key, string stableKey, ChunkMutationKind kind)
@@ -6087,7 +6792,7 @@ namespace SuMultiplayer.Terrain
                 m_pendingKinds[key] = set;
             }
             set.TryGetValue(stableKey, out ChunkMutationKind prev);
-            set[stableKey] = prev | kind;
+            set[stableKey] = AggregateMutationKind(prev, kind);
         }
 
         /// <summary>
@@ -6117,7 +6822,23 @@ namespace SuMultiplayer.Terrain
 
         /// <summary>身份离开联机 → 把它从**所有**区块的类别标记里去掉（与欠更新计数同一口径）。</summary>
         private int RemovePendingKindEverywhereLocked(PlayerSessionRecord session)
-        {            if (session == null || m_pendingKinds.Count == 0) return 0;
+        {
+            if (session == null) return 0;
+            foreach (KeyValuePair<ChunkKey, HashSet<string>> pair in m_chunkMutationClients)
+                pair.Value.Remove(session.StableKey);
+            List<ChunkKey> emptiedMutationKinds = null;
+            foreach (KeyValuePair<ChunkKey, HashSet<string>> pair in m_chunkMutationClients)
+                if (pair.Value.Count == 0)
+                    (emptiedMutationKinds ??= new List<ChunkKey>()).Add(pair.Key);
+            if (emptiedMutationKinds != null)
+            {
+                for (int i = 0; i < emptiedMutationKinds.Count; i++)
+                {
+                    m_chunkMutationClients.Remove(emptiedMutationKinds[i]);
+                    m_chunkMutationKinds.Remove(emptiedMutationKinds[i]);
+                }
+            }
+            if (m_pendingKinds.Count == 0) return 0;
             int marks = 0;
             List<ChunkKey> emptied = null;
             foreach (KeyValuePair<ChunkKey, Dictionary<string, ChunkMutationKind>> pair in m_pendingKinds)
@@ -6228,6 +6949,37 @@ namespace SuMultiplayer.Terrain
     /// </summary>
     public sealed class TerrainSyncClient
     {
+        private readonly struct TopLayerReportItem
+        {
+            public TopLayerReportItem(ChunkKey key, uint heightHash, uint blockHash,
+                long changeSequence, PT.TopLayerDigestKind kind, uint confirmationPurpose)
+            {
+                Key = key;
+                HeightHash = heightHash;
+                BlockHash = blockHash;
+                ChangeSequence = changeSequence;
+                Kind = kind;
+                ConfirmationPurpose = confirmationPurpose;
+            }
+            public ChunkKey Key { get; }
+            public uint HeightHash { get; }
+            public uint BlockHash { get; }
+            public long ChangeSequence { get; }
+            public PT.TopLayerDigestKind Kind { get; }
+            public uint ConfirmationPurpose { get; }
+        }
+
+        private readonly struct TopLayerWork
+        {
+            public TopLayerWork(ChunkKey key, int generation, PT.TopLayerDigestKind kind,
+                uint confirmationPurpose = 0u)
+            { Key = key; Generation = generation; Kind = kind; ConfirmationPurpose = confirmationPurpose; }
+            public ChunkKey Key { get; }
+            public int Generation { get; }
+            public PT.TopLayerDigestKind Kind { get; }
+            public uint ConfirmationPurpose { get; }
+        }
+
         private readonly ITerrainWorld m_world;
         private readonly TcpTerrainClient m_channel;
         private readonly TerrainSyncOptions m_options;
@@ -6240,6 +6992,26 @@ namespace SuMultiplayer.Terrain
         private readonly Dictionary<ChunkKey, bool> m_resyncChangedChunks =
             new Dictionary<ChunkKey, bool>();
         private readonly Queue<DigestEntry> m_reportQueue = new Queue<DigestEntry>();
+        private readonly Queue<TopLayerReportItem> m_topLayerReportQueue = new Queue<TopLayerReportItem>();
+        private readonly Queue<TopLayerWork> m_topLayerWorkQueue = new Queue<TopLayerWork>();
+        private readonly ChunkDigestPool m_digestPool = new ChunkDigestPool();
+        private readonly List<DigestWorkResult> m_digestResults = new List<DigestWorkResult>(32);
+        private readonly HashSet<ChunkKey> m_topLayerQueued = new HashSet<ChunkKey>();
+        private readonly HashSet<ChunkKey> m_topLayerInitialQueued = new HashSet<ChunkKey>();
+        private readonly Queue<ChunkKey> m_footprintFullQueue = new Queue<ChunkKey>();
+        private readonly HashSet<ChunkKey> m_footprintFullQueued = new HashSet<ChunkKey>();
+        private readonly ISet<ChunkKey> m_footprintVerified;
+        private readonly HashSet<ChunkKey> m_footprintAwaitingVerdict = new HashSet<ChunkKey>();
+        private readonly HashSet<ChunkKey> m_footprintResyncPending = new HashSet<ChunkKey>();
+        private readonly HashSet<ChunkKey> m_fullDigestDirty = new HashSet<ChunkKey>();
+        private readonly HashSet<ChunkKey> m_fullInFlight = new HashSet<ChunkKey>();
+        private readonly HashSet<ChunkKey> m_topConfirmationQueued = new HashSet<ChunkKey>();
+        private readonly HashSet<ChunkKey> m_topConfirmationAwaiting = new HashSet<ChunkKey>();
+        private readonly HashSet<ChunkKey> m_topLayerDirty = new HashSet<ChunkKey>();
+        private readonly Dictionary<ChunkKey, uint> m_topConfirmationPurpose =
+            new Dictionary<ChunkKey, uint>();
+        private readonly Dictionary<ChunkKey, int> m_digestQueueGeneration = new Dictionary<ChunkKey, int>();
+        private int m_nextDigestGeneration;
         /// <summary>收到 NotReady 的块 → 下一次重报的时刻（退避）。本端的保险：不等主机那边的时序。
         /// 重报次数上限由 <see cref="ChunkLoadVerifier.MaxRetries"/> 明确兜住（超限计数，不静默硬撑）。</summary>
         private readonly Dictionary<ChunkKey, NotReadyRetry> m_notReadyRetries = new Dictionary<ChunkKey, NotReadyRetry>();
@@ -6280,6 +7052,7 @@ namespace SuMultiplayer.Terrain
         private readonly Dictionary<ChunkKey, uint> m_topBlockHashes = new Dictionary<ChunkKey, uint>();
         /// <summary>已发过 TOP_LAYER_MISMATCH_REPORT、等主机回 TOP_LAYER_FIX 的块。</summary>
         private readonly HashSet<ChunkKey> m_topLayerAwaitingFix = new HashSet<ChunkKey>();
+        private readonly HashSet<ChunkKey> m_topLayerSyncConfirmed = new HashSet<ChunkKey>();
         private long m_topLayerChecks, m_topLayerMatches, m_topLayerMismatches;
         private long m_topLayerReportsSent, m_topLayerFixesReceived, m_topLayerFixCellsApplied;
         private long m_topLayerFixEscalations, m_topLayerUnavailable;
@@ -6569,10 +7342,13 @@ namespace SuMultiplayer.Terrain
         private readonly struct ResyncJob
         {
             public ResyncJob(ChunkKey key, byte[] payload, int generation, long watermark,
-                bool leavesOnly = false)
+                bool leavesOnly = false, uint digestPurpose = 0u,
+                bool requireTopLayerConfirmation = false)
             {
                 Key = key; Payload = payload; Generation = generation; Watermark = watermark;
                 LeavesOnly = leavesOnly;
+                DigestPurpose = digestPurpose;
+                RequireTopLayerConfirmation = requireTopLayerConfirmation;
             }
             public ChunkKey Key { get; }
             public byte[] Payload { get; }
@@ -6584,6 +7360,8 @@ namespace SuMultiplayer.Terrain
             /// 落地后**不重算整块摘要**。见 doc/leaves-layer-resync-plan.md 第 6 章。
             /// </summary>
             public bool LeavesOnly { get; }
+            public uint DigestPurpose { get; }
+            public bool RequireTopLayerConfirmation { get; }
         }
 
         /// <summary>一块 NotReady 之后的重报安排（退避到点就重报一次）。</summary>
@@ -6593,17 +7371,20 @@ namespace SuMultiplayer.Terrain
             public long DueMs;
             /// <summary>这一块已经重报过几次（退避按它翻倍）。</summary>
             public int Attempt;
+            public uint Purpose;
         }
 
         /// <param name="attachToChannel">false = 由主线程泵调用 <see cref="ProcessFrame"/>（引擎接入用）。</param>
         public TerrainSyncClient(ITerrainWorld world, TcpTerrainClient channel,
             TerrainSyncOptions options = null, bool attachToChannel = true,
             MessageChannel messages = null,
-            TerrainResyncDiagnosticWindow resyncDiagnostics = null)
+            TerrainResyncDiagnosticWindow resyncDiagnostics = null,
+            ISet<ChunkKey> footprintVerified = null)
         {
             m_world = world ?? throw new ArgumentNullException(nameof(world));
             m_channel = channel ?? throw new ArgumentNullException(nameof(channel));
             m_options = options ?? new TerrainSyncOptions();
+            m_footprintVerified = footprintVerified ?? new HashSet<ChunkKey>();
             if (resyncDiagnostics != null) m_resyncDiagnostics = resyncDiagnostics;
             m_verifier.MaxRetries = m_options.MaxRetries;
             m_messages = messages ?? new MessageChannel(new MessageRegistry(),
@@ -6633,6 +7414,8 @@ namespace SuMultiplayer.Terrain
                 MessageOwner);
             registry.Register((int)MessageType.ChunkVerdict, PT.ChunkVerdict.Parser,
                 new DelegateMessageHandler<PT.ChunkVerdict>(OnVerdict), MessageOwner);
+            registry.Register((int)MessageType.TopLayerDigestVerdict, PT.TopLayerDigestVerdict.Parser,
+                new DelegateMessageHandler<PT.TopLayerDigestVerdict>(OnTopLayerDigestVerdict), MessageOwner);
             registry.Register((int)MessageType.TopLayerFix, PT.TopLayerFix.Parser,
                 new DelegateMessageHandler<PT.TopLayerFix>(OnTopLayerFix), MessageOwner);
             registry.Register((int)MessageType.ChunkResync, PT.ChunkResync.Parser,
@@ -6684,6 +7467,54 @@ namespace SuMultiplayer.Terrain
         }
 
         private void OnVerdict(MessageContext context, PT.ChunkVerdict message) => HandleVerdict(message);
+
+        private void OnTopLayerDigestVerdict(MessageContext context,
+            PT.TopLayerDigestVerdict message) => HandleTopLayerDigestVerdict(message);
+
+        private void HandleTopLayerDigestVerdict(PT.TopLayerDigestVerdict message)
+        {
+            if (message == null) return;
+            for (int i = 0; i < message.Entries.Count; i++)
+            {
+                PT.TopLayerDigestVerdict.Types.Entry entry = message.Entries[i];
+                if (entry?.Key == null) continue;
+                var key = new ChunkKey(entry.Key.X, entry.Key.Z);
+                switch (entry.Status)
+                {
+                    case PT.TopLayerDigestStatus.NotReady:
+                        if (m_topConfirmationAwaiting.Remove(key) &&
+                            m_topConfirmationPurpose.TryGetValue(key, out uint purpose))
+                        {
+                            m_topConfirmationPurpose.Remove(key);
+                            QueueTopLayerConfirmation(key, purpose);
+                        }
+                        else if (m_topLayerQueued.Add(key))
+                        {
+                            m_topLayerInitialQueued.Add(key);
+                            m_topLayerWorkQueue.Enqueue(new TopLayerWork(key,
+                                m_digestQueueGeneration.TryGetValue(key, out int generation) ? generation : 0,
+                                PT.TopLayerDigestKind.Initial));
+                        }
+                        break;
+                    case PT.TopLayerDigestStatus.Pending:
+                        m_topConfirmationAwaiting.Add(key);
+                        break;
+                    case PT.TopLayerDigestStatus.Confirmed:
+                        m_topConfirmationAwaiting.Remove(key);
+                        m_topConfirmationQueued.Remove(key);
+                        m_topConfirmationPurpose.Remove(key);
+                        m_topLayerSyncConfirmed.Add(key);
+                        if (entry.ConfirmationPurpose == 1u &&
+                            m_footprintResyncPending.Remove(key))
+                        {
+                            m_footprintAwaitingVerdict.Remove(key);
+                            m_footprintVerified.Add(key);
+                        }
+                        QueueFootprintWindow();
+                        break;
+                }
+            }
+        }
 
         private void OnTopLayerFix(MessageContext context, PT.TopLayerFix message) =>
             HandleTopLayerFix(message);
@@ -6999,6 +7830,7 @@ namespace SuMultiplayer.Terrain
             Center = center;
             ViewRadius = Math.Max(1, Math.Min(m_options.MaxRadius, radius));
             m_interestKnown = true;
+            QueueFootprintWindow();
             var interest = new InterestUpdate
             {
                 CenterX = center.X,
@@ -7026,9 +7858,11 @@ namespace SuMultiplayer.Terrain
                 m_chunkChangeSequence[key] = m_lastAppliedChangeSequence;
             // 内存集合**不在这里**记账：它只认引擎的"分配"事件（见 OnMemoryChunkAllocated）。
             // 内容可用 ⇒ 必然早已分配（同一次扫描里先触发分配事件），所以这里只负责摘要 / 上报。
-            if (!m_verifier.WouldBeginVerify(key)) return false;
-            if (!m_digestQueued.Add(key)) return true;      // 同一块重复触发：只保留一条（幂等）
+            if (!m_digestQueued.Add(key)) return true;
+            m_topLayerSyncConfirmed.Remove(key);
             m_digestQueue.Enqueue(key);
+            if (!m_digestQueueGeneration.ContainsKey(key))
+                m_digestQueueGeneration[key] = ++m_nextDigestGeneration;
             return true;
         }
 
@@ -7045,6 +7879,7 @@ namespace SuMultiplayer.Terrain
             // 内容掉回未定稿（但还占着内存）时，实时地图的方框必须继续保留。
             // 摘要还没算块就没了：那条工作作废（重载会重新入队一条新的）
             if (m_digestQueued.Remove(key)) m_digestsDroppedUnloaded++;
+            m_digestQueueGeneration[key] = ++m_nextDigestGeneration;
             if (m_dirtyQueued.Remove(key)) m_hashRefreshesDroppedUnloaded++;
             if (m_queuedParts.ContainsKey(key))
             {
@@ -7057,6 +7892,7 @@ namespace SuMultiplayer.Terrain
             m_topHeightHashes.Remove(key);
             m_topBlockHashes.Remove(key);
             m_topLayerAwaitingFix.Remove(key);
+            m_topLayerSyncConfirmed.Remove(key);
             m_notStableLogged.Remove(key);
             m_reportSentMs.Remove(key);
             m_pendingParts.Remove(key);
@@ -7066,6 +7902,17 @@ namespace SuMultiplayer.Terrain
             m_notReadyRetries.Remove(key);      // 块没了：重报安排一并作废（重载时会重新上报一次）
             m_mismatchCounts.Remove(key);       // 不一致次数按块生命周期清掉（重载是另一份内容）
             ResetMismatchRetry(key);            // 重载是另一份内容：重试预算 / 抑制 / 丢弃后重核安排一并作废
+            m_topLayerQueued.Remove(key);
+            m_topLayerInitialQueued.Remove(key);
+            m_topConfirmationQueued.Remove(key);
+            m_topConfirmationAwaiting.Remove(key);
+            m_topLayerDirty.Remove(key);
+            m_topConfirmationPurpose.Remove(key);
+            m_footprintFullQueued.Remove(key);
+            m_footprintAwaitingVerdict.Remove(key);
+            m_footprintResyncPending.Remove(key);
+            m_fullDigestDirty.Remove(key);
+            m_fullInFlight.Remove(key);
         }
 
         // ------------------------------------------------------------ (重)连后重新排队常驻区块
@@ -7109,6 +7956,25 @@ namespace SuMultiplayer.Terrain
             m_dirtyQueue.Clear();
             m_dirtyQueued.Clear();
             m_reportQueue.Clear();
+            m_topLayerWorkQueue.Clear();
+            m_topLayerReportQueue.Clear();
+            m_topLayerQueued.Clear();
+            m_topLayerInitialQueued.Clear();
+            m_topConfirmationQueued.Clear();
+            m_topConfirmationAwaiting.Clear();
+            m_topLayerDirty.Clear();
+            m_topConfirmationPurpose.Clear();
+            m_footprintFullQueue.Clear();
+            m_footprintFullQueued.Clear();
+            m_footprintVerified.Clear();
+            m_footprintAwaitingVerdict.Clear();
+            m_footprintResyncPending.Clear();
+            m_fullDigestDirty.Clear();
+            m_fullInFlight.Clear();
+            m_topLayerSyncConfirmed.Clear();
+            m_topHeightHashes.Clear();
+            m_topBlockHashes.Clear();
+            m_digestQueueGeneration.Clear();
             m_reportSentMs.Clear();
             m_resyncQueue.Clear();
             m_queuedParts.Clear();
@@ -7169,16 +8035,13 @@ namespace SuMultiplayer.Terrain
                     skipped++;              // 内容还没定稿：不能算摘要（算了就是伪造），跳过并计数
                     continue;
                 }
-                if (!m_verifier.WouldBeginVerify(key))
-                {
-                    skipped++;              // 已 Fresh / 正在校验 / 重报次数用尽
-                    continue;
-                }
                 if (!m_digestQueued.Add(key))
                 {
-                    skipped++;              // 已经在队列里（例如同一帧的块加载事件）
+                    skipped++;
                     continue;
                 }
+                if (!m_digestQueueGeneration.ContainsKey(key))
+                    m_digestQueueGeneration[key] = ++m_nextDigestGeneration;
                 m_digestQueue.Enqueue(key);
                 queued++;
             }
@@ -7286,6 +8149,7 @@ namespace SuMultiplayer.Terrain
         public void OnMemoryChunkAllocated(ChunkKey key)
         {
             if (m_memoryChunks.Add(key) && Handshaken) QueueClientChunkDelta(key, loaded: true);
+            if (m_memoryChunks.Contains(key)) QueueFootprintVerification(key);
         }
 
         /// <summary>
@@ -7298,6 +8162,49 @@ namespace SuMultiplayer.Terrain
             // 已经不在内存里：强制核对 / 已应用序号都不再需要（重载会重新上报、重新核对）。
             if (m_memoryVerifyQueued.Remove(key)) m_memoryVerifyDueMs.Remove(key);
             m_chunkChangeSequence.Remove(key);
+            m_footprintVerified.Remove(key);
+            m_fullInFlight.Remove(key);
+            m_footprintAwaitingVerdict.Remove(key);
+            m_footprintResyncPending.Remove(key);
+            m_topLayerQueued.Remove(key);
+            m_topLayerInitialQueued.Remove(key);
+            m_topConfirmationQueued.Remove(key);
+            m_topConfirmationAwaiting.Remove(key);
+            m_topLayerSyncConfirmed.Remove(key);
+            m_topConfirmationPurpose.Remove(key);
+            m_footprintFullQueued.Remove(key);
+            m_footprintAwaitingVerdict.Remove(key);
+            m_footprintResyncPending.Remove(key);
+            m_fullDigestDirty.Remove(key);
+            m_digestQueueGeneration[key] = ++m_nextDigestGeneration;
+        }
+
+        private void QueueFootprintVerification(ChunkKey key)
+        {
+            if (m_footprintVerified.Contains(key) || m_footprintAwaitingVerdict.Contains(key) ||
+                m_fullInFlight.Contains(key) ||
+                !m_topLayerSyncConfirmed.Contains(key) ||
+                !ChunkDigestFootprint.Contains(Center, key)) return;
+            if (m_footprintFullQueued.Add(key)) m_footprintFullQueue.Enqueue(key);
+        }
+
+        private void QueueTopLayerConfirmation(ChunkKey key, uint purpose)
+        {
+            if (!m_world.HasContents(key) || !m_topConfirmationQueued.Add(key)) return;
+            if (!m_topLayerQueued.Add(key))
+            {
+                m_topConfirmationQueued.Remove(key);
+                return;
+            }
+            m_topConfirmationPurpose[key] = purpose;
+            m_digestQueueGeneration.TryGetValue(key, out int generation);
+            m_topLayerWorkQueue.Enqueue(new TopLayerWork(key, generation,
+                PT.TopLayerDigestKind.Confirmation, purpose));
+        }
+
+        private void QueueFootprintWindow()
+        {
+            foreach (ChunkKey key in m_memoryChunks) QueueFootprintVerification(key);
         }
 
         /// <summary>
@@ -7635,6 +8542,9 @@ namespace SuMultiplayer.Terrain
             m_resyncAppliedThisTick = 0;
             m_clientChunkMessagesThisTick = 0;
             ApplyQueuedResyncParts();
+            DrainDigestResults();
+            SubmitTopLayerDigests();
+            SubmitFootprintDigests();
             ComputeQueuedDigests();
             RefreshDirtyHashes();
             // 过期快照被丢弃后的重新核对：**退避到点**才发，不在丢弃的同一拍当场重报（那正是 1:1 循环）。
@@ -7644,6 +8554,7 @@ namespace SuMultiplayer.Terrain
             FlushDueNotReadyRetries();
             UpdateCatchUpOnTick(Environment.TickCount64);
             SendQueuedReports();
+            SendQueuedTopLayerReports();
             m_clientChunkMessagesThisTick = SendQueuedClientChunks();
             // (重)连后重新排队常驻区块：放在本帧的发送之后，队列从下一帧开始按预算消化
             // （本帧已经发出去的上报不受影响；135 块也不会挤进同一帧）。
@@ -7783,10 +8694,10 @@ namespace SuMultiplayer.Terrain
                 }
                 if (job.LeavesOnly)
                 {
-                    // 树叶段补丁落地即收尾：**不重算整块摘要、不再上报**
-                    //（用户口径：与结冰的顶层修复一致，只修复这部分就行）。
-                    // 深层差异由"这块下次以无标记状态加载"时的现有整块摘要比对兜住。
                     m_leavesFixApplied++;
+                    if (job.RequireTopLayerConfirmation)
+                        QueueTopLayerConfirmation(part.Key,
+                            job.DigestPurpose == 5u ? 5u : job.DigestPurpose);
                     continue;
                 }
                 if (m_mismatchSuppressed.Contains(part.Key))
@@ -7796,26 +8707,17 @@ namespace SuMultiplayer.Terrain
                     m_mismatchRetrySuppressedVerifications++;
                     continue;
                 }
-                // 覆盖后重算并**再报一次**：确认内容真的对齐（不是先认后收）。这一次重算算在回传预算里。
-                long digestStarted = diagnosticActive ? System.Diagnostics.Stopwatch.GetTimestamp() : 0;
-                uint hash = ComputeHash(part.Key);
-                if (diagnosticActive)
-                    m_resyncDiagnostics.RecordFinalDigest(System.Diagnostics.Stopwatch.GetTimestamp() - digestStarted);
-                m_localHashes[part.Key] = hash;
-                m_digestsThisTick++;
-                m_digestsComputed++;
-                // 回传落地后的**再证明**：必须允许 Fresh —— 本端此前可能已经核对通过（Fresh），
-                // 而这一块刚被主机内容覆盖；旧代码用 TryBeginVerify（Fresh → 拒绝）⇒ 客户端不再上报，
-                // 主机那条 Mismatch 永远没人重判（实机 (30,-4)/(30,-3) 一直红、"重新核对过什么都没变"）。
-                if (!m_verifier.TryBeginResyncConfirm(part.Key, hash, out DigestEntry entry))
+                if (job.RequireTopLayerConfirmation)
                 {
-                    // 明确不静默：为什么这块没有发起确认（已有一条上报在途 / NotReady 重报次数用尽）——限流一行 + 计数。
-                    NoteVerifyNotStarted(part.Key, "回传落地后确认");
+                    if (job.DigestPurpose == 1u)
+                    {
+                        m_footprintResyncPending.Add(part.Key);
+                        m_footprintVerified.Add(part.Key);
+                    }
+                    QueueTopLayerConfirmation(part.Key, job.DigestPurpose);
                     continue;
                 }
-                m_reportQueue.Enqueue(entry);
-                m_reportSentMs[part.Key] = Environment.TickCount64;
-                m_resyncVerified++;
+                QueueTopLayerConfirmation(part.Key, job.DigestPurpose);
             }
         }
 
@@ -7844,7 +8746,7 @@ namespace SuMultiplayer.Terrain
             while (budget > 0 && m_digestQueue.Count > 0)
             {
                 ChunkKey key = m_digestQueue.Dequeue();
-                if (!m_digestQueued.Remove(key)) continue;       // 已卸载：那边已经作废并计数
+                if (!m_digestQueued.Remove(key)) continue;
                 budget--;
                 if (!m_world.HasContents(key))
                 {
@@ -7858,30 +8760,187 @@ namespace SuMultiplayer.Terrain
                 if (!IsStableForDigest(key, out string unstableReason))
                 {
                     m_digestsDeferredNotStable++;
-                    if (m_digestQueued.Add(key)) m_digestQueue.Enqueue(key);   // 下一轮再试
+                    m_digestQueued.Add(key);
+                    m_digestQueue.Enqueue(key);   // 下一轮再试
                     NoteDigestNotStable(key, unstableReason);
                     continue;
                 }
-                m_digestsThisTick++;        // 真的算了一次 65536 格
-                m_dirtyQueued.Remove(key);      // 现算的摘要已包含最新内容 → 脏标记作废（队列项留到刷新阶段跳过）
-                uint hash = ComputeHash(key);
-                m_localHashes[key] = hash;
-                m_digestsComputed++;
-
-                // 顶层校验：算完整块摘要后同时算顶层（512 次访问，成本可忽略）。
-                // 顶层只用来"快速否证"整块不一致，不参与整块摘要的值 —— 所以放在整块之后，
-                // 保证"上报的 hash 一定是整块摘要"这一既有语义不变。
-                if (TryCaptureTopLayer(key)) m_topLayerChecks++;
-
-                if (!m_verifier.TryBeginVerify(key, hash, out DigestEntry entry))
+                m_digestQueueGeneration.TryGetValue(key, out int generation);
+                m_digestQueueGeneration[key] = generation;
+                if (m_topLayerQueued.Add(key))
                 {
-                    // 这几帧里状态变了（已 Fresh / 重报次数用尽）：不重复上报。放弃计数由 verifier 记；
-                    // 这里再补一条**明确原因**（限流 + 计数），否则"这块为什么没上报"没有证据。
-                    NoteVerifyNotStarted(key, "摘要算完后上报");
+                    m_topLayerInitialQueued.Add(key);
+                    m_topLayerWorkQueue.Enqueue(new TopLayerWork(key, generation,
+                        PT.TopLayerDigestKind.Initial));
+                }
+            }
+        }
+
+        private void SubmitTopLayerDigests()
+        {
+            int budget = Math.Max(1, m_options.ClientDigestComputationsPerTick);
+            while (budget-- > 0 && m_topLayerWorkQueue.Count > 0)
+            {
+                TopLayerWork work = m_topLayerWorkQueue.Peek();
+                if (!m_world.HasContents(work.Key) || !(m_world is ITopLayerTerrainWorld topWorld) ||
+                    !topWorld.TryGetChunkArrays(work.Key, out int[] cells, out int[] shafts))
+                {
+                    m_topLayerWorkQueue.Dequeue();
+                    m_topLayerQueued.Remove(work.Key);
+                    m_topLayerInitialQueued.Remove(work.Key);
+                    m_topConfirmationQueued.Remove(work.Key);
+                    m_topConfirmationPurpose.Remove(work.Key);
                     continue;
                 }
-                m_reportQueue.Enqueue(entry);
-                m_reportSentMs[key] = Environment.TickCount64;
+                if (!m_digestPool.TrySubmitTopLayer(work.Key, work.Generation, cells, shafts,
+                    work.Kind == PT.TopLayerDigestKind.Initial
+                        ? DigestWorkKind.TopLayerInitial
+                        : work.ConfirmationPurpose == uint.MaxValue
+                            ? DigestWorkKind.TopLayerRefresh : DigestWorkKind.TopLayerConfirmation,
+                    work.ConfirmationPurpose)) break;
+                m_topLayerWorkQueue.Dequeue();
+            }
+        }
+
+        private void SubmitFootprintDigests()
+        {
+            int budget = Math.Max(1, m_options.ClientMemoryVerificationsPerTick);
+            while (budget-- > 0 && m_footprintFullQueue.Count > 0)
+            {
+                ChunkKey key = m_footprintFullQueue.Peek();
+                if (!m_memoryChunks.Contains(key) || !m_world.HasContents(key) ||
+                    !(m_world is IPackedTerrainWorld packed))
+                {
+                    m_footprintFullQueue.Dequeue();
+                    m_footprintFullQueued.Remove(key);
+                    continue;
+                }
+                ChunkPackedValueSource source = packed.GetPackedCellSource(key);
+                if (source == null)
+                    throw new InvalidOperationException("Packed cell source is unavailable for footprint digest " + key + ".");
+                m_digestQueueGeneration.TryGetValue(key, out int generation);
+                if (!m_digestPool.TrySubmitFull(key, generation, source, DigestWorkKind.FullFinal)) break;
+                m_footprintFullQueue.Dequeue();
+                m_footprintFullQueued.Remove(key);
+                m_fullDigestDirty.Remove(key);
+                m_fullInFlight.Add(key);
+            }
+        }
+
+        private void DrainDigestResults()
+        {
+            m_digestResults.Clear();
+            m_digestPool.DrainCompleted(m_digestResults, Math.Max(1, m_options.DigestBatch));
+            for (int i = 0; i < m_digestResults.Count; i++)
+            {
+                DigestWorkResult result = m_digestResults[i];
+                if (!m_world.HasContents(result.Key) ||
+                    (m_digestQueueGeneration.TryGetValue(result.Key, out int generation) &&
+                        generation != result.Generation)) continue;
+                if (!result.Succeeded)
+                {
+                    m_topLayerQueued.Remove(result.Key);
+                    m_topLayerInitialQueued.Remove(result.Key);
+                    m_topConfirmationQueued.Remove(result.Key);
+                    m_topConfirmationPurpose.Remove(result.Key);
+                    m_fullInFlight.Remove(result.Key);
+                    if (result.Kind == DigestWorkKind.FullFinal)
+                    {
+                        m_footprintAwaitingVerdict.Remove(result.Key);
+                        if (!m_footprintVerified.Contains(result.Key) &&
+                            m_footprintFullQueued.Add(result.Key))
+                            m_footprintFullQueue.Enqueue(result.Key);
+                    }
+                    CatchUpProblem?.Invoke("摘要后台任务失败：" + result.Key + " " + result.Error);
+                    continue;
+                }
+                if (result.Kind == DigestWorkKind.TopLayerInitial ||
+                    result.Kind == DigestWorkKind.TopLayerConfirmation ||
+                    result.Kind == DigestWorkKind.TopLayerRefresh)
+                {
+                    m_topLayerQueued.Remove(result.Key);
+                    bool wasInitial = m_topLayerInitialQueued.Remove(result.Key) ||
+                        result.Kind == DigestWorkKind.TopLayerInitial;
+                    m_topConfirmationQueued.Remove(result.Key);
+                    if (m_topLayerDirty.Remove(result.Key))
+                    {
+                        if (m_topLayerQueued.Add(result.Key))
+                        {
+                            m_digestQueueGeneration.TryGetValue(result.Key, out int currentGeneration);
+                            m_topLayerWorkQueue.Enqueue(new TopLayerWork(result.Key, currentGeneration,
+                                PT.TopLayerDigestKind.Confirmation, uint.MaxValue));
+                        }
+                        continue;
+                    }
+                    m_topLayerChecks++;
+                    m_topHeightHashes[result.Key] = result.TopHeightHash;
+                    m_topBlockHashes[result.Key] = result.TopBlockHash;
+                    if (result.Kind == DigestWorkKind.TopLayerRefresh) continue;
+                    m_topLayerReportQueue.Enqueue(new TopLayerReportItem(result.Key,
+                        result.TopHeightHash, result.TopBlockHash,
+                        m_lastAppliedChangeSequence,
+                        wasInitial
+                            ? PT.TopLayerDigestKind.Initial : PT.TopLayerDigestKind.Confirmation,
+                        result.Purpose));
+                    continue;
+                }
+                m_fullInFlight.Remove(result.Key);
+                m_localHashes[result.Key] = result.Value;
+                m_digestsComputed++;
+                m_digestsThisTick++;
+                if (result.Kind == DigestWorkKind.FullFinal)
+                {
+                    if (m_fullDigestDirty.Remove(result.Key))
+                    {
+                        if (m_footprintFullQueued.Add(result.Key))
+                            m_footprintFullQueue.Enqueue(result.Key);
+                        continue;
+                    }
+                    m_footprintAwaitingVerdict.Add(result.Key);
+                    QueueDigestReport(result.Key, result.Value, 1u);
+                }
+                else if (result.Kind != DigestWorkKind.FullExplicit)
+                    throw new InvalidOperationException("Unknown client full digest work kind " + result.Kind + ".");
+            }
+        }
+
+        private void QueueDigestReport(ChunkKey key, uint hash, uint purpose)
+        {
+            if (purpose != 1u)
+                throw new InvalidOperationException("Only final-footprint full digests may be reported.");
+            bool began = m_verifier.TryBeginReverify(key, hash, out DigestEntry verifierEntryFinal);
+            if (!began)
+            {
+                m_fullInFlight.Remove(key);
+                m_footprintAwaitingVerdict.Remove(key);
+                return;
+            }
+            m_reportQueue.Enqueue(new DigestEntry(verifierEntryFinal.Key, verifierEntryFinal.Hash, purpose));
+            m_reportSentMs[key] = Environment.TickCount64;
+        }
+
+        private void SendQueuedTopLayerReports()
+        {
+            int budget = Math.Max(1, m_options.ClientReportEntriesPerTick);
+            while (budget-- > 0 && m_topLayerReportQueue.Count > 0)
+            {
+                TopLayerReportItem item = m_topLayerReportQueue.Peek();
+                var report = new PT.TopLayerDigestReport();
+                report.Entries.Add(new PT.TopLayerDigestReport.Types.Entry
+                {
+                    Key = new PT.ChunkKey { X = item.Key.X, Z = item.Key.Z },
+                    TopHeightHash = item.HeightHash,
+                    TopBlockHash = item.BlockHash,
+                    ClientChangeSequence = item.ChangeSequence,
+                    Kind = item.Kind,
+                    TopReady = true,
+                    ConfirmationPurpose = item.ConfirmationPurpose
+                });
+                if (!m_channel.TrySend(MessageType.TopLayerDigestReport, report.ToByteArray())) break;
+                m_topLayerReportQueue.Dequeue();
+                if (item.Kind == PT.TopLayerDigestKind.Confirmation)
+                    m_topConfirmationAwaiting.Add(item.Key);
+                m_reportsThisTick++;
             }
         }
 
@@ -7900,10 +8959,15 @@ namespace SuMultiplayer.Terrain
                 if (!m_dirtyQueued.Remove(key)) continue;        // 已卸载 / 已由加载摘要覆盖
                 if (!m_world.HasContents(key)) continue;          // 卸载：状态已清，无需记账（OnChunkUnloaded 已作废）
                 budget--;
-                m_localHashes[key] = ComputeHash(key);
+                if (ChunkDigestFootprint.Contains(Center, key)) m_fullDigestDirty.Add(key);
+                m_topLayerDirty.Add(key);
+                if (m_topLayerQueued.Add(key))
+                {
+                    m_digestQueueGeneration.TryGetValue(key, out int generation);
+                    m_topLayerWorkQueue.Enqueue(new TopLayerWork(key, generation,
+                        PT.TopLayerDigestKind.Confirmation, uint.MaxValue));
+                }
                 m_hashRefreshes++;
-                m_digestsThisTick++;
-                m_digestsComputed++;
             }
         }
 
@@ -7916,6 +8980,21 @@ namespace SuMultiplayer.Terrain
         /// </summary>
         private void SendQueuedReports()
         {
+            int queuedReports = m_reportQueue.Count;
+            for (int i = 0; i < queuedReports; i++)
+            {
+                DigestEntry entry = m_reportQueue.Dequeue();
+                if (entry.Purpose == 1u && m_fullDigestDirty.Remove(entry.Key))
+                {
+                    m_verifier.ForceUnverified(entry.Key);
+                    m_reportSentMs.Remove(entry.Key);
+                    m_footprintAwaitingVerdict.Remove(entry.Key);
+                    if (m_footprintFullQueued.Add(entry.Key))
+                        m_footprintFullQueue.Enqueue(entry.Key);
+                    continue;
+                }
+                m_reportQueue.Enqueue(entry);
+            }
             int budget = Math.Min(Math.Max(1, m_options.ClientReportEntriesPerTick),
                 Math.Max(1, m_options.DigestBatch));
             while (budget > 0 && m_reportQueue.Count > 0)
@@ -7966,14 +9045,7 @@ namespace SuMultiplayer.Terrain
                         // 这块在排队期间收到过 CellChange（脏标记还没轮到预算）：发送前**现算**，
                         // 保证"下一次核对"带的是落地后的内容，而不是排队时的旧摘要。
                         //
-                        // ⚠️ 现算**必须先过稳定性闸门**：ComputeHash 在内容不可用时返回 0u
-                        // （见 ComputeHash 开头的 HasContents 检查），而 0 的语义是"未知"。
-                        // 早先这里没有闸门 → 块刚加载、内容还在 InvalidContents1~4 阶段时
-                        // 会把这个 0 发出去，主机的 CompareReport(0, host) 无条件判 Mismatch
-                        // ⇒ **主机明明有内容、明明一致，却显示红框并触发整块回传**。
-                        // 实机症状：飞行中主机已加载该块、客户端那块却一直是红的。
-                        // 处理：不通过就把这条上报**留在队列里**（不出队、不算预算），下一帧再试 ——
-                        // 内容定稿后自然会发出去；绝不发 0，也绝不静默丢弃。
+                        // 完整摘要只在显式重核/脚下五块路径计算；加载首报及补丁确认始终只算顶层。
                         if (!IsStableForDigest(entry.Key, out string unstableReason))
                         {
                             m_reportsDeferredNotStable++;
@@ -7986,25 +9058,8 @@ namespace SuMultiplayer.Terrain
                             continue;
                         }
                         m_dirtyQueued.Remove(entry.Key);
-                        hash = ComputeHash(entry.Key);
-                        if (hash == 0u)
-                        {
-                            // 闸门都过了还拿到 0（世界适配器异常）：不发 0，明确计数并延后。
-                            m_clientHashZero++;
-                            m_reportBatch.RemoveAt(i);
-                            m_verifier.ForceUnverified(entry.Key);
-                            QueueMemoryVerification(entry.Key);
-                            i--;
-                            continue;
-                        }
-                        m_localHashes[entry.Key] = hash;
-                        // ⚠️ 顶层 hash **必须与整块摘要同时刷新**。
-                        // 主机判 Mismatch 时靠上报里的 client_top_*_hash 决定"差异是否只在顶层"：
-                        //   · 客户端顶层 hash 与主机相同 → 差异在深处 → 整块回传（客户端落地 250~295ms 卡顿）；
-                        //   · 不同 → 只补 256 格（< 1ms）。
-                        // 早先这里只更新整块摘要、不刷新顶层 hash → 上报带的是旧值/0，
-                        // 主机会把"其实只在顶层"的差异误判成"深处差异"而整块回传
-                        // （实机症状：红框出现的那一刻恰好卡一下）。
+                        hash = m_localHashes.TryGetValue(entry.Key, out uint currentHash)
+                            ? currentHash : entry.Hash;
                         TryCaptureTopLayer(entry.Key);
                         m_hashRefreshes++;
                         m_digestsComputed++;
@@ -8142,7 +9197,7 @@ namespace SuMultiplayer.Terrain
         {
             if (m_notReadyRetries.Count == 0) return;
             long nowMs = Environment.TickCount64;
-            List<ChunkKey> due = null;
+            List<KeyValuePair<ChunkKey, uint>> due = null;
             foreach (KeyValuePair<ChunkKey, NotReadyRetry> pair in m_notReadyRetries)
             {
                 if (nowMs < pair.Value.DueMs) continue;
@@ -8154,32 +9209,26 @@ namespace SuMultiplayer.Terrain
                     m_notReadyRetriesDeferred++;
                     continue;
                 }
-                (due ?? (due = new List<ChunkKey>())).Add(pair.Key);
+                (due ?? (due = new List<KeyValuePair<ChunkKey, uint>>()))
+                    .Add(new KeyValuePair<ChunkKey, uint>(pair.Key, pair.Value.Purpose));
             }
             if (due == null) return;
             for (int i = 0; i < due.Count; i++)
             {
-                ChunkKey key = due[i];
+                ChunkKey key = due[i].Key;
+                uint purpose = due[i].Value;
                 m_notReadyRetries.Remove(key);
                 if (m_mismatchSuppressed.Contains(key))
                 {
                     m_mismatchRetrySuppressedVerifications++;
                     continue;
                 }
-                // 退避期间可能来了 CellChange：用**当下内容**重算，绝不发排队时的旧摘要。
-                uint hash = ComputeHash(key);
-                m_localHashes[key] = hash;
-                m_digestsThisTick++;
-                m_digestsComputed++;
-                if (!m_verifier.TryBeginVerify(key, hash, out DigestEntry entry))
+                if (purpose == 1u)
                 {
-                    // 到点时已经不需要再报：已 Fresh（主机裁决已落地）/ 已有报告在飞 —— 只有
-                    // "还是 Unverified" 才说明 TryBeginVerify 因重报次数用尽拒了，明确计数不静默
-                    if (m_verifier.StateOf(key) == ChunkFreshness.Unverified) m_abandoned++;
+                    QueueFootprintVerification(key);
                     continue;
                 }
-                m_reportQueue.Enqueue(entry);
-                m_reportSentMs[key] = nowMs;
+                QueueTopLayerConfirmation(key, purpose == 0u ? 2u : purpose);
                 m_reReports++;
             }
         }
@@ -8187,7 +9236,7 @@ namespace SuMultiplayer.Terrain
         /// <summary>
         /// 主机回答"我手上还没有可用内容" → 安排一次**退避后**的重报（不是当场连发）。
         /// </summary>
-        private void ScheduleNotReadyRetry(ChunkKey key)
+        private void ScheduleNotReadyRetry(ChunkKey key, uint purpose = 0u)
         {
             m_notReadyRetries.TryGetValue(key, out NotReadyRetry retry);
             int attempt = retry == null ? 0 : retry.Attempt + 1;
@@ -8196,7 +9245,7 @@ namespace SuMultiplayer.Terrain
             if (delay < 1L) delay = 1L;
             m_notReadyRetries[key] = new NotReadyRetry
             {
-                Attempt = attempt, DueMs = Environment.TickCount64 + delay
+                Attempt = attempt, DueMs = Environment.TickCount64 + delay, Purpose = purpose
             };
         }
 
@@ -8642,45 +9691,17 @@ namespace SuMultiplayer.Terrain
                 }
             }
 
-            // 重算本地顶层 hash，确认是否收敛。
-            if (!TryCaptureTopLayer(key))
+            if (!message.RequireTopLayerConfirmation)
             {
-                m_topLayerUnavailable++;
+                CatchUpProblem?.Invoke("收到未要求确认的旧式顶层补丁（区块 " + key +
+                    "）→ 拒绝该补丁完成状态，需主机更新协议流程");
                 return;
             }
-            if (!TryCompareTopLayer(key, message.HostTopHeightHash, message.HostTopBlockHash,
-                    out bool known, out bool matches))
+            if (m_memoryChunks.Contains(key))
             {
-                m_topLayerUnavailable++;
-                return;
-            }
-            if (matches)
-            {
-                m_topLayerMatches++;
-                // ---- 闭环：内容已收敛，但**两边都还停在"不一致"** ----
-                //   · 主机：ApplyVerdict 在整块回传之前就把它记成 Failed（红）；
-                //   · 本端：收到那条 Mismatch 时记进了"不一致（stale）"。
-                // 顶层补丁让内容对上了，可**没有任何一条消息把这个结论告诉主机**。
-                // 后果（实机实测）：主机那条红放久了被"陈旧红清除"洗成 s=0（灰），
-                // 而本端 stale 一直在 → 灰框永久残留、永远不会变绿/蓝
-                // （红米实测 41 块灰 == 客户端"不一致 41"，两边口径对不上）。
-                // 所以这里必须回一次新鲜摘要：主机比对通过 → Failed 升级为 ReVerified（蓝），
-                // 本端 OnVerdict(Match) 也会把 stale 清掉 → 两边收敛。
-                if (!RequestChunkReverification(key))
-                {
-                    // 块已不在内存集合：没有内容可回，等下次加载重新校验（明确计数，不静默）。
-                    m_topLayerConvergeUnreported++;
-                }
-                return;
-            }
-
-            // 顶层补完仍不一致：差异不只在顶层 → 升级为整块核对（明确计数，不静默）。
-            // RequestChunkReverification 会让本端按当前内容重算摘要上报，主机比对不一致就回传整块。
-            m_topLayerFixEscalations++;
-            if (!RequestChunkReverification(key))
-            {
-                CatchUpProblem?.Invoke("顶层修复后仍不一致，且该块不在内存集合（区块 " + key +
-                    "）→ 无法发起整块核对；等下次加载重新校验");
+                uint purpose = message.ConfirmationPurpose == 0u
+                    ? 3u : message.ConfirmationPurpose;
+                QueueTopLayerConfirmation(key, purpose);
             }
         }
 
@@ -8707,6 +9728,11 @@ namespace SuMultiplayer.Terrain
                         return;
                 }
                 uint hostHash = entry.HostHash;
+                if (entry.Purpose > 1u)
+                {
+                    CatchUpProblem?.Invoke("ChunkVerdict 用途未知（" + entry.Purpose + "）→ 条目丢弃");
+                    continue;
+                }
                 uint localHash = m_localHashes.TryGetValue(key, out uint h) ? h : 0u;
                 switch (verdict)
                 {
@@ -8715,7 +9741,8 @@ namespace SuMultiplayer.Terrain
                         m_retries++;
                         // 退避后重报（不在这一拍直接连发）：两端不互相依赖对方的时序
                         m_reportSentMs.Remove(key);
-                        ScheduleNotReadyRetry(key);
+                        if (entry.Purpose == 1u) m_footprintAwaitingVerdict.Remove(key);
+                        ScheduleNotReadyRetry(key, entry.Purpose);
                         // 主机回 NotReady 的一个重要原因：我们上报里**没带顶层 hash**
                         // （主机的口径是"缺顶层 hash → 让你重算再报，不补丁也不整块回传"）。
                         // 这里补一次顶层摘要，让下一次重报能带上它；算不出来就等退避重试。
@@ -8728,6 +9755,38 @@ namespace SuMultiplayer.Terrain
                         m_resyncDiagnostics?.RecordHashVerdict(verdict);
                         m_notReadyRetries.Remove(key);
                         bool wasRetrying = m_mismatchRetries.ContainsKey(key) || m_mismatchCounts.ContainsKey(key);
+                if (entry.Purpose == 1u && verdict == DigestVerdict.Match)
+                {
+                    m_footprintAwaitingVerdict.Remove(key);
+                    m_footprintVerified.Add(key);
+                    m_verifier.OnVerdict(key, new DigestEntry(key, localHash), hostHash);
+                    m_match++;
+                    m_matchInSecond++;
+                    ResetMismatchRetry(key);
+                    continue;
+                }
+                if (entry.Purpose == 1u && verdict == DigestVerdict.Mismatch)
+                {
+                    if (m_footprintResyncPending.Contains(key))
+                    {
+                        m_footprintAwaitingVerdict.Remove(key);
+                        continue;
+                    }
+                    if (entry.HostChangeSequence > 0 &&
+                        m_lastAppliedChangeSequence > entry.HostChangeSequence)
+                    {
+                        m_footprintAwaitingVerdict.Remove(key);
+                        if (m_footprintFullQueued.Add(key)) m_footprintFullQueue.Enqueue(key);
+                        break;
+                    }
+                    m_footprintResyncPending.Add(key);
+                    m_footprintAwaitingVerdict.Remove(key);
+                    m_verifier.OnVerdict(key, new DigestEntry(key, localHash), hostHash);
+                    m_mismatch++;
+                    m_mismatchInSecond++;
+                    RecordMismatch(key);
+                    break;
+                }
                         m_verifier.OnVerdict(key, new DigestEntry(key, localHash), hostHash);
                         if (wasRetrying) m_convergedChunks++;
                         ResetMismatchRetry(key);        // 已收敛：连续重试预算清零
@@ -8769,8 +9828,8 @@ namespace SuMultiplayer.Terrain
                         // 若顶层本来就一致、差异在深处，主机回的 TopLayerFix 会带 0 格 + host hash，
                         // 客户端复查仍不一致 → 自动升级为整块核对（见 HandleTopLayerFix）。
                         // 这样常规的"天气/季节只改了顶层"不会退化成整块回传。
-                        if (m_topHeightHashes.ContainsKey(key) && m_topBlockHashes.ContainsKey(key))
-                            SendTopLayerMismatchReport(key);
+                        m_reportSentMs.Remove(key);
+                        QueueMemoryVerification(key);
                         break;
                 }
             }
@@ -8799,7 +9858,8 @@ namespace SuMultiplayer.Terrain
             m_queuedParts.TryGetValue(key, out int queued);
             m_queuedParts[key] = queued + 1;
             m_resyncQueue.Enqueue(new ResyncJob(key, payload, generation, watermark,
-                message.LeavesOnly));
+                message.LeavesOnly, message.DigestPurpose,
+                message.RequireTopLayerConfirmation));
             m_resyncReceivedInSecond++;
         }
 
@@ -9279,21 +10339,7 @@ namespace SuMultiplayer.Terrain
                 m_memoryVerifyQueued.Remove(key);
                 m_memoryVerifyDueMs.Remove(key);
                 budget--;
-                uint hash = ComputeHash(key);
-                m_localHashes[key] = hash;
-                m_digestsThisTick++;
-                m_digestsComputed++;
-                // 顶层 hash 必须与整块摘要**同时刷新**：上报要带它给主机做"差异是否只在顶层"的闸门，
-                // 拿旧值会让主机误判（该走整块回传的被当成顶层差异 → 补了没用 → 重报循环）。
-                TryCaptureTopLayer(key);
-                if (!m_verifier.TryBeginReverify(key, hash, out DigestEntry entry))
-                {
-                    // 已有一条上报在途 / 已确认不一致等主机回传：不重复发起（状态机会继续走）。
-                    m_memoryVerifySkipped++;
-                    continue;
-                }
-                m_reportQueue.Enqueue(entry);
-                m_reportSentMs[key] = now;
+                QueueTopLayerConfirmation(key, 2u);
                 m_memoryVerifySent++;
                 m_memoryVerifyThisTick++;
             }
@@ -9407,17 +10453,7 @@ namespace SuMultiplayer.Terrain
                     m_discardRefreshSkipped++;
                     continue;
                 }
-                uint hash = ComputeHash(key);
-                m_localHashes[key] = hash;
-                m_digestsThisTick++;
-                m_digestsComputed++;
-                if (!m_verifier.TryBeginVerify(key, hash, out DigestEntry entry))
-                {
-                    m_discardRefreshSkipped++;
-                    continue;
-                }
-                m_reportQueue.Enqueue(entry);
-                m_reportSentMs[key] = nowMs;
+                QueueTopLayerConfirmation(key, 2u);
                 m_resyncRefreshedAfterDiscard++;
                 // 与强制核对同一口径（同一份"必须证明一次"的工作；HH/RQ5 用这个计数断言"丢弃后真的核对了"）。
                 m_memoryVerifySent++;

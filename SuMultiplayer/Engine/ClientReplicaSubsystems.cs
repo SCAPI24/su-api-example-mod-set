@@ -1420,8 +1420,9 @@ namespace SuMultiplayer.Engine
         }
 
         /// <summary>主机：真实发生了树叶季相写入 → 交给 <see cref="Notifier"/>（没有主机就什么也不做）。</summary>
-        internal static void Note(int x, int y, int z)
+        internal static void Note(SubsystemTerrain terrain, int x, int y, int z)
         {
+            (terrain as SuSubsystemTerrain)?.NoteLeavesMutationCell(x, y, z);
             Action<int, int, int> notifier = Notifier;
             if (notifier == null) return;
             notifier(x, y, z);
@@ -1451,7 +1452,8 @@ namespace SuMultiplayer.Engine
             int before = ReadCellValueForSeasons(cell);
             base.OnBlockGenerated(value, x, y, z, isLoaded);
             int after = ReadCellValueForSeasons(cell);
-            if (SeasonLeavesChange.IsLeavesSeasonWrite(before, after)) SeasonLeavesChange.Note(x, y, z);
+            if (SeasonLeavesChange.IsLeavesSeasonWrite(before, after))
+                SeasonLeavesChange.Note(SubsystemTerrain, x, y, z);
             // Source: Survivalcraft/Game/SubsystemDeciduousLeavesBlockBehavior.cs:OnBlockGenerated:62
             // （applyImmediately:true → ChangeCell）与 CreateFallenLeaves（QueueCellChange）
             ReplicaGates.RescueEvolutionCells(SubsystemTerrain);
@@ -1972,6 +1974,9 @@ namespace SuMultiplayer.Engine
         private bool m_clientPersistentTerrainHandlersDisabled;
         private bool m_clientRampFaultLogged;
         private long m_lastFogStatusLogMs;
+        private bool m_weatherTerrainHandlersReplaced;
+        private static readonly MethodInfo s_freezeThawAndDepositSnow = typeof(SubsystemWeather).GetMethod(
+            "FreezeThawAndDepositSnow", BindingFlags.Instance | BindingFlags.NonPublic);
 
         // ---- 客户端视觉推进的反射字段（引擎私有，静态缓存；Source: SubsystemWeather.cs:2-49） ----
         private static readonly FieldInfo s_clientPrecipRamp = typeof(SubsystemWeather).GetField(
@@ -1990,6 +1995,120 @@ namespace SuMultiplayer.Engine
             "<FogProgress>k__BackingField", BindingFlags.NonPublic | BindingFlags.Instance);
         private static readonly FieldInfo s_clientFogSeed = typeof(SubsystemWeather).GetField(
             "<FogSeed>k__BackingField", BindingFlags.NonPublic | BindingFlags.Instance);
+
+        protected override void Load(ValuesDictionary valuesDictionary)
+        {
+            base.Load(valuesDictionary);
+            ReplaceWeatherTerrainHandlers();
+        }
+
+        private void ReplaceWeatherTerrainHandlers()
+        {
+            if (m_weatherTerrainHandlersReplaced) return;
+            if (s_freezeThawAndDepositSnow == null)
+                throw new MissingMethodException(typeof(SubsystemWeather).FullName,
+                    "FreezeThawAndDepositSnow(TerrainChunk, Single, Single, Boolean)");
+
+            object scanner = ReplicaGates.GetField(this, "m_subsystemBlocksScanner", typeof(SubsystemWeather));
+            Delegate scannerHandler = new Action<TerrainChunk>(OnWeatherScanCompleted);
+            Delegate chunkHandler = new Action<TerrainChunk>(OnWeatherChunkInitialized);
+            ReplaceWeatherHandler(scanner, "ScanningChunkCompleted", scannerHandler);
+            ReplaceWeatherHandler(SubsystemTerrain?.TerrainUpdater, "ChunkInitialized", chunkHandler);
+            m_weatherTerrainHandlersReplaced = true;
+        }
+
+        private static void ReplaceWeatherHandler(object owner, string fieldName, Delegate replacement)
+        {
+            if (owner == null)
+                throw new InvalidOperationException("Cannot bind SubsystemWeather." + fieldName +
+                    " because its event owner is unavailable.");
+            FieldInfo field = FindInstanceField(owner.GetType(), fieldName);
+            if (field == null)
+                throw new MissingFieldException(owner.GetType().FullName, fieldName);
+            if (!(field.GetValue(owner) is Delegate handlers))
+                throw new InvalidOperationException("SubsystemWeather." + fieldName + " has no registered handlers.");
+
+            Delegate updated = null;
+            int replaced = 0;
+            foreach (Delegate handler in handlers.GetInvocationList())
+            {
+                if (IsWeatherBaseHandler(handler))
+                {
+                    updated = Delegate.Combine(updated, replacement);
+                    replaced++;
+                }
+                else
+                {
+                    updated = Delegate.Combine(updated, handler);
+                }
+            }
+            if (replaced != 1)
+                throw new InvalidOperationException("Expected one SubsystemWeather callback in " + fieldName +
+                    ", found " + replaced + ".");
+            field.SetValue(owner, updated);
+        }
+
+        private static FieldInfo FindInstanceField(Type type, string name)
+        {
+            for (Type current = type; current != null; current = current.BaseType)
+            {
+                FieldInfo field = current.GetField(name,
+                    BindingFlags.Instance | BindingFlags.NonPublic | BindingFlags.DeclaredOnly);
+                if (field != null) return field;
+            }
+            return null;
+        }
+
+        private static bool IsWeatherBaseHandler(Delegate handler)
+        {
+            Type declaring = handler?.Method?.DeclaringType;
+            return declaring == typeof(SubsystemWeather) ||
+                declaring?.FullName?.StartsWith(
+                    typeof(SubsystemWeather).FullName + "+", StringComparison.Ordinal) == true;
+        }
+
+        private void OnWeatherScanCompleted(TerrainChunk chunk)
+        {
+            if (!ReplicaGates.Allow(SubsystemTerrain, ReplicaMutationSource.Weather)) return;
+            SubsystemGameInfo gameInfo = Project?.FindSubsystem<SubsystemGameInfo>(false);
+            if (gameInfo == null)
+                throw new InvalidOperationException("SubsystemGameInfo is unavailable during weather chunk scan.");
+            if (gameInfo.WorldSettings.EnvironmentBehaviorMode != EnvironmentBehaviorMode.Living) return;
+            RunWeatherMutation(chunk, 0.66f, 0.66f, forceDepositSnow: false);
+        }
+
+        private void OnWeatherChunkInitialized(TerrainChunk chunk)
+        {
+            if (!ReplicaGates.Allow(SubsystemTerrain, ReplicaMutationSource.Weather)) return;
+            SubsystemGameInfo gameInfo = Project?.FindSubsystem<SubsystemGameInfo>(false);
+            if (gameInfo == null)
+                throw new InvalidOperationException("SubsystemGameInfo is unavailable during weather chunk initialization.");
+            if (gameInfo.WorldSettings.EnvironmentBehaviorMode != EnvironmentBehaviorMode.Living) return;
+            bool forceDepositSnow = gameInfo.WorldSettings.AreWeatherEffectsEnabled;
+            RunWeatherMutation(chunk, 1f, 1f, forceDepositSnow);
+            RunWeatherMutation(chunk, 0.66f, 0.66f, forceDepositSnow);
+        }
+
+        private void RunWeatherMutation(TerrainChunk chunk, float freezeProbability,
+            float thawProbability, bool forceDepositSnow)
+        {
+            SuSubsystemTerrain terrain = SubsystemTerrain as SuSubsystemTerrain;
+            if (terrain == null)
+                throw new InvalidOperationException("SuSubsystemWeather requires SuSubsystemTerrain for seasonal mutation classification.");
+            terrain.RunSeasonMutation(chunk, () =>
+            {
+                try
+                {
+                    s_freezeThawAndDepositSnow.Invoke(this,
+                        new object[] { chunk, freezeProbability, thawProbability, forceDepositSnow });
+                }
+                catch (TargetInvocationException e)
+                {
+                    throw new InvalidOperationException("SubsystemWeather seasonal terrain callback failed.",
+                        e.InnerException ?? e);
+                }
+            });
+        }
 
         void IUpdateable.Update(float dt)
         {
@@ -2121,8 +2240,7 @@ namespace SuMultiplayer.Engine
         private bool IsWeatherPersistentHandler(Delegate handler)
         {
             Type declaring = handler?.Method?.DeclaringType;
-            return ReferenceEquals(handler?.Target, this) ||
-                declaring == typeof(SubsystemWeather) ||
+            return declaring == typeof(SubsystemWeather) ||
                 declaring?.FullName?.StartsWith(
                     typeof(SubsystemWeather).FullName + "+", StringComparison.Ordinal) == true;
         }
@@ -3185,7 +3303,7 @@ namespace SuMultiplayer.Engine
                 int after = ReadCellValue(pair.Key);
                 if (after == pair.Value) continue;          // RequiredValue 校验没过 → 没落地，不标记
                 if (!SeasonLeavesChange.IsLeavesSeasonWrite(pair.Value, after)) continue;
-                SeasonLeavesChange.Note(pair.Key.X, pair.Key.Y, pair.Key.Z);
+                SeasonLeavesChange.Note(m_terrain, pair.Key.X, pair.Key.Y, pair.Key.Z);
             }
             m_beforeValues.Clear();
             ReplicaGates.RescueEvolutionCells(m_terrain);

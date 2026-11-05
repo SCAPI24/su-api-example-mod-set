@@ -506,6 +506,10 @@ enum MessageType {
   // 方块破坏表现（碎屑 / 落叶粒子）。只同步表现，不改格；append-only。
   BLOCK_DESTROY_EFFECT = 119;
 
+  // Terrain digest stages: top-layer first sync and patch confirmation.
+  TOP_LAYER_DIGEST_REPORT = 178;
+  TOP_LAYER_DIGEST_VERDICT = 179;
+
   // On-demand terrain resync diagnostic control/sample.
   TERRAIN_DIAGNOSTIC_CONTROL = 151;
   TERRAIN_DIAGNOSTIC_REPORT = 152;

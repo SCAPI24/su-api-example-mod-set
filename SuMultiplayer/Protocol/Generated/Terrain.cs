@@ -27,78 +27,105 @@ namespace SuMultiplayer.Protocol.Terrain {
             "Cg10ZXJyYWluLnByb3RvEgxzdW1wLnRlcnJhaW4aGWdvb2dsZS9wcm90b2J1",
             "Zi9hbnkucHJvdG8iIAoIQ2h1bmtLZXkSCQoBeBgBIAEoERIJCgF6GAIgASgR",
             "IksKCENlbGxFZGl0EgkKAXgYASABKBESCQoBeRgCIAEoBRIJCgF6GAMgASgR",
-            "EhAKCGNvbnRlbnRzGAQgASgFEgwKBGRhdGEYBSABKAUitwIKEUNodW5rRGln",
+            "EhAKCGNvbnRlbnRzGAQgASgFEgwKBGRhdGEYBSABKAUiyAIKEUNodW5rRGln",
             "ZXN0UmVwb3J0EjYKB2VudHJpZXMYASADKAsyJS5zdW1wLnRlcnJhaW4uQ2h1",
             "bmtEaWdlc3RSZXBvcnQuRW50cnkSCwoDZXh0GGQgASgMEiQKBmN1c3RvbRhl",
-            "IAEoCzIULmdvb2dsZS5wcm90b2J1Zi5BbnkatgEKBUVudHJ5EiMKA2tleRgB",
+            "IAEoCzIULmdvb2dsZS5wcm90b2J1Zi5BbnkaxwEKBUVudHJ5EiMKA2tleRgB",
             "IAEoCzIWLnN1bXAudGVycmFpbi5DaHVua0tleRIMCgRoYXNoGAIgASgNEh4K",
             "FmNsaWVudF9jaGFuZ2Vfc2VxdWVuY2UYAyABKAMSGwoTY2xpZW50X2VuZ2lu",
             "ZV9zdGFnZRgEIAEoDRIeChZjbGllbnRfdG9wX2hlaWdodF9oYXNoGAUgASgN",
-            "Eh0KFWNsaWVudF90b3BfYmxvY2tfaGFzaBgGIAEoDSKHAgoMQ2h1bmtWZXJk",
-            "aWN0EjEKB2VudHJpZXMYASADKAsyIC5zdW1wLnRlcnJhaW4uQ2h1bmtWZXJk",
-            "aWN0LkVudHJ5EgsKA2V4dBhkIAEoDBIkCgZjdXN0b20YZSABKAsyFC5nb29n",
-            "bGUucHJvdG9idWYuQW55GpABCgVFbnRyeRIjCgNrZXkYASABKAsyFi5zdW1w",
-            "LnRlcnJhaW4uQ2h1bmtLZXkSMQoHdmVyZGljdBgCIAEoDjIgLnN1bXAudGVy",
-            "cmFpbi5DaHVua0RpZ2VzdFZlcmRpY3QSEQoJaG9zdF9oYXNoGAMgASgNEhwK",
-            "FGhvc3RfY2hhbmdlX3NlcXVlbmNlGAQgASgDIq8BChZUb3BMYXllck1pc21h",
-            "dGNoUmVwb3J0EiMKA2tleRgBIAEoCzIWLnN1bXAudGVycmFpbi5DaHVua0tl",
-            "eRIeChZjbGllbnRfdG9wX2hlaWdodF9oYXNoGAIgASgNEh0KFWNsaWVudF90",
-            "b3BfYmxvY2tfaGFzaBgDIAEoDRILCgNleHQYZCABKAwSJAoGY3VzdG9tGGUg",
-            "ASgLMhQuZ29vZ2xlLnByb3RvYnVmLkFueSLHAQoLVG9wTGF5ZXJGaXgSIwoD",
-            "a2V5GAEgASgLMhYuc3VtcC50ZXJyYWluLkNodW5rS2V5EiUKBWNlbGxzGAIg",
-            "AygLMhYuc3VtcC50ZXJyYWluLkNlbGxFZGl0EhwKFGhvc3RfdG9wX2hlaWdo",
-            "dF9oYXNoGAMgASgNEhsKE2hvc3RfdG9wX2Jsb2NrX2hhc2gYBCABKA0SCwoD",
-            "ZXh0GGQgASgMEiQKBmN1c3RvbRhlIAEoCzIULmdvb2dsZS5wcm90b2J1Zi5B",
-            "bnki4AEKC0NodW5rUmVzeW5jEiMKA2tleRgBIAEoCzIWLnN1bXAudGVycmFp",
-            "bi5DaHVua0tleRINCgVpbmRleBgCIAEoBRINCgVjb3VudBgDIAEoBRIPCgdl",
-            "bnRyaWVzGAQgASgFEg8KB3JlY29yZHMYBSABKAwSFgoJd2F0ZXJtYXJrGAYg",
-            "ASgDSACIAQESEwoLbGVhdmVzX29ubHkYByABKAgSCwoDZXh0GGQgASgMEiQK",
-            "BmN1c3RvbRhlIAEoCzIULmdvb2dsZS5wcm90b2J1Zi5BbnlCDAoKX3dhdGVy",
-            "bWFyayKbAgoKQ2VsbENoYW5nZRIvCgdlbnRyaWVzGAEgAygLMh4uc3VtcC50",
-            "ZXJyYWluLkNlbGxDaGFuZ2UuRW50cnkSEQoJc2VxdWVuY2VzGAIgAygDEg0K",
-            "BWZsYWdzGAMgASgNEhsKE3ByZXZfZGVsaXZlcnlfaW5kZXgYBCABKAMSFgoO",
-            "ZGVsaXZlcnlfaW5kZXgYBSABKAMSCwoDZXh0GGQgASgMEiQKBmN1c3RvbRhl",
-            "IAEoCzIULmdvb2dsZS5wcm90b2J1Zi5BbnkaUgoFRW50cnkSIwoDa2V5GAEg",
-            "ASgLMhYuc3VtcC50ZXJyYWluLkNodW5rS2V5EiQKBGVkaXQYAiABKAsyFi5z",
-            "dW1wLnRlcnJhaW4uQ2VsbEVkaXQiyQEKB0NhdGNoVXASKQoFcGhhc2UYASAB",
-            "KA4yGi5zdW1wLnRlcnJhaW4uQ2F0Y2hVcFBoYXNlEhQKDGxhc3RfYXBwbGll",
-            "ZBgCIAEoAxIMCgRoZWFkGAMgASgDEhYKDmZpcnN0X3JldGFpbmVkGAQgASgD",
-            "EhQKDGNoYW5nZV9jb3VudBgFIAEoBRIOCgZyZWFzb24YBiABKAkSCwoDZXh0",
-            "GGQgASgMEiQKBmN1c3RvbRhlIAEoCzIULmdvb2dsZS5wcm90b2J1Zi5Bbnki",
-            "mwIKDENsaWVudENodW5rcxIoCgRtb2RlGAEgASgOMhouc3VtcC50ZXJyYWlu",
-            "LkNodW5rU2V0TW9kZRITCgtmdWxsX3NldF9pZBgCIAEoBRISCgpwYXJ0X2lu",
-            "ZGV4GAMgASgFEhIKCnBhcnRfY291bnQYBCABKAUSMQoHZW50cmllcxgFIAMo",
-            "CzIgLnN1bXAudGVycmFpbi5DbGllbnRDaHVua3MuRW50cnkSDwoHdmVyc2lv",
-            "bhgGIAEoDRILCgNleHQYZCABKAwSJAoGY3VzdG9tGGUgASgLMhQuZ29vZ2xl",
-            "LnByb3RvYnVmLkFueRotCgVFbnRyeRIJCgF4GAEgASgREgkKAXoYAiABKBES",
-            "DgoGbG9hZGVkGAMgASgIImkKDFZlcmlmeUNodW5rcxImCgZjaHVua3MYASAD",
-            "KAsyFi5zdW1wLnRlcnJhaW4uQ2h1bmtLZXkSCwoDZXh0GGQgASgMEiQKBmN1",
-            "c3RvbRhlIAEoCzIULmdvb2dsZS5wcm90b2J1Zi5BbnkiOgoNQ2lyY3VpdEF0",
-            "dGFjaBIZChFwcmltYXJ5X2NsaWVudF9pZBgBIAEoBRIOCgZ0aWNrZXQYAiAB",
-            "KAwiTgoPQ2lyY3VpdEF0dGFjaGVkEhkKEXByaW1hcnlfY2xpZW50X2lkGAEg",
-            "ASgFEhAKCGFjY2VwdGVkGAIgASgIEg4KBnJlYXNvbhgDIAEoCSIqChRDaXJj",
-            "dWl0VGlja2V0UmVxdWVzdBISCgpyZXF1ZXN0X2lkGAEgASgEIkoKFUNpcmN1",
-            "aXRUaWNrZXRSZXNwb25zZRISCgpyZXF1ZXN0X2lkGAEgASgEEg4KBnRpY2tl",
-            "dBgCIAEoDBINCgVlcnJvchgDIAEoCSp7ChJDaHVua0RpZ2VzdFZlcmRpY3QS",
-            "IgoeQ0hVTktfRElHRVNUX1ZFUkRJQ1RfTk9UX1JFQURZEAASHgoaQ0hVTktf",
-            "RElHRVNUX1ZFUkRJQ1RfTUFUQ0gQARIhCh1DSFVOS19ESUdFU1RfVkVSRElD",
-            "VF9NSVNNQVRDSBACKpkBCgxDYXRjaFVwUGhhc2USGgoWQ0FUQ0hfVVBfUEhB",
-            "U0VfUkVRVUVTVBAAEhgKFENBVENIX1VQX1BIQVNFX0JFR0lOEAESGgoWQ0FU",
-            "Q0hfVVBfUEhBU0VfQkFSUklFUhACEhsKF0NBVENIX1VQX1BIQVNFX1JFSkVD",
-            "VEVEEAMSGgoWQ0FUQ0hfVVBfUEhBU0VfQVBQTElFRBAEKkUKDENodW5rU2V0",
-            "TW9kZRIYChRDSFVOS19TRVRfTU9ERV9ERUxUQRAAEhsKF0NIVU5LX1NFVF9N",
-            "T0RFX0ZVTExfU0VUEAFCI0gBqgIeU3VNdWx0aXBsYXllci5Qcm90b2NvbC5U",
-            "ZXJyYWluYgZwcm90bzM="));
+            "Eh0KFWNsaWVudF90b3BfYmxvY2tfaGFzaBgGIAEoDRIPCgdwdXJwb3NlGAcg",
+            "ASgNIpgCCgxDaHVua1ZlcmRpY3QSMQoHZW50cmllcxgBIAMoCzIgLnN1bXAu",
+            "dGVycmFpbi5DaHVua1ZlcmRpY3QuRW50cnkSCwoDZXh0GGQgASgMEiQKBmN1",
+            "c3RvbRhlIAEoCzIULmdvb2dsZS5wcm90b2J1Zi5BbnkaoQEKBUVudHJ5EiMK",
+            "A2tleRgBIAEoCzIWLnN1bXAudGVycmFpbi5DaHVua0tleRIxCgd2ZXJkaWN0",
+            "GAIgASgOMiAuc3VtcC50ZXJyYWluLkNodW5rRGlnZXN0VmVyZGljdBIRCglo",
+            "b3N0X2hhc2gYAyABKA0SHAoUaG9zdF9jaGFuZ2Vfc2VxdWVuY2UYBCABKAMS",
+            "DwoHcHVycG9zZRgFIAEoDSLlAgoUVG9wTGF5ZXJEaWdlc3RSZXBvcnQSOQoH",
+            "ZW50cmllcxgBIAMoCzIoLnN1bXAudGVycmFpbi5Ub3BMYXllckRpZ2VzdFJl",
+            "cG9ydC5FbnRyeRILCgNleHQYZCABKAwSJAoGY3VzdG9tGGUgASgLMhQuZ29v",
+            "Z2xlLnByb3RvYnVmLkFueRreAQoFRW50cnkSIwoDa2V5GAEgASgLMhYuc3Vt",
+            "cC50ZXJyYWluLkNodW5rS2V5EhcKD3RvcF9oZWlnaHRfaGFzaBgCIAEoDRIW",
+            "Cg50b3BfYmxvY2tfaGFzaBgDIAEoDRIeChZjbGllbnRfY2hhbmdlX3NlcXVl",
+            "bmNlGAQgASgDEi4KBGtpbmQYBSABKA4yIC5zdW1wLnRlcnJhaW4uVG9wTGF5",
+            "ZXJEaWdlc3RLaW5kEhEKCXRvcF9yZWFkeRgGIAEoCBIcChRjb25maXJtYXRp",
+            "b25fcHVycG9zZRgHIAEoDSLgAgoVVG9wTGF5ZXJEaWdlc3RWZXJkaWN0EjoK",
+            "B2VudHJpZXMYASADKAsyKS5zdW1wLnRlcnJhaW4uVG9wTGF5ZXJEaWdlc3RW",
+            "ZXJkaWN0LkVudHJ5EgsKA2V4dBhkIAEoDBIkCgZjdXN0b20YZSABKAsyFC5n",
+            "b29nbGUucHJvdG9idWYuQW55GtcBCgVFbnRyeRIjCgNrZXkYASABKAsyFi5z",
+            "dW1wLnRlcnJhaW4uQ2h1bmtLZXkSMgoGc3RhdHVzGAIgASgOMiIuc3VtcC50",
+            "ZXJyYWluLlRvcExheWVyRGlnZXN0U3RhdHVzEhwKFGhvc3RfdG9wX2hlaWdo",
+            "dF9oYXNoGAMgASgNEhsKE2hvc3RfdG9wX2Jsb2NrX2hhc2gYBCABKA0SHAoU",
+            "aG9zdF9jaGFuZ2Vfc2VxdWVuY2UYBSABKAMSHAoUY29uZmlybWF0aW9uX3B1",
+            "cnBvc2UYBiABKA0irwEKFlRvcExheWVyTWlzbWF0Y2hSZXBvcnQSIwoDa2V5",
+            "GAEgASgLMhYuc3VtcC50ZXJyYWluLkNodW5rS2V5Eh4KFmNsaWVudF90b3Bf",
+            "aGVpZ2h0X2hhc2gYAiABKA0SHQoVY2xpZW50X3RvcF9ibG9ja19oYXNoGAMg",
+            "ASgNEgsKA2V4dBhkIAEoDBIkCgZjdXN0b20YZSABKAsyFC5nb29nbGUucHJv",
+            "dG9idWYuQW55IqUCCgtUb3BMYXllckZpeBIjCgNrZXkYASABKAsyFi5zdW1w",
+            "LnRlcnJhaW4uQ2h1bmtLZXkSJQoFY2VsbHMYAiADKAsyFi5zdW1wLnRlcnJh",
+            "aW4uQ2VsbEVkaXQSHAoUaG9zdF90b3BfaGVpZ2h0X2hhc2gYAyABKA0SGwoT",
+            "aG9zdF90b3BfYmxvY2tfaGFzaBgEIAEoDRImCh5yZXF1aXJlX3RvcF9sYXll",
+            "cl9jb25maXJtYXRpb24YBSABKAgSHAoUY29uZmlybWF0aW9uX3B1cnBvc2UY",
+            "BiABKA0SFgoOZGlnZXN0X3B1cnBvc2UYByABKA0SCwoDZXh0GGQgASgMEiQK",
+            "BmN1c3RvbRhlIAEoCzIULmdvb2dsZS5wcm90b2J1Zi5BbnkioAIKC0NodW5r",
+            "UmVzeW5jEiMKA2tleRgBIAEoCzIWLnN1bXAudGVycmFpbi5DaHVua0tleRIN",
+            "CgVpbmRleBgCIAEoBRINCgVjb3VudBgDIAEoBRIPCgdlbnRyaWVzGAQgASgF",
+            "Eg8KB3JlY29yZHMYBSABKAwSFgoJd2F0ZXJtYXJrGAYgASgDSACIAQESEwoL",
+            "bGVhdmVzX29ubHkYByABKAgSFgoOZGlnZXN0X3B1cnBvc2UYCCABKA0SJgoe",
+            "cmVxdWlyZV90b3BfbGF5ZXJfY29uZmlybWF0aW9uGAkgASgIEgsKA2V4dBhk",
+            "IAEoDBIkCgZjdXN0b20YZSABKAsyFC5nb29nbGUucHJvdG9idWYuQW55QgwK",
+            "Cl93YXRlcm1hcmsimwIKCkNlbGxDaGFuZ2USLwoHZW50cmllcxgBIAMoCzIe",
+            "LnN1bXAudGVycmFpbi5DZWxsQ2hhbmdlLkVudHJ5EhEKCXNlcXVlbmNlcxgC",
+            "IAMoAxINCgVmbGFncxgDIAEoDRIbChNwcmV2X2RlbGl2ZXJ5X2luZGV4GAQg",
+            "ASgDEhYKDmRlbGl2ZXJ5X2luZGV4GAUgASgDEgsKA2V4dBhkIAEoDBIkCgZj",
+            "dXN0b20YZSABKAsyFC5nb29nbGUucHJvdG9idWYuQW55GlIKBUVudHJ5EiMK",
+            "A2tleRgBIAEoCzIWLnN1bXAudGVycmFpbi5DaHVua0tleRIkCgRlZGl0GAIg",
+            "ASgLMhYuc3VtcC50ZXJyYWluLkNlbGxFZGl0IskBCgdDYXRjaFVwEikKBXBo",
+            "YXNlGAEgASgOMhouc3VtcC50ZXJyYWluLkNhdGNoVXBQaGFzZRIUCgxsYXN0",
+            "X2FwcGxpZWQYAiABKAMSDAoEaGVhZBgDIAEoAxIWCg5maXJzdF9yZXRhaW5l",
+            "ZBgEIAEoAxIUCgxjaGFuZ2VfY291bnQYBSABKAUSDgoGcmVhc29uGAYgASgJ",
+            "EgsKA2V4dBhkIAEoDBIkCgZjdXN0b20YZSABKAsyFC5nb29nbGUucHJvdG9i",
+            "dWYuQW55IpsCCgxDbGllbnRDaHVua3MSKAoEbW9kZRgBIAEoDjIaLnN1bXAu",
+            "dGVycmFpbi5DaHVua1NldE1vZGUSEwoLZnVsbF9zZXRfaWQYAiABKAUSEgoK",
+            "cGFydF9pbmRleBgDIAEoBRISCgpwYXJ0X2NvdW50GAQgASgFEjEKB2VudHJp",
+            "ZXMYBSADKAsyIC5zdW1wLnRlcnJhaW4uQ2xpZW50Q2h1bmtzLkVudHJ5Eg8K",
+            "B3ZlcnNpb24YBiABKA0SCwoDZXh0GGQgASgMEiQKBmN1c3RvbRhlIAEoCzIU",
+            "Lmdvb2dsZS5wcm90b2J1Zi5BbnkaLQoFRW50cnkSCQoBeBgBIAEoERIJCgF6",
+            "GAIgASgREg4KBmxvYWRlZBgDIAEoCCJpCgxWZXJpZnlDaHVua3MSJgoGY2h1",
+            "bmtzGAEgAygLMhYuc3VtcC50ZXJyYWluLkNodW5rS2V5EgsKA2V4dBhkIAEo",
+            "DBIkCgZjdXN0b20YZSABKAsyFC5nb29nbGUucHJvdG9idWYuQW55IjoKDUNp",
+            "cmN1aXRBdHRhY2gSGQoRcHJpbWFyeV9jbGllbnRfaWQYASABKAUSDgoGdGlj",
+            "a2V0GAIgASgMIk4KD0NpcmN1aXRBdHRhY2hlZBIZChFwcmltYXJ5X2NsaWVu",
+            "dF9pZBgBIAEoBRIQCghhY2NlcHRlZBgCIAEoCBIOCgZyZWFzb24YAyABKAki",
+            "KgoUQ2lyY3VpdFRpY2tldFJlcXVlc3QSEgoKcmVxdWVzdF9pZBgBIAEoBCJK",
+            "ChVDaXJjdWl0VGlja2V0UmVzcG9uc2USEgoKcmVxdWVzdF9pZBgBIAEoBBIO",
+            "CgZ0aWNrZXQYAiABKAwSDQoFZXJyb3IYAyABKAkqewoSQ2h1bmtEaWdlc3RW",
+            "ZXJkaWN0EiIKHkNIVU5LX0RJR0VTVF9WRVJESUNUX05PVF9SRUFEWRAAEh4K",
+            "GkNIVU5LX0RJR0VTVF9WRVJESUNUX01BVENIEAESIQodQ0hVTktfRElHRVNU",
+            "X1ZFUkRJQ1RfTUlTTUFUQ0gQAipfChJUb3BMYXllckRpZ2VzdEtpbmQSIQod",
+            "VE9QX0xBWUVSX0RJR0VTVF9LSU5EX0lOSVRJQUwQABImCiJUT1BfTEFZRVJf",
+            "RElHRVNUX0tJTkRfQ09ORklSTUFUSU9OEAEqiQEKFFRvcExheWVyRGlnZXN0",
+            "U3RhdHVzEiMKH1RPUF9MQVlFUl9ESUdFU1RfU1RBVFVTX1BFTkRJTkcQABIl",
+            "CiFUT1BfTEFZRVJfRElHRVNUX1NUQVRVU19DT05GSVJNRUQQARIlCiFUT1Bf",
+            "TEFZRVJfRElHRVNUX1NUQVRVU19OT1RfUkVBRFkQAiqZAQoMQ2F0Y2hVcFBo",
+            "YXNlEhoKFkNBVENIX1VQX1BIQVNFX1JFUVVFU1QQABIYChRDQVRDSF9VUF9Q",
+            "SEFTRV9CRUdJThABEhoKFkNBVENIX1VQX1BIQVNFX0JBUlJJRVIQAhIbChdD",
+            "QVRDSF9VUF9QSEFTRV9SRUpFQ1RFRBADEhoKFkNBVENIX1VQX1BIQVNFX0FQ",
+            "UExJRUQQBCpFCgxDaHVua1NldE1vZGUSGAoUQ0hVTktfU0VUX01PREVfREVM",
+            "VEEQABIbChdDSFVOS19TRVRfTU9ERV9GVUxMX1NFVBABQiNIAaoCHlN1TXVs",
+            "dGlwbGF5ZXIuUHJvdG9jb2wuVGVycmFpbmIGcHJvdG8z"));
       descriptor = pbr::FileDescriptor.FromGeneratedCode(descriptorData,
           new pbr::FileDescriptor[] { global::Google.Protobuf.WellKnownTypes.AnyReflection.Descriptor, },
-          new pbr::GeneratedClrTypeInfo(new[] {typeof(global::SuMultiplayer.Protocol.Terrain.ChunkDigestVerdict), typeof(global::SuMultiplayer.Protocol.Terrain.CatchUpPhase), typeof(global::SuMultiplayer.Protocol.Terrain.ChunkSetMode), }, null, new pbr::GeneratedClrTypeInfo[] {
+          new pbr::GeneratedClrTypeInfo(new[] {typeof(global::SuMultiplayer.Protocol.Terrain.ChunkDigestVerdict), typeof(global::SuMultiplayer.Protocol.Terrain.TopLayerDigestKind), typeof(global::SuMultiplayer.Protocol.Terrain.TopLayerDigestStatus), typeof(global::SuMultiplayer.Protocol.Terrain.CatchUpPhase), typeof(global::SuMultiplayer.Protocol.Terrain.ChunkSetMode), }, null, new pbr::GeneratedClrTypeInfo[] {
             new pbr::GeneratedClrTypeInfo(typeof(global::SuMultiplayer.Protocol.Terrain.ChunkKey), global::SuMultiplayer.Protocol.Terrain.ChunkKey.Parser, new[]{ "X", "Z" }, null, null, null, null),
             new pbr::GeneratedClrTypeInfo(typeof(global::SuMultiplayer.Protocol.Terrain.CellEdit), global::SuMultiplayer.Protocol.Terrain.CellEdit.Parser, new[]{ "X", "Y", "Z", "Contents", "Data" }, null, null, null, null),
-            new pbr::GeneratedClrTypeInfo(typeof(global::SuMultiplayer.Protocol.Terrain.ChunkDigestReport), global::SuMultiplayer.Protocol.Terrain.ChunkDigestReport.Parser, new[]{ "Entries", "Ext", "Custom" }, null, null, null, new pbr::GeneratedClrTypeInfo[] { new pbr::GeneratedClrTypeInfo(typeof(global::SuMultiplayer.Protocol.Terrain.ChunkDigestReport.Types.Entry), global::SuMultiplayer.Protocol.Terrain.ChunkDigestReport.Types.Entry.Parser, new[]{ "Key", "Hash", "ClientChangeSequence", "ClientEngineStage", "ClientTopHeightHash", "ClientTopBlockHash" }, null, null, null, null)}),
-            new pbr::GeneratedClrTypeInfo(typeof(global::SuMultiplayer.Protocol.Terrain.ChunkVerdict), global::SuMultiplayer.Protocol.Terrain.ChunkVerdict.Parser, new[]{ "Entries", "Ext", "Custom" }, null, null, null, new pbr::GeneratedClrTypeInfo[] { new pbr::GeneratedClrTypeInfo(typeof(global::SuMultiplayer.Protocol.Terrain.ChunkVerdict.Types.Entry), global::SuMultiplayer.Protocol.Terrain.ChunkVerdict.Types.Entry.Parser, new[]{ "Key", "Verdict", "HostHash", "HostChangeSequence" }, null, null, null, null)}),
+            new pbr::GeneratedClrTypeInfo(typeof(global::SuMultiplayer.Protocol.Terrain.ChunkDigestReport), global::SuMultiplayer.Protocol.Terrain.ChunkDigestReport.Parser, new[]{ "Entries", "Ext", "Custom" }, null, null, null, new pbr::GeneratedClrTypeInfo[] { new pbr::GeneratedClrTypeInfo(typeof(global::SuMultiplayer.Protocol.Terrain.ChunkDigestReport.Types.Entry), global::SuMultiplayer.Protocol.Terrain.ChunkDigestReport.Types.Entry.Parser, new[]{ "Key", "Hash", "ClientChangeSequence", "ClientEngineStage", "ClientTopHeightHash", "ClientTopBlockHash", "Purpose" }, null, null, null, null)}),
+            new pbr::GeneratedClrTypeInfo(typeof(global::SuMultiplayer.Protocol.Terrain.ChunkVerdict), global::SuMultiplayer.Protocol.Terrain.ChunkVerdict.Parser, new[]{ "Entries", "Ext", "Custom" }, null, null, null, new pbr::GeneratedClrTypeInfo[] { new pbr::GeneratedClrTypeInfo(typeof(global::SuMultiplayer.Protocol.Terrain.ChunkVerdict.Types.Entry), global::SuMultiplayer.Protocol.Terrain.ChunkVerdict.Types.Entry.Parser, new[]{ "Key", "Verdict", "HostHash", "HostChangeSequence", "Purpose" }, null, null, null, null)}),
+            new pbr::GeneratedClrTypeInfo(typeof(global::SuMultiplayer.Protocol.Terrain.TopLayerDigestReport), global::SuMultiplayer.Protocol.Terrain.TopLayerDigestReport.Parser, new[]{ "Entries", "Ext", "Custom" }, null, null, null, new pbr::GeneratedClrTypeInfo[] { new pbr::GeneratedClrTypeInfo(typeof(global::SuMultiplayer.Protocol.Terrain.TopLayerDigestReport.Types.Entry), global::SuMultiplayer.Protocol.Terrain.TopLayerDigestReport.Types.Entry.Parser, new[]{ "Key", "TopHeightHash", "TopBlockHash", "ClientChangeSequence", "Kind", "TopReady", "ConfirmationPurpose" }, null, null, null, null)}),
+            new pbr::GeneratedClrTypeInfo(typeof(global::SuMultiplayer.Protocol.Terrain.TopLayerDigestVerdict), global::SuMultiplayer.Protocol.Terrain.TopLayerDigestVerdict.Parser, new[]{ "Entries", "Ext", "Custom" }, null, null, null, new pbr::GeneratedClrTypeInfo[] { new pbr::GeneratedClrTypeInfo(typeof(global::SuMultiplayer.Protocol.Terrain.TopLayerDigestVerdict.Types.Entry), global::SuMultiplayer.Protocol.Terrain.TopLayerDigestVerdict.Types.Entry.Parser, new[]{ "Key", "Status", "HostTopHeightHash", "HostTopBlockHash", "HostChangeSequence", "ConfirmationPurpose" }, null, null, null, null)}),
             new pbr::GeneratedClrTypeInfo(typeof(global::SuMultiplayer.Protocol.Terrain.TopLayerMismatchReport), global::SuMultiplayer.Protocol.Terrain.TopLayerMismatchReport.Parser, new[]{ "Key", "ClientTopHeightHash", "ClientTopBlockHash", "Ext", "Custom" }, null, null, null, null),
-            new pbr::GeneratedClrTypeInfo(typeof(global::SuMultiplayer.Protocol.Terrain.TopLayerFix), global::SuMultiplayer.Protocol.Terrain.TopLayerFix.Parser, new[]{ "Key", "Cells", "HostTopHeightHash", "HostTopBlockHash", "Ext", "Custom" }, null, null, null, null),
-            new pbr::GeneratedClrTypeInfo(typeof(global::SuMultiplayer.Protocol.Terrain.ChunkResync), global::SuMultiplayer.Protocol.Terrain.ChunkResync.Parser, new[]{ "Key", "Index", "Count", "Entries", "Records", "Watermark", "LeavesOnly", "Ext", "Custom" }, new[]{ "Watermark" }, null, null, null),
+            new pbr::GeneratedClrTypeInfo(typeof(global::SuMultiplayer.Protocol.Terrain.TopLayerFix), global::SuMultiplayer.Protocol.Terrain.TopLayerFix.Parser, new[]{ "Key", "Cells", "HostTopHeightHash", "HostTopBlockHash", "RequireTopLayerConfirmation", "ConfirmationPurpose", "DigestPurpose", "Ext", "Custom" }, null, null, null, null),
+            new pbr::GeneratedClrTypeInfo(typeof(global::SuMultiplayer.Protocol.Terrain.ChunkResync), global::SuMultiplayer.Protocol.Terrain.ChunkResync.Parser, new[]{ "Key", "Index", "Count", "Entries", "Records", "Watermark", "LeavesOnly", "DigestPurpose", "RequireTopLayerConfirmation", "Ext", "Custom" }, new[]{ "Watermark" }, null, null, null),
             new pbr::GeneratedClrTypeInfo(typeof(global::SuMultiplayer.Protocol.Terrain.CellChange), global::SuMultiplayer.Protocol.Terrain.CellChange.Parser, new[]{ "Entries", "Sequences", "Flags", "PrevDeliveryIndex", "DeliveryIndex", "Ext", "Custom" }, null, null, null, new pbr::GeneratedClrTypeInfo[] { new pbr::GeneratedClrTypeInfo(typeof(global::SuMultiplayer.Protocol.Terrain.CellChange.Types.Entry), global::SuMultiplayer.Protocol.Terrain.CellChange.Types.Entry.Parser, new[]{ "Key", "Edit" }, null, null, null, null)}),
             new pbr::GeneratedClrTypeInfo(typeof(global::SuMultiplayer.Protocol.Terrain.CatchUp), global::SuMultiplayer.Protocol.Terrain.CatchUp.Parser, new[]{ "Phase", "LastApplied", "Head", "FirstRetained", "ChangeCount", "Reason", "Ext", "Custom" }, null, null, null, null),
             new pbr::GeneratedClrTypeInfo(typeof(global::SuMultiplayer.Protocol.Terrain.ClientChunks), global::SuMultiplayer.Protocol.Terrain.ClientChunks.Parser, new[]{ "Mode", "FullSetId", "PartIndex", "PartCount", "Entries", "Version", "Ext", "Custom" }, null, null, null, new pbr::GeneratedClrTypeInfo[] { new pbr::GeneratedClrTypeInfo(typeof(global::SuMultiplayer.Protocol.Terrain.ClientChunks.Types.Entry), global::SuMultiplayer.Protocol.Terrain.ClientChunks.Types.Entry.Parser, new[]{ "X", "Z", "Loaded" }, null, null, null, null)}),
@@ -120,6 +147,17 @@ namespace SuMultiplayer.Protocol.Terrain {
     [pbr::OriginalName("CHUNK_DIGEST_VERDICT_NOT_READY")] NotReady = 0,
     [pbr::OriginalName("CHUNK_DIGEST_VERDICT_MATCH")] Match = 1,
     [pbr::OriginalName("CHUNK_DIGEST_VERDICT_MISMATCH")] Mismatch = 2,
+  }
+
+  public enum TopLayerDigestKind {
+    [pbr::OriginalName("TOP_LAYER_DIGEST_KIND_INITIAL")] Initial = 0,
+    [pbr::OriginalName("TOP_LAYER_DIGEST_KIND_CONFIRMATION")] Confirmation = 1,
+  }
+
+  public enum TopLayerDigestStatus {
+    [pbr::OriginalName("TOP_LAYER_DIGEST_STATUS_PENDING")] Pending = 0,
+    [pbr::OriginalName("TOP_LAYER_DIGEST_STATUS_CONFIRMED")] Confirmed = 1,
+    [pbr::OriginalName("TOP_LAYER_DIGEST_STATUS_NOT_READY")] NotReady = 2,
   }
 
   /// <summary>
@@ -1052,6 +1090,7 @@ namespace SuMultiplayer.Protocol.Terrain {
           clientEngineStage_ = other.clientEngineStage_;
           clientTopHeightHash_ = other.clientTopHeightHash_;
           clientTopBlockHash_ = other.clientTopBlockHash_;
+          purpose_ = other.purpose_;
           _unknownFields = pb::UnknownFieldSet.Clone(other._unknownFields);
         }
 
@@ -1151,6 +1190,21 @@ namespace SuMultiplayer.Protocol.Terrain {
           }
         }
 
+        /// <summary>Field number for the "purpose" field.</summary>
+        public const int PurposeFieldNumber = 7;
+        private uint purpose_;
+        /// <summary>
+        /// 1 = final footprint digest (center chunk and four orthogonal neighbors).
+        /// </summary>
+        [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+        [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+        public uint Purpose {
+          get { return purpose_; }
+          set {
+            purpose_ = value;
+          }
+        }
+
         [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
         [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
         public override bool Equals(object other) {
@@ -1172,6 +1226,7 @@ namespace SuMultiplayer.Protocol.Terrain {
           if (ClientEngineStage != other.ClientEngineStage) return false;
           if (ClientTopHeightHash != other.ClientTopHeightHash) return false;
           if (ClientTopBlockHash != other.ClientTopBlockHash) return false;
+          if (Purpose != other.Purpose) return false;
           return Equals(_unknownFields, other._unknownFields);
         }
 
@@ -1185,6 +1240,7 @@ namespace SuMultiplayer.Protocol.Terrain {
           if (ClientEngineStage != 0) hash ^= ClientEngineStage.GetHashCode();
           if (ClientTopHeightHash != 0) hash ^= ClientTopHeightHash.GetHashCode();
           if (ClientTopBlockHash != 0) hash ^= ClientTopBlockHash.GetHashCode();
+          if (Purpose != 0) hash ^= Purpose.GetHashCode();
           if (_unknownFields != null) {
             hash ^= _unknownFields.GetHashCode();
           }
@@ -1227,6 +1283,10 @@ namespace SuMultiplayer.Protocol.Terrain {
             output.WriteRawTag(48);
             output.WriteUInt32(ClientTopBlockHash);
           }
+          if (Purpose != 0) {
+            output.WriteRawTag(56);
+            output.WriteUInt32(Purpose);
+          }
           if (_unknownFields != null) {
             _unknownFields.WriteTo(output);
           }
@@ -1261,6 +1321,10 @@ namespace SuMultiplayer.Protocol.Terrain {
             output.WriteRawTag(48);
             output.WriteUInt32(ClientTopBlockHash);
           }
+          if (Purpose != 0) {
+            output.WriteRawTag(56);
+            output.WriteUInt32(Purpose);
+          }
           if (_unknownFields != null) {
             _unknownFields.WriteTo(ref output);
           }
@@ -1288,6 +1352,9 @@ namespace SuMultiplayer.Protocol.Terrain {
           }
           if (ClientTopBlockHash != 0) {
             size += 1 + pb::CodedOutputStream.ComputeUInt32Size(ClientTopBlockHash);
+          }
+          if (Purpose != 0) {
+            size += 1 + pb::CodedOutputStream.ComputeUInt32Size(Purpose);
           }
           if (_unknownFields != null) {
             size += _unknownFields.CalculateSize();
@@ -1321,6 +1388,9 @@ namespace SuMultiplayer.Protocol.Terrain {
           }
           if (other.ClientTopBlockHash != 0) {
             ClientTopBlockHash = other.ClientTopBlockHash;
+          }
+          if (other.Purpose != 0) {
+            Purpose = other.Purpose;
           }
           _unknownFields = pb::UnknownFieldSet.MergeFrom(_unknownFields, other._unknownFields);
         }
@@ -1368,6 +1438,10 @@ namespace SuMultiplayer.Protocol.Terrain {
                 ClientTopBlockHash = input.ReadUInt32();
                 break;
               }
+              case 56: {
+                Purpose = input.ReadUInt32();
+                break;
+              }
             }
           }
         #endif
@@ -1412,6 +1486,10 @@ namespace SuMultiplayer.Protocol.Terrain {
               }
               case 48: {
                 ClientTopBlockHash = input.ReadUInt32();
+                break;
+              }
+              case 56: {
+                Purpose = input.ReadUInt32();
                 break;
               }
             }
@@ -1744,6 +1822,7 @@ namespace SuMultiplayer.Protocol.Terrain {
           verdict_ = other.verdict_;
           hostHash_ = other.hostHash_;
           hostChangeSequence_ = other.hostChangeSequence_;
+          purpose_ = other.purpose_;
           _unknownFields = pb::UnknownFieldSet.Clone(other._unknownFields);
         }
 
@@ -1805,6 +1884,21 @@ namespace SuMultiplayer.Protocol.Terrain {
           }
         }
 
+        /// <summary>Field number for the "purpose" field.</summary>
+        public const int PurposeFieldNumber = 5;
+        private uint purpose_;
+        /// <summary>
+        /// Echo of ChunkDigestReport.Entry.purpose.
+        /// </summary>
+        [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+        [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+        public uint Purpose {
+          get { return purpose_; }
+          set {
+            purpose_ = value;
+          }
+        }
+
         [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
         [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
         public override bool Equals(object other) {
@@ -1824,6 +1918,7 @@ namespace SuMultiplayer.Protocol.Terrain {
           if (Verdict != other.Verdict) return false;
           if (HostHash != other.HostHash) return false;
           if (HostChangeSequence != other.HostChangeSequence) return false;
+          if (Purpose != other.Purpose) return false;
           return Equals(_unknownFields, other._unknownFields);
         }
 
@@ -1835,6 +1930,7 @@ namespace SuMultiplayer.Protocol.Terrain {
           if (Verdict != global::SuMultiplayer.Protocol.Terrain.ChunkDigestVerdict.NotReady) hash ^= Verdict.GetHashCode();
           if (HostHash != 0) hash ^= HostHash.GetHashCode();
           if (HostChangeSequence != 0L) hash ^= HostChangeSequence.GetHashCode();
+          if (Purpose != 0) hash ^= Purpose.GetHashCode();
           if (_unknownFields != null) {
             hash ^= _unknownFields.GetHashCode();
           }
@@ -1869,6 +1965,10 @@ namespace SuMultiplayer.Protocol.Terrain {
             output.WriteRawTag(32);
             output.WriteInt64(HostChangeSequence);
           }
+          if (Purpose != 0) {
+            output.WriteRawTag(40);
+            output.WriteUInt32(Purpose);
+          }
           if (_unknownFields != null) {
             _unknownFields.WriteTo(output);
           }
@@ -1895,6 +1995,10 @@ namespace SuMultiplayer.Protocol.Terrain {
             output.WriteRawTag(32);
             output.WriteInt64(HostChangeSequence);
           }
+          if (Purpose != 0) {
+            output.WriteRawTag(40);
+            output.WriteUInt32(Purpose);
+          }
           if (_unknownFields != null) {
             _unknownFields.WriteTo(ref output);
           }
@@ -1916,6 +2020,9 @@ namespace SuMultiplayer.Protocol.Terrain {
           }
           if (HostChangeSequence != 0L) {
             size += 1 + pb::CodedOutputStream.ComputeInt64Size(HostChangeSequence);
+          }
+          if (Purpose != 0) {
+            size += 1 + pb::CodedOutputStream.ComputeUInt32Size(Purpose);
           }
           if (_unknownFields != null) {
             size += _unknownFields.CalculateSize();
@@ -1943,6 +2050,9 @@ namespace SuMultiplayer.Protocol.Terrain {
           }
           if (other.HostChangeSequence != 0L) {
             HostChangeSequence = other.HostChangeSequence;
+          }
+          if (other.Purpose != 0) {
+            Purpose = other.Purpose;
           }
           _unknownFields = pb::UnknownFieldSet.MergeFrom(_unknownFields, other._unknownFields);
         }
@@ -1980,6 +2090,10 @@ namespace SuMultiplayer.Protocol.Terrain {
               }
               case 32: {
                 HostChangeSequence = input.ReadInt64();
+                break;
+              }
+              case 40: {
+                Purpose = input.ReadUInt32();
                 break;
               }
             }
@@ -2020,6 +2134,1393 @@ namespace SuMultiplayer.Protocol.Terrain {
                 HostChangeSequence = input.ReadInt64();
                 break;
               }
+              case 40: {
+                Purpose = input.ReadUInt32();
+                break;
+              }
+            }
+          }
+        }
+        #endif
+
+      }
+
+    }
+    #endregion
+
+  }
+
+  /// <summary>
+  /// Client -> host: first/top-layer sync for newly loaded chunks and patch confirmations.
+  /// </summary>
+  [global::System.Diagnostics.DebuggerDisplayAttribute("{ToString(),nq}")]
+  public sealed partial class TopLayerDigestReport : pb::IMessage<TopLayerDigestReport>
+  #if !GOOGLE_PROTOBUF_REFSTRUCT_COMPATIBILITY_MODE
+      , pb::IBufferMessage
+  #endif
+  {
+    private static readonly pb::MessageParser<TopLayerDigestReport> _parser = new pb::MessageParser<TopLayerDigestReport>(() => new TopLayerDigestReport());
+    private pb::UnknownFieldSet _unknownFields;
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public static pb::MessageParser<TopLayerDigestReport> Parser { get { return _parser; } }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public static pbr::MessageDescriptor Descriptor {
+      get { return global::SuMultiplayer.Protocol.Terrain.TerrainReflection.Descriptor.MessageTypes[4]; }
+    }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    pbr::MessageDescriptor pb::IMessage.Descriptor {
+      get { return Descriptor; }
+    }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public TopLayerDigestReport() {
+      OnConstruction();
+    }
+
+    partial void OnConstruction();
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public TopLayerDigestReport(TopLayerDigestReport other) : this() {
+      entries_ = other.entries_.Clone();
+      ext_ = other.ext_;
+      custom_ = other.custom_ != null ? other.custom_.Clone() : null;
+      _unknownFields = pb::UnknownFieldSet.Clone(other._unknownFields);
+    }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public TopLayerDigestReport Clone() {
+      return new TopLayerDigestReport(this);
+    }
+
+    /// <summary>Field number for the "entries" field.</summary>
+    public const int EntriesFieldNumber = 1;
+    private static readonly pb::FieldCodec<global::SuMultiplayer.Protocol.Terrain.TopLayerDigestReport.Types.Entry> _repeated_entries_codec
+        = pb::FieldCodec.ForMessage(10, global::SuMultiplayer.Protocol.Terrain.TopLayerDigestReport.Types.Entry.Parser);
+    private readonly pbc::RepeatedField<global::SuMultiplayer.Protocol.Terrain.TopLayerDigestReport.Types.Entry> entries_ = new pbc::RepeatedField<global::SuMultiplayer.Protocol.Terrain.TopLayerDigestReport.Types.Entry>();
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public pbc::RepeatedField<global::SuMultiplayer.Protocol.Terrain.TopLayerDigestReport.Types.Entry> Entries {
+      get { return entries_; }
+    }
+
+    /// <summary>Field number for the "ext" field.</summary>
+    public const int ExtFieldNumber = 100;
+    private pb::ByteString ext_ = pb::ByteString.Empty;
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public pb::ByteString Ext {
+      get { return ext_; }
+      set {
+        ext_ = pb::ProtoPreconditions.CheckNotNull(value, "value");
+      }
+    }
+
+    /// <summary>Field number for the "custom" field.</summary>
+    public const int CustomFieldNumber = 101;
+    private global::Google.Protobuf.WellKnownTypes.Any custom_;
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public global::Google.Protobuf.WellKnownTypes.Any Custom {
+      get { return custom_; }
+      set {
+        custom_ = value;
+      }
+    }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public override bool Equals(object other) {
+      return Equals(other as TopLayerDigestReport);
+    }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public bool Equals(TopLayerDigestReport other) {
+      if (ReferenceEquals(other, null)) {
+        return false;
+      }
+      if (ReferenceEquals(other, this)) {
+        return true;
+      }
+      if(!entries_.Equals(other.entries_)) return false;
+      if (Ext != other.Ext) return false;
+      if (!object.Equals(Custom, other.Custom)) return false;
+      return Equals(_unknownFields, other._unknownFields);
+    }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public override int GetHashCode() {
+      int hash = 1;
+      hash ^= entries_.GetHashCode();
+      if (Ext.Length != 0) hash ^= Ext.GetHashCode();
+      if (custom_ != null) hash ^= Custom.GetHashCode();
+      if (_unknownFields != null) {
+        hash ^= _unknownFields.GetHashCode();
+      }
+      return hash;
+    }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public override string ToString() {
+      return pb::JsonFormatter.ToDiagnosticString(this);
+    }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public void WriteTo(pb::CodedOutputStream output) {
+    #if !GOOGLE_PROTOBUF_REFSTRUCT_COMPATIBILITY_MODE
+      output.WriteRawMessage(this);
+    #else
+      entries_.WriteTo(output, _repeated_entries_codec);
+      if (Ext.Length != 0) {
+        output.WriteRawTag(162, 6);
+        output.WriteBytes(Ext);
+      }
+      if (custom_ != null) {
+        output.WriteRawTag(170, 6);
+        output.WriteMessage(Custom);
+      }
+      if (_unknownFields != null) {
+        _unknownFields.WriteTo(output);
+      }
+    #endif
+    }
+
+    #if !GOOGLE_PROTOBUF_REFSTRUCT_COMPATIBILITY_MODE
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    void pb::IBufferMessage.InternalWriteTo(ref pb::WriteContext output) {
+      entries_.WriteTo(ref output, _repeated_entries_codec);
+      if (Ext.Length != 0) {
+        output.WriteRawTag(162, 6);
+        output.WriteBytes(Ext);
+      }
+      if (custom_ != null) {
+        output.WriteRawTag(170, 6);
+        output.WriteMessage(Custom);
+      }
+      if (_unknownFields != null) {
+        _unknownFields.WriteTo(ref output);
+      }
+    }
+    #endif
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public int CalculateSize() {
+      int size = 0;
+      size += entries_.CalculateSize(_repeated_entries_codec);
+      if (Ext.Length != 0) {
+        size += 2 + pb::CodedOutputStream.ComputeBytesSize(Ext);
+      }
+      if (custom_ != null) {
+        size += 2 + pb::CodedOutputStream.ComputeMessageSize(Custom);
+      }
+      if (_unknownFields != null) {
+        size += _unknownFields.CalculateSize();
+      }
+      return size;
+    }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public void MergeFrom(TopLayerDigestReport other) {
+      if (other == null) {
+        return;
+      }
+      entries_.Add(other.entries_);
+      if (other.Ext.Length != 0) {
+        Ext = other.Ext;
+      }
+      if (other.custom_ != null) {
+        if (custom_ == null) {
+          Custom = new global::Google.Protobuf.WellKnownTypes.Any();
+        }
+        Custom.MergeFrom(other.Custom);
+      }
+      _unknownFields = pb::UnknownFieldSet.MergeFrom(_unknownFields, other._unknownFields);
+    }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public void MergeFrom(pb::CodedInputStream input) {
+    #if !GOOGLE_PROTOBUF_REFSTRUCT_COMPATIBILITY_MODE
+      input.ReadRawMessage(this);
+    #else
+      uint tag;
+      while ((tag = input.ReadTag()) != 0) {
+      if ((tag & 7) == 4) {
+        // Abort on any end group tag.
+        return;
+      }
+      switch(tag) {
+          default:
+            _unknownFields = pb::UnknownFieldSet.MergeFieldFrom(_unknownFields, input);
+            break;
+          case 10: {
+            entries_.AddEntriesFrom(input, _repeated_entries_codec);
+            break;
+          }
+          case 802: {
+            Ext = input.ReadBytes();
+            break;
+          }
+          case 810: {
+            if (custom_ == null) {
+              Custom = new global::Google.Protobuf.WellKnownTypes.Any();
+            }
+            input.ReadMessage(Custom);
+            break;
+          }
+        }
+      }
+    #endif
+    }
+
+    #if !GOOGLE_PROTOBUF_REFSTRUCT_COMPATIBILITY_MODE
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    void pb::IBufferMessage.InternalMergeFrom(ref pb::ParseContext input) {
+      uint tag;
+      while ((tag = input.ReadTag()) != 0) {
+      if ((tag & 7) == 4) {
+        // Abort on any end group tag.
+        return;
+      }
+      switch(tag) {
+          default:
+            _unknownFields = pb::UnknownFieldSet.MergeFieldFrom(_unknownFields, ref input);
+            break;
+          case 10: {
+            entries_.AddEntriesFrom(ref input, _repeated_entries_codec);
+            break;
+          }
+          case 802: {
+            Ext = input.ReadBytes();
+            break;
+          }
+          case 810: {
+            if (custom_ == null) {
+              Custom = new global::Google.Protobuf.WellKnownTypes.Any();
+            }
+            input.ReadMessage(Custom);
+            break;
+          }
+        }
+      }
+    }
+    #endif
+
+    #region Nested types
+    /// <summary>Container for nested types declared in the TopLayerDigestReport message type.</summary>
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public static partial class Types {
+      [global::System.Diagnostics.DebuggerDisplayAttribute("{ToString(),nq}")]
+      public sealed partial class Entry : pb::IMessage<Entry>
+      #if !GOOGLE_PROTOBUF_REFSTRUCT_COMPATIBILITY_MODE
+          , pb::IBufferMessage
+      #endif
+      {
+        private static readonly pb::MessageParser<Entry> _parser = new pb::MessageParser<Entry>(() => new Entry());
+        private pb::UnknownFieldSet _unknownFields;
+        [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+        [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+        public static pb::MessageParser<Entry> Parser { get { return _parser; } }
+
+        [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+        [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+        public static pbr::MessageDescriptor Descriptor {
+          get { return global::SuMultiplayer.Protocol.Terrain.TopLayerDigestReport.Descriptor.NestedTypes[0]; }
+        }
+
+        [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+        [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+        pbr::MessageDescriptor pb::IMessage.Descriptor {
+          get { return Descriptor; }
+        }
+
+        [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+        [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+        public Entry() {
+          OnConstruction();
+        }
+
+        partial void OnConstruction();
+
+        [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+        [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+        public Entry(Entry other) : this() {
+          key_ = other.key_ != null ? other.key_.Clone() : null;
+          topHeightHash_ = other.topHeightHash_;
+          topBlockHash_ = other.topBlockHash_;
+          clientChangeSequence_ = other.clientChangeSequence_;
+          kind_ = other.kind_;
+          topReady_ = other.topReady_;
+          confirmationPurpose_ = other.confirmationPurpose_;
+          _unknownFields = pb::UnknownFieldSet.Clone(other._unknownFields);
+        }
+
+        [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+        [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+        public Entry Clone() {
+          return new Entry(this);
+        }
+
+        /// <summary>Field number for the "key" field.</summary>
+        public const int KeyFieldNumber = 1;
+        private global::SuMultiplayer.Protocol.Terrain.ChunkKey key_;
+        [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+        [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+        public global::SuMultiplayer.Protocol.Terrain.ChunkKey Key {
+          get { return key_; }
+          set {
+            key_ = value;
+          }
+        }
+
+        /// <summary>Field number for the "top_height_hash" field.</summary>
+        public const int TopHeightHashFieldNumber = 2;
+        private uint topHeightHash_;
+        [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+        [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+        public uint TopHeightHash {
+          get { return topHeightHash_; }
+          set {
+            topHeightHash_ = value;
+          }
+        }
+
+        /// <summary>Field number for the "top_block_hash" field.</summary>
+        public const int TopBlockHashFieldNumber = 3;
+        private uint topBlockHash_;
+        [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+        [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+        public uint TopBlockHash {
+          get { return topBlockHash_; }
+          set {
+            topBlockHash_ = value;
+          }
+        }
+
+        /// <summary>Field number for the "client_change_sequence" field.</summary>
+        public const int ClientChangeSequenceFieldNumber = 4;
+        private long clientChangeSequence_;
+        [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+        [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+        public long ClientChangeSequence {
+          get { return clientChangeSequence_; }
+          set {
+            clientChangeSequence_ = value;
+          }
+        }
+
+        /// <summary>Field number for the "kind" field.</summary>
+        public const int KindFieldNumber = 5;
+        private global::SuMultiplayer.Protocol.Terrain.TopLayerDigestKind kind_ = global::SuMultiplayer.Protocol.Terrain.TopLayerDigestKind.Initial;
+        [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+        [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+        public global::SuMultiplayer.Protocol.Terrain.TopLayerDigestKind Kind {
+          get { return kind_; }
+          set {
+            kind_ = value;
+          }
+        }
+
+        /// <summary>Field number for the "top_ready" field.</summary>
+        public const int TopReadyFieldNumber = 6;
+        private bool topReady_;
+        [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+        [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+        public bool TopReady {
+          get { return topReady_; }
+          set {
+            topReady_ = value;
+          }
+        }
+
+        /// <summary>Field number for the "confirmation_purpose" field.</summary>
+        public const int ConfirmationPurposeFieldNumber = 7;
+        private uint confirmationPurpose_;
+        [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+        [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+        public uint ConfirmationPurpose {
+          get { return confirmationPurpose_; }
+          set {
+            confirmationPurpose_ = value;
+          }
+        }
+
+        [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+        [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+        public override bool Equals(object other) {
+          return Equals(other as Entry);
+        }
+
+        [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+        [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+        public bool Equals(Entry other) {
+          if (ReferenceEquals(other, null)) {
+            return false;
+          }
+          if (ReferenceEquals(other, this)) {
+            return true;
+          }
+          if (!object.Equals(Key, other.Key)) return false;
+          if (TopHeightHash != other.TopHeightHash) return false;
+          if (TopBlockHash != other.TopBlockHash) return false;
+          if (ClientChangeSequence != other.ClientChangeSequence) return false;
+          if (Kind != other.Kind) return false;
+          if (TopReady != other.TopReady) return false;
+          if (ConfirmationPurpose != other.ConfirmationPurpose) return false;
+          return Equals(_unknownFields, other._unknownFields);
+        }
+
+        [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+        [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+        public override int GetHashCode() {
+          int hash = 1;
+          if (key_ != null) hash ^= Key.GetHashCode();
+          if (TopHeightHash != 0) hash ^= TopHeightHash.GetHashCode();
+          if (TopBlockHash != 0) hash ^= TopBlockHash.GetHashCode();
+          if (ClientChangeSequence != 0L) hash ^= ClientChangeSequence.GetHashCode();
+          if (Kind != global::SuMultiplayer.Protocol.Terrain.TopLayerDigestKind.Initial) hash ^= Kind.GetHashCode();
+          if (TopReady != false) hash ^= TopReady.GetHashCode();
+          if (ConfirmationPurpose != 0) hash ^= ConfirmationPurpose.GetHashCode();
+          if (_unknownFields != null) {
+            hash ^= _unknownFields.GetHashCode();
+          }
+          return hash;
+        }
+
+        [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+        [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+        public override string ToString() {
+          return pb::JsonFormatter.ToDiagnosticString(this);
+        }
+
+        [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+        [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+        public void WriteTo(pb::CodedOutputStream output) {
+        #if !GOOGLE_PROTOBUF_REFSTRUCT_COMPATIBILITY_MODE
+          output.WriteRawMessage(this);
+        #else
+          if (key_ != null) {
+            output.WriteRawTag(10);
+            output.WriteMessage(Key);
+          }
+          if (TopHeightHash != 0) {
+            output.WriteRawTag(16);
+            output.WriteUInt32(TopHeightHash);
+          }
+          if (TopBlockHash != 0) {
+            output.WriteRawTag(24);
+            output.WriteUInt32(TopBlockHash);
+          }
+          if (ClientChangeSequence != 0L) {
+            output.WriteRawTag(32);
+            output.WriteInt64(ClientChangeSequence);
+          }
+          if (Kind != global::SuMultiplayer.Protocol.Terrain.TopLayerDigestKind.Initial) {
+            output.WriteRawTag(40);
+            output.WriteEnum((int) Kind);
+          }
+          if (TopReady != false) {
+            output.WriteRawTag(48);
+            output.WriteBool(TopReady);
+          }
+          if (ConfirmationPurpose != 0) {
+            output.WriteRawTag(56);
+            output.WriteUInt32(ConfirmationPurpose);
+          }
+          if (_unknownFields != null) {
+            _unknownFields.WriteTo(output);
+          }
+        #endif
+        }
+
+        #if !GOOGLE_PROTOBUF_REFSTRUCT_COMPATIBILITY_MODE
+        [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+        [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+        void pb::IBufferMessage.InternalWriteTo(ref pb::WriteContext output) {
+          if (key_ != null) {
+            output.WriteRawTag(10);
+            output.WriteMessage(Key);
+          }
+          if (TopHeightHash != 0) {
+            output.WriteRawTag(16);
+            output.WriteUInt32(TopHeightHash);
+          }
+          if (TopBlockHash != 0) {
+            output.WriteRawTag(24);
+            output.WriteUInt32(TopBlockHash);
+          }
+          if (ClientChangeSequence != 0L) {
+            output.WriteRawTag(32);
+            output.WriteInt64(ClientChangeSequence);
+          }
+          if (Kind != global::SuMultiplayer.Protocol.Terrain.TopLayerDigestKind.Initial) {
+            output.WriteRawTag(40);
+            output.WriteEnum((int) Kind);
+          }
+          if (TopReady != false) {
+            output.WriteRawTag(48);
+            output.WriteBool(TopReady);
+          }
+          if (ConfirmationPurpose != 0) {
+            output.WriteRawTag(56);
+            output.WriteUInt32(ConfirmationPurpose);
+          }
+          if (_unknownFields != null) {
+            _unknownFields.WriteTo(ref output);
+          }
+        }
+        #endif
+
+        [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+        [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+        public int CalculateSize() {
+          int size = 0;
+          if (key_ != null) {
+            size += 1 + pb::CodedOutputStream.ComputeMessageSize(Key);
+          }
+          if (TopHeightHash != 0) {
+            size += 1 + pb::CodedOutputStream.ComputeUInt32Size(TopHeightHash);
+          }
+          if (TopBlockHash != 0) {
+            size += 1 + pb::CodedOutputStream.ComputeUInt32Size(TopBlockHash);
+          }
+          if (ClientChangeSequence != 0L) {
+            size += 1 + pb::CodedOutputStream.ComputeInt64Size(ClientChangeSequence);
+          }
+          if (Kind != global::SuMultiplayer.Protocol.Terrain.TopLayerDigestKind.Initial) {
+            size += 1 + pb::CodedOutputStream.ComputeEnumSize((int) Kind);
+          }
+          if (TopReady != false) {
+            size += 1 + 1;
+          }
+          if (ConfirmationPurpose != 0) {
+            size += 1 + pb::CodedOutputStream.ComputeUInt32Size(ConfirmationPurpose);
+          }
+          if (_unknownFields != null) {
+            size += _unknownFields.CalculateSize();
+          }
+          return size;
+        }
+
+        [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+        [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+        public void MergeFrom(Entry other) {
+          if (other == null) {
+            return;
+          }
+          if (other.key_ != null) {
+            if (key_ == null) {
+              Key = new global::SuMultiplayer.Protocol.Terrain.ChunkKey();
+            }
+            Key.MergeFrom(other.Key);
+          }
+          if (other.TopHeightHash != 0) {
+            TopHeightHash = other.TopHeightHash;
+          }
+          if (other.TopBlockHash != 0) {
+            TopBlockHash = other.TopBlockHash;
+          }
+          if (other.ClientChangeSequence != 0L) {
+            ClientChangeSequence = other.ClientChangeSequence;
+          }
+          if (other.Kind != global::SuMultiplayer.Protocol.Terrain.TopLayerDigestKind.Initial) {
+            Kind = other.Kind;
+          }
+          if (other.TopReady != false) {
+            TopReady = other.TopReady;
+          }
+          if (other.ConfirmationPurpose != 0) {
+            ConfirmationPurpose = other.ConfirmationPurpose;
+          }
+          _unknownFields = pb::UnknownFieldSet.MergeFrom(_unknownFields, other._unknownFields);
+        }
+
+        [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+        [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+        public void MergeFrom(pb::CodedInputStream input) {
+        #if !GOOGLE_PROTOBUF_REFSTRUCT_COMPATIBILITY_MODE
+          input.ReadRawMessage(this);
+        #else
+          uint tag;
+          while ((tag = input.ReadTag()) != 0) {
+          if ((tag & 7) == 4) {
+            // Abort on any end group tag.
+            return;
+          }
+          switch(tag) {
+              default:
+                _unknownFields = pb::UnknownFieldSet.MergeFieldFrom(_unknownFields, input);
+                break;
+              case 10: {
+                if (key_ == null) {
+                  Key = new global::SuMultiplayer.Protocol.Terrain.ChunkKey();
+                }
+                input.ReadMessage(Key);
+                break;
+              }
+              case 16: {
+                TopHeightHash = input.ReadUInt32();
+                break;
+              }
+              case 24: {
+                TopBlockHash = input.ReadUInt32();
+                break;
+              }
+              case 32: {
+                ClientChangeSequence = input.ReadInt64();
+                break;
+              }
+              case 40: {
+                Kind = (global::SuMultiplayer.Protocol.Terrain.TopLayerDigestKind) input.ReadEnum();
+                break;
+              }
+              case 48: {
+                TopReady = input.ReadBool();
+                break;
+              }
+              case 56: {
+                ConfirmationPurpose = input.ReadUInt32();
+                break;
+              }
+            }
+          }
+        #endif
+        }
+
+        #if !GOOGLE_PROTOBUF_REFSTRUCT_COMPATIBILITY_MODE
+        [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+        [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+        void pb::IBufferMessage.InternalMergeFrom(ref pb::ParseContext input) {
+          uint tag;
+          while ((tag = input.ReadTag()) != 0) {
+          if ((tag & 7) == 4) {
+            // Abort on any end group tag.
+            return;
+          }
+          switch(tag) {
+              default:
+                _unknownFields = pb::UnknownFieldSet.MergeFieldFrom(_unknownFields, ref input);
+                break;
+              case 10: {
+                if (key_ == null) {
+                  Key = new global::SuMultiplayer.Protocol.Terrain.ChunkKey();
+                }
+                input.ReadMessage(Key);
+                break;
+              }
+              case 16: {
+                TopHeightHash = input.ReadUInt32();
+                break;
+              }
+              case 24: {
+                TopBlockHash = input.ReadUInt32();
+                break;
+              }
+              case 32: {
+                ClientChangeSequence = input.ReadInt64();
+                break;
+              }
+              case 40: {
+                Kind = (global::SuMultiplayer.Protocol.Terrain.TopLayerDigestKind) input.ReadEnum();
+                break;
+              }
+              case 48: {
+                TopReady = input.ReadBool();
+                break;
+              }
+              case 56: {
+                ConfirmationPurpose = input.ReadUInt32();
+                break;
+              }
+            }
+          }
+        }
+        #endif
+
+      }
+
+    }
+    #endregion
+
+  }
+
+  /// <summary>
+  /// Host -> client: explicit result for top-layer first sync / patch confirmation.
+  /// </summary>
+  [global::System.Diagnostics.DebuggerDisplayAttribute("{ToString(),nq}")]
+  public sealed partial class TopLayerDigestVerdict : pb::IMessage<TopLayerDigestVerdict>
+  #if !GOOGLE_PROTOBUF_REFSTRUCT_COMPATIBILITY_MODE
+      , pb::IBufferMessage
+  #endif
+  {
+    private static readonly pb::MessageParser<TopLayerDigestVerdict> _parser = new pb::MessageParser<TopLayerDigestVerdict>(() => new TopLayerDigestVerdict());
+    private pb::UnknownFieldSet _unknownFields;
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public static pb::MessageParser<TopLayerDigestVerdict> Parser { get { return _parser; } }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public static pbr::MessageDescriptor Descriptor {
+      get { return global::SuMultiplayer.Protocol.Terrain.TerrainReflection.Descriptor.MessageTypes[5]; }
+    }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    pbr::MessageDescriptor pb::IMessage.Descriptor {
+      get { return Descriptor; }
+    }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public TopLayerDigestVerdict() {
+      OnConstruction();
+    }
+
+    partial void OnConstruction();
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public TopLayerDigestVerdict(TopLayerDigestVerdict other) : this() {
+      entries_ = other.entries_.Clone();
+      ext_ = other.ext_;
+      custom_ = other.custom_ != null ? other.custom_.Clone() : null;
+      _unknownFields = pb::UnknownFieldSet.Clone(other._unknownFields);
+    }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public TopLayerDigestVerdict Clone() {
+      return new TopLayerDigestVerdict(this);
+    }
+
+    /// <summary>Field number for the "entries" field.</summary>
+    public const int EntriesFieldNumber = 1;
+    private static readonly pb::FieldCodec<global::SuMultiplayer.Protocol.Terrain.TopLayerDigestVerdict.Types.Entry> _repeated_entries_codec
+        = pb::FieldCodec.ForMessage(10, global::SuMultiplayer.Protocol.Terrain.TopLayerDigestVerdict.Types.Entry.Parser);
+    private readonly pbc::RepeatedField<global::SuMultiplayer.Protocol.Terrain.TopLayerDigestVerdict.Types.Entry> entries_ = new pbc::RepeatedField<global::SuMultiplayer.Protocol.Terrain.TopLayerDigestVerdict.Types.Entry>();
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public pbc::RepeatedField<global::SuMultiplayer.Protocol.Terrain.TopLayerDigestVerdict.Types.Entry> Entries {
+      get { return entries_; }
+    }
+
+    /// <summary>Field number for the "ext" field.</summary>
+    public const int ExtFieldNumber = 100;
+    private pb::ByteString ext_ = pb::ByteString.Empty;
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public pb::ByteString Ext {
+      get { return ext_; }
+      set {
+        ext_ = pb::ProtoPreconditions.CheckNotNull(value, "value");
+      }
+    }
+
+    /// <summary>Field number for the "custom" field.</summary>
+    public const int CustomFieldNumber = 101;
+    private global::Google.Protobuf.WellKnownTypes.Any custom_;
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public global::Google.Protobuf.WellKnownTypes.Any Custom {
+      get { return custom_; }
+      set {
+        custom_ = value;
+      }
+    }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public override bool Equals(object other) {
+      return Equals(other as TopLayerDigestVerdict);
+    }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public bool Equals(TopLayerDigestVerdict other) {
+      if (ReferenceEquals(other, null)) {
+        return false;
+      }
+      if (ReferenceEquals(other, this)) {
+        return true;
+      }
+      if(!entries_.Equals(other.entries_)) return false;
+      if (Ext != other.Ext) return false;
+      if (!object.Equals(Custom, other.Custom)) return false;
+      return Equals(_unknownFields, other._unknownFields);
+    }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public override int GetHashCode() {
+      int hash = 1;
+      hash ^= entries_.GetHashCode();
+      if (Ext.Length != 0) hash ^= Ext.GetHashCode();
+      if (custom_ != null) hash ^= Custom.GetHashCode();
+      if (_unknownFields != null) {
+        hash ^= _unknownFields.GetHashCode();
+      }
+      return hash;
+    }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public override string ToString() {
+      return pb::JsonFormatter.ToDiagnosticString(this);
+    }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public void WriteTo(pb::CodedOutputStream output) {
+    #if !GOOGLE_PROTOBUF_REFSTRUCT_COMPATIBILITY_MODE
+      output.WriteRawMessage(this);
+    #else
+      entries_.WriteTo(output, _repeated_entries_codec);
+      if (Ext.Length != 0) {
+        output.WriteRawTag(162, 6);
+        output.WriteBytes(Ext);
+      }
+      if (custom_ != null) {
+        output.WriteRawTag(170, 6);
+        output.WriteMessage(Custom);
+      }
+      if (_unknownFields != null) {
+        _unknownFields.WriteTo(output);
+      }
+    #endif
+    }
+
+    #if !GOOGLE_PROTOBUF_REFSTRUCT_COMPATIBILITY_MODE
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    void pb::IBufferMessage.InternalWriteTo(ref pb::WriteContext output) {
+      entries_.WriteTo(ref output, _repeated_entries_codec);
+      if (Ext.Length != 0) {
+        output.WriteRawTag(162, 6);
+        output.WriteBytes(Ext);
+      }
+      if (custom_ != null) {
+        output.WriteRawTag(170, 6);
+        output.WriteMessage(Custom);
+      }
+      if (_unknownFields != null) {
+        _unknownFields.WriteTo(ref output);
+      }
+    }
+    #endif
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public int CalculateSize() {
+      int size = 0;
+      size += entries_.CalculateSize(_repeated_entries_codec);
+      if (Ext.Length != 0) {
+        size += 2 + pb::CodedOutputStream.ComputeBytesSize(Ext);
+      }
+      if (custom_ != null) {
+        size += 2 + pb::CodedOutputStream.ComputeMessageSize(Custom);
+      }
+      if (_unknownFields != null) {
+        size += _unknownFields.CalculateSize();
+      }
+      return size;
+    }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public void MergeFrom(TopLayerDigestVerdict other) {
+      if (other == null) {
+        return;
+      }
+      entries_.Add(other.entries_);
+      if (other.Ext.Length != 0) {
+        Ext = other.Ext;
+      }
+      if (other.custom_ != null) {
+        if (custom_ == null) {
+          Custom = new global::Google.Protobuf.WellKnownTypes.Any();
+        }
+        Custom.MergeFrom(other.Custom);
+      }
+      _unknownFields = pb::UnknownFieldSet.MergeFrom(_unknownFields, other._unknownFields);
+    }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public void MergeFrom(pb::CodedInputStream input) {
+    #if !GOOGLE_PROTOBUF_REFSTRUCT_COMPATIBILITY_MODE
+      input.ReadRawMessage(this);
+    #else
+      uint tag;
+      while ((tag = input.ReadTag()) != 0) {
+      if ((tag & 7) == 4) {
+        // Abort on any end group tag.
+        return;
+      }
+      switch(tag) {
+          default:
+            _unknownFields = pb::UnknownFieldSet.MergeFieldFrom(_unknownFields, input);
+            break;
+          case 10: {
+            entries_.AddEntriesFrom(input, _repeated_entries_codec);
+            break;
+          }
+          case 802: {
+            Ext = input.ReadBytes();
+            break;
+          }
+          case 810: {
+            if (custom_ == null) {
+              Custom = new global::Google.Protobuf.WellKnownTypes.Any();
+            }
+            input.ReadMessage(Custom);
+            break;
+          }
+        }
+      }
+    #endif
+    }
+
+    #if !GOOGLE_PROTOBUF_REFSTRUCT_COMPATIBILITY_MODE
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    void pb::IBufferMessage.InternalMergeFrom(ref pb::ParseContext input) {
+      uint tag;
+      while ((tag = input.ReadTag()) != 0) {
+      if ((tag & 7) == 4) {
+        // Abort on any end group tag.
+        return;
+      }
+      switch(tag) {
+          default:
+            _unknownFields = pb::UnknownFieldSet.MergeFieldFrom(_unknownFields, ref input);
+            break;
+          case 10: {
+            entries_.AddEntriesFrom(ref input, _repeated_entries_codec);
+            break;
+          }
+          case 802: {
+            Ext = input.ReadBytes();
+            break;
+          }
+          case 810: {
+            if (custom_ == null) {
+              Custom = new global::Google.Protobuf.WellKnownTypes.Any();
+            }
+            input.ReadMessage(Custom);
+            break;
+          }
+        }
+      }
+    }
+    #endif
+
+    #region Nested types
+    /// <summary>Container for nested types declared in the TopLayerDigestVerdict message type.</summary>
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public static partial class Types {
+      [global::System.Diagnostics.DebuggerDisplayAttribute("{ToString(),nq}")]
+      public sealed partial class Entry : pb::IMessage<Entry>
+      #if !GOOGLE_PROTOBUF_REFSTRUCT_COMPATIBILITY_MODE
+          , pb::IBufferMessage
+      #endif
+      {
+        private static readonly pb::MessageParser<Entry> _parser = new pb::MessageParser<Entry>(() => new Entry());
+        private pb::UnknownFieldSet _unknownFields;
+        [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+        [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+        public static pb::MessageParser<Entry> Parser { get { return _parser; } }
+
+        [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+        [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+        public static pbr::MessageDescriptor Descriptor {
+          get { return global::SuMultiplayer.Protocol.Terrain.TopLayerDigestVerdict.Descriptor.NestedTypes[0]; }
+        }
+
+        [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+        [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+        pbr::MessageDescriptor pb::IMessage.Descriptor {
+          get { return Descriptor; }
+        }
+
+        [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+        [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+        public Entry() {
+          OnConstruction();
+        }
+
+        partial void OnConstruction();
+
+        [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+        [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+        public Entry(Entry other) : this() {
+          key_ = other.key_ != null ? other.key_.Clone() : null;
+          status_ = other.status_;
+          hostTopHeightHash_ = other.hostTopHeightHash_;
+          hostTopBlockHash_ = other.hostTopBlockHash_;
+          hostChangeSequence_ = other.hostChangeSequence_;
+          confirmationPurpose_ = other.confirmationPurpose_;
+          _unknownFields = pb::UnknownFieldSet.Clone(other._unknownFields);
+        }
+
+        [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+        [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+        public Entry Clone() {
+          return new Entry(this);
+        }
+
+        /// <summary>Field number for the "key" field.</summary>
+        public const int KeyFieldNumber = 1;
+        private global::SuMultiplayer.Protocol.Terrain.ChunkKey key_;
+        [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+        [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+        public global::SuMultiplayer.Protocol.Terrain.ChunkKey Key {
+          get { return key_; }
+          set {
+            key_ = value;
+          }
+        }
+
+        /// <summary>Field number for the "status" field.</summary>
+        public const int StatusFieldNumber = 2;
+        private global::SuMultiplayer.Protocol.Terrain.TopLayerDigestStatus status_ = global::SuMultiplayer.Protocol.Terrain.TopLayerDigestStatus.Pending;
+        [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+        [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+        public global::SuMultiplayer.Protocol.Terrain.TopLayerDigestStatus Status {
+          get { return status_; }
+          set {
+            status_ = value;
+          }
+        }
+
+        /// <summary>Field number for the "host_top_height_hash" field.</summary>
+        public const int HostTopHeightHashFieldNumber = 3;
+        private uint hostTopHeightHash_;
+        [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+        [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+        public uint HostTopHeightHash {
+          get { return hostTopHeightHash_; }
+          set {
+            hostTopHeightHash_ = value;
+          }
+        }
+
+        /// <summary>Field number for the "host_top_block_hash" field.</summary>
+        public const int HostTopBlockHashFieldNumber = 4;
+        private uint hostTopBlockHash_;
+        [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+        [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+        public uint HostTopBlockHash {
+          get { return hostTopBlockHash_; }
+          set {
+            hostTopBlockHash_ = value;
+          }
+        }
+
+        /// <summary>Field number for the "host_change_sequence" field.</summary>
+        public const int HostChangeSequenceFieldNumber = 5;
+        private long hostChangeSequence_;
+        [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+        [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+        public long HostChangeSequence {
+          get { return hostChangeSequence_; }
+          set {
+            hostChangeSequence_ = value;
+          }
+        }
+
+        /// <summary>Field number for the "confirmation_purpose" field.</summary>
+        public const int ConfirmationPurposeFieldNumber = 6;
+        private uint confirmationPurpose_;
+        [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+        [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+        public uint ConfirmationPurpose {
+          get { return confirmationPurpose_; }
+          set {
+            confirmationPurpose_ = value;
+          }
+        }
+
+        [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+        [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+        public override bool Equals(object other) {
+          return Equals(other as Entry);
+        }
+
+        [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+        [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+        public bool Equals(Entry other) {
+          if (ReferenceEquals(other, null)) {
+            return false;
+          }
+          if (ReferenceEquals(other, this)) {
+            return true;
+          }
+          if (!object.Equals(Key, other.Key)) return false;
+          if (Status != other.Status) return false;
+          if (HostTopHeightHash != other.HostTopHeightHash) return false;
+          if (HostTopBlockHash != other.HostTopBlockHash) return false;
+          if (HostChangeSequence != other.HostChangeSequence) return false;
+          if (ConfirmationPurpose != other.ConfirmationPurpose) return false;
+          return Equals(_unknownFields, other._unknownFields);
+        }
+
+        [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+        [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+        public override int GetHashCode() {
+          int hash = 1;
+          if (key_ != null) hash ^= Key.GetHashCode();
+          if (Status != global::SuMultiplayer.Protocol.Terrain.TopLayerDigestStatus.Pending) hash ^= Status.GetHashCode();
+          if (HostTopHeightHash != 0) hash ^= HostTopHeightHash.GetHashCode();
+          if (HostTopBlockHash != 0) hash ^= HostTopBlockHash.GetHashCode();
+          if (HostChangeSequence != 0L) hash ^= HostChangeSequence.GetHashCode();
+          if (ConfirmationPurpose != 0) hash ^= ConfirmationPurpose.GetHashCode();
+          if (_unknownFields != null) {
+            hash ^= _unknownFields.GetHashCode();
+          }
+          return hash;
+        }
+
+        [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+        [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+        public override string ToString() {
+          return pb::JsonFormatter.ToDiagnosticString(this);
+        }
+
+        [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+        [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+        public void WriteTo(pb::CodedOutputStream output) {
+        #if !GOOGLE_PROTOBUF_REFSTRUCT_COMPATIBILITY_MODE
+          output.WriteRawMessage(this);
+        #else
+          if (key_ != null) {
+            output.WriteRawTag(10);
+            output.WriteMessage(Key);
+          }
+          if (Status != global::SuMultiplayer.Protocol.Terrain.TopLayerDigestStatus.Pending) {
+            output.WriteRawTag(16);
+            output.WriteEnum((int) Status);
+          }
+          if (HostTopHeightHash != 0) {
+            output.WriteRawTag(24);
+            output.WriteUInt32(HostTopHeightHash);
+          }
+          if (HostTopBlockHash != 0) {
+            output.WriteRawTag(32);
+            output.WriteUInt32(HostTopBlockHash);
+          }
+          if (HostChangeSequence != 0L) {
+            output.WriteRawTag(40);
+            output.WriteInt64(HostChangeSequence);
+          }
+          if (ConfirmationPurpose != 0) {
+            output.WriteRawTag(48);
+            output.WriteUInt32(ConfirmationPurpose);
+          }
+          if (_unknownFields != null) {
+            _unknownFields.WriteTo(output);
+          }
+        #endif
+        }
+
+        #if !GOOGLE_PROTOBUF_REFSTRUCT_COMPATIBILITY_MODE
+        [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+        [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+        void pb::IBufferMessage.InternalWriteTo(ref pb::WriteContext output) {
+          if (key_ != null) {
+            output.WriteRawTag(10);
+            output.WriteMessage(Key);
+          }
+          if (Status != global::SuMultiplayer.Protocol.Terrain.TopLayerDigestStatus.Pending) {
+            output.WriteRawTag(16);
+            output.WriteEnum((int) Status);
+          }
+          if (HostTopHeightHash != 0) {
+            output.WriteRawTag(24);
+            output.WriteUInt32(HostTopHeightHash);
+          }
+          if (HostTopBlockHash != 0) {
+            output.WriteRawTag(32);
+            output.WriteUInt32(HostTopBlockHash);
+          }
+          if (HostChangeSequence != 0L) {
+            output.WriteRawTag(40);
+            output.WriteInt64(HostChangeSequence);
+          }
+          if (ConfirmationPurpose != 0) {
+            output.WriteRawTag(48);
+            output.WriteUInt32(ConfirmationPurpose);
+          }
+          if (_unknownFields != null) {
+            _unknownFields.WriteTo(ref output);
+          }
+        }
+        #endif
+
+        [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+        [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+        public int CalculateSize() {
+          int size = 0;
+          if (key_ != null) {
+            size += 1 + pb::CodedOutputStream.ComputeMessageSize(Key);
+          }
+          if (Status != global::SuMultiplayer.Protocol.Terrain.TopLayerDigestStatus.Pending) {
+            size += 1 + pb::CodedOutputStream.ComputeEnumSize((int) Status);
+          }
+          if (HostTopHeightHash != 0) {
+            size += 1 + pb::CodedOutputStream.ComputeUInt32Size(HostTopHeightHash);
+          }
+          if (HostTopBlockHash != 0) {
+            size += 1 + pb::CodedOutputStream.ComputeUInt32Size(HostTopBlockHash);
+          }
+          if (HostChangeSequence != 0L) {
+            size += 1 + pb::CodedOutputStream.ComputeInt64Size(HostChangeSequence);
+          }
+          if (ConfirmationPurpose != 0) {
+            size += 1 + pb::CodedOutputStream.ComputeUInt32Size(ConfirmationPurpose);
+          }
+          if (_unknownFields != null) {
+            size += _unknownFields.CalculateSize();
+          }
+          return size;
+        }
+
+        [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+        [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+        public void MergeFrom(Entry other) {
+          if (other == null) {
+            return;
+          }
+          if (other.key_ != null) {
+            if (key_ == null) {
+              Key = new global::SuMultiplayer.Protocol.Terrain.ChunkKey();
+            }
+            Key.MergeFrom(other.Key);
+          }
+          if (other.Status != global::SuMultiplayer.Protocol.Terrain.TopLayerDigestStatus.Pending) {
+            Status = other.Status;
+          }
+          if (other.HostTopHeightHash != 0) {
+            HostTopHeightHash = other.HostTopHeightHash;
+          }
+          if (other.HostTopBlockHash != 0) {
+            HostTopBlockHash = other.HostTopBlockHash;
+          }
+          if (other.HostChangeSequence != 0L) {
+            HostChangeSequence = other.HostChangeSequence;
+          }
+          if (other.ConfirmationPurpose != 0) {
+            ConfirmationPurpose = other.ConfirmationPurpose;
+          }
+          _unknownFields = pb::UnknownFieldSet.MergeFrom(_unknownFields, other._unknownFields);
+        }
+
+        [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+        [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+        public void MergeFrom(pb::CodedInputStream input) {
+        #if !GOOGLE_PROTOBUF_REFSTRUCT_COMPATIBILITY_MODE
+          input.ReadRawMessage(this);
+        #else
+          uint tag;
+          while ((tag = input.ReadTag()) != 0) {
+          if ((tag & 7) == 4) {
+            // Abort on any end group tag.
+            return;
+          }
+          switch(tag) {
+              default:
+                _unknownFields = pb::UnknownFieldSet.MergeFieldFrom(_unknownFields, input);
+                break;
+              case 10: {
+                if (key_ == null) {
+                  Key = new global::SuMultiplayer.Protocol.Terrain.ChunkKey();
+                }
+                input.ReadMessage(Key);
+                break;
+              }
+              case 16: {
+                Status = (global::SuMultiplayer.Protocol.Terrain.TopLayerDigestStatus) input.ReadEnum();
+                break;
+              }
+              case 24: {
+                HostTopHeightHash = input.ReadUInt32();
+                break;
+              }
+              case 32: {
+                HostTopBlockHash = input.ReadUInt32();
+                break;
+              }
+              case 40: {
+                HostChangeSequence = input.ReadInt64();
+                break;
+              }
+              case 48: {
+                ConfirmationPurpose = input.ReadUInt32();
+                break;
+              }
+            }
+          }
+        #endif
+        }
+
+        #if !GOOGLE_PROTOBUF_REFSTRUCT_COMPATIBILITY_MODE
+        [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+        [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+        void pb::IBufferMessage.InternalMergeFrom(ref pb::ParseContext input) {
+          uint tag;
+          while ((tag = input.ReadTag()) != 0) {
+          if ((tag & 7) == 4) {
+            // Abort on any end group tag.
+            return;
+          }
+          switch(tag) {
+              default:
+                _unknownFields = pb::UnknownFieldSet.MergeFieldFrom(_unknownFields, ref input);
+                break;
+              case 10: {
+                if (key_ == null) {
+                  Key = new global::SuMultiplayer.Protocol.Terrain.ChunkKey();
+                }
+                input.ReadMessage(Key);
+                break;
+              }
+              case 16: {
+                Status = (global::SuMultiplayer.Protocol.Terrain.TopLayerDigestStatus) input.ReadEnum();
+                break;
+              }
+              case 24: {
+                HostTopHeightHash = input.ReadUInt32();
+                break;
+              }
+              case 32: {
+                HostTopBlockHash = input.ReadUInt32();
+                break;
+              }
+              case 40: {
+                HostChangeSequence = input.ReadInt64();
+                break;
+              }
+              case 48: {
+                ConfirmationPurpose = input.ReadUInt32();
+                break;
+              }
             }
           }
         }
@@ -2055,7 +3556,7 @@ namespace SuMultiplayer.Protocol.Terrain {
     [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
     [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
     public static pbr::MessageDescriptor Descriptor {
-      get { return global::SuMultiplayer.Protocol.Terrain.TerrainReflection.Descriptor.MessageTypes[4]; }
+      get { return global::SuMultiplayer.Protocol.Terrain.TerrainReflection.Descriptor.MessageTypes[6]; }
     }
 
     [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
@@ -2439,7 +3940,7 @@ namespace SuMultiplayer.Protocol.Terrain {
     [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
     [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
     public static pbr::MessageDescriptor Descriptor {
-      get { return global::SuMultiplayer.Protocol.Terrain.TerrainReflection.Descriptor.MessageTypes[5]; }
+      get { return global::SuMultiplayer.Protocol.Terrain.TerrainReflection.Descriptor.MessageTypes[7]; }
     }
 
     [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
@@ -2463,6 +3964,9 @@ namespace SuMultiplayer.Protocol.Terrain {
       cells_ = other.cells_.Clone();
       hostTopHeightHash_ = other.hostTopHeightHash_;
       hostTopBlockHash_ = other.hostTopBlockHash_;
+      requireTopLayerConfirmation_ = other.requireTopLayerConfirmation_;
+      confirmationPurpose_ = other.confirmationPurpose_;
+      digestPurpose_ = other.digestPurpose_;
       ext_ = other.ext_;
       custom_ = other.custom_ != null ? other.custom_.Clone() : null;
       _unknownFields = pb::UnknownFieldSet.Clone(other._unknownFields);
@@ -2521,6 +4025,42 @@ namespace SuMultiplayer.Protocol.Terrain {
       }
     }
 
+    /// <summary>Field number for the "require_top_layer_confirmation" field.</summary>
+    public const int RequireTopLayerConfirmationFieldNumber = 5;
+    private bool requireTopLayerConfirmation_;
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public bool RequireTopLayerConfirmation {
+      get { return requireTopLayerConfirmation_; }
+      set {
+        requireTopLayerConfirmation_ = value;
+      }
+    }
+
+    /// <summary>Field number for the "confirmation_purpose" field.</summary>
+    public const int ConfirmationPurposeFieldNumber = 6;
+    private uint confirmationPurpose_;
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public uint ConfirmationPurpose {
+      get { return confirmationPurpose_; }
+      set {
+        confirmationPurpose_ = value;
+      }
+    }
+
+    /// <summary>Field number for the "digest_purpose" field.</summary>
+    public const int DigestPurposeFieldNumber = 7;
+    private uint digestPurpose_;
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public uint DigestPurpose {
+      get { return digestPurpose_; }
+      set {
+        digestPurpose_ = value;
+      }
+    }
+
     /// <summary>Field number for the "ext" field.</summary>
     public const int ExtFieldNumber = 100;
     private pb::ByteString ext_ = pb::ByteString.Empty;
@@ -2567,6 +4107,9 @@ namespace SuMultiplayer.Protocol.Terrain {
       if(!cells_.Equals(other.cells_)) return false;
       if (HostTopHeightHash != other.HostTopHeightHash) return false;
       if (HostTopBlockHash != other.HostTopBlockHash) return false;
+      if (RequireTopLayerConfirmation != other.RequireTopLayerConfirmation) return false;
+      if (ConfirmationPurpose != other.ConfirmationPurpose) return false;
+      if (DigestPurpose != other.DigestPurpose) return false;
       if (Ext != other.Ext) return false;
       if (!object.Equals(Custom, other.Custom)) return false;
       return Equals(_unknownFields, other._unknownFields);
@@ -2580,6 +4123,9 @@ namespace SuMultiplayer.Protocol.Terrain {
       hash ^= cells_.GetHashCode();
       if (HostTopHeightHash != 0) hash ^= HostTopHeightHash.GetHashCode();
       if (HostTopBlockHash != 0) hash ^= HostTopBlockHash.GetHashCode();
+      if (RequireTopLayerConfirmation != false) hash ^= RequireTopLayerConfirmation.GetHashCode();
+      if (ConfirmationPurpose != 0) hash ^= ConfirmationPurpose.GetHashCode();
+      if (DigestPurpose != 0) hash ^= DigestPurpose.GetHashCode();
       if (Ext.Length != 0) hash ^= Ext.GetHashCode();
       if (custom_ != null) hash ^= Custom.GetHashCode();
       if (_unknownFields != null) {
@@ -2613,6 +4159,18 @@ namespace SuMultiplayer.Protocol.Terrain {
         output.WriteRawTag(32);
         output.WriteUInt32(HostTopBlockHash);
       }
+      if (RequireTopLayerConfirmation != false) {
+        output.WriteRawTag(40);
+        output.WriteBool(RequireTopLayerConfirmation);
+      }
+      if (ConfirmationPurpose != 0) {
+        output.WriteRawTag(48);
+        output.WriteUInt32(ConfirmationPurpose);
+      }
+      if (DigestPurpose != 0) {
+        output.WriteRawTag(56);
+        output.WriteUInt32(DigestPurpose);
+      }
       if (Ext.Length != 0) {
         output.WriteRawTag(162, 6);
         output.WriteBytes(Ext);
@@ -2644,6 +4202,18 @@ namespace SuMultiplayer.Protocol.Terrain {
         output.WriteRawTag(32);
         output.WriteUInt32(HostTopBlockHash);
       }
+      if (RequireTopLayerConfirmation != false) {
+        output.WriteRawTag(40);
+        output.WriteBool(RequireTopLayerConfirmation);
+      }
+      if (ConfirmationPurpose != 0) {
+        output.WriteRawTag(48);
+        output.WriteUInt32(ConfirmationPurpose);
+      }
+      if (DigestPurpose != 0) {
+        output.WriteRawTag(56);
+        output.WriteUInt32(DigestPurpose);
+      }
       if (Ext.Length != 0) {
         output.WriteRawTag(162, 6);
         output.WriteBytes(Ext);
@@ -2671,6 +4241,15 @@ namespace SuMultiplayer.Protocol.Terrain {
       }
       if (HostTopBlockHash != 0) {
         size += 1 + pb::CodedOutputStream.ComputeUInt32Size(HostTopBlockHash);
+      }
+      if (RequireTopLayerConfirmation != false) {
+        size += 1 + 1;
+      }
+      if (ConfirmationPurpose != 0) {
+        size += 1 + pb::CodedOutputStream.ComputeUInt32Size(ConfirmationPurpose);
+      }
+      if (DigestPurpose != 0) {
+        size += 1 + pb::CodedOutputStream.ComputeUInt32Size(DigestPurpose);
       }
       if (Ext.Length != 0) {
         size += 2 + pb::CodedOutputStream.ComputeBytesSize(Ext);
@@ -2702,6 +4281,15 @@ namespace SuMultiplayer.Protocol.Terrain {
       }
       if (other.HostTopBlockHash != 0) {
         HostTopBlockHash = other.HostTopBlockHash;
+      }
+      if (other.RequireTopLayerConfirmation != false) {
+        RequireTopLayerConfirmation = other.RequireTopLayerConfirmation;
+      }
+      if (other.ConfirmationPurpose != 0) {
+        ConfirmationPurpose = other.ConfirmationPurpose;
+      }
+      if (other.DigestPurpose != 0) {
+        DigestPurpose = other.DigestPurpose;
       }
       if (other.Ext.Length != 0) {
         Ext = other.Ext;
@@ -2748,6 +4336,18 @@ namespace SuMultiplayer.Protocol.Terrain {
           }
           case 32: {
             HostTopBlockHash = input.ReadUInt32();
+            break;
+          }
+          case 40: {
+            RequireTopLayerConfirmation = input.ReadBool();
+            break;
+          }
+          case 48: {
+            ConfirmationPurpose = input.ReadUInt32();
+            break;
+          }
+          case 56: {
+            DigestPurpose = input.ReadUInt32();
             break;
           }
           case 802: {
@@ -2799,6 +4399,18 @@ namespace SuMultiplayer.Protocol.Terrain {
             HostTopBlockHash = input.ReadUInt32();
             break;
           }
+          case 40: {
+            RequireTopLayerConfirmation = input.ReadBool();
+            break;
+          }
+          case 48: {
+            ConfirmationPurpose = input.ReadUInt32();
+            break;
+          }
+          case 56: {
+            DigestPurpose = input.ReadUInt32();
+            break;
+          }
           case 802: {
             Ext = input.ReadBytes();
             break;
@@ -2842,7 +4454,7 @@ namespace SuMultiplayer.Protocol.Terrain {
     [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
     [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
     public static pbr::MessageDescriptor Descriptor {
-      get { return global::SuMultiplayer.Protocol.Terrain.TerrainReflection.Descriptor.MessageTypes[6]; }
+      get { return global::SuMultiplayer.Protocol.Terrain.TerrainReflection.Descriptor.MessageTypes[8]; }
     }
 
     [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
@@ -2870,6 +4482,8 @@ namespace SuMultiplayer.Protocol.Terrain {
       records_ = other.records_;
       watermark_ = other.watermark_;
       leavesOnly_ = other.leavesOnly_;
+      digestPurpose_ = other.digestPurpose_;
+      requireTopLayerConfirmation_ = other.requireTopLayerConfirmation_;
       ext_ = other.ext_;
       custom_ = other.custom_ != null ? other.custom_.Clone() : null;
       _unknownFields = pb::UnknownFieldSet.Clone(other._unknownFields);
@@ -2988,6 +4602,33 @@ namespace SuMultiplayer.Protocol.Terrain {
       }
     }
 
+    /// <summary>Field number for the "digest_purpose" field.</summary>
+    public const int DigestPurposeFieldNumber = 8;
+    private uint digestPurpose_;
+    /// <summary>
+    /// 0 = normal/explicit resync; 1 = final-footprint full verification repair.
+    /// </summary>
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public uint DigestPurpose {
+      get { return digestPurpose_; }
+      set {
+        digestPurpose_ = value;
+      }
+    }
+
+    /// <summary>Field number for the "require_top_layer_confirmation" field.</summary>
+    public const int RequireTopLayerConfirmationFieldNumber = 9;
+    private bool requireTopLayerConfirmation_;
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public bool RequireTopLayerConfirmation {
+      get { return requireTopLayerConfirmation_; }
+      set {
+        requireTopLayerConfirmation_ = value;
+      }
+    }
+
     /// <summary>Field number for the "ext" field.</summary>
     public const int ExtFieldNumber = 100;
     private pb::ByteString ext_ = pb::ByteString.Empty;
@@ -3037,6 +4678,8 @@ namespace SuMultiplayer.Protocol.Terrain {
       if (Records != other.Records) return false;
       if (Watermark != other.Watermark) return false;
       if (LeavesOnly != other.LeavesOnly) return false;
+      if (DigestPurpose != other.DigestPurpose) return false;
+      if (RequireTopLayerConfirmation != other.RequireTopLayerConfirmation) return false;
       if (Ext != other.Ext) return false;
       if (!object.Equals(Custom, other.Custom)) return false;
       return Equals(_unknownFields, other._unknownFields);
@@ -3053,6 +4696,8 @@ namespace SuMultiplayer.Protocol.Terrain {
       if (Records.Length != 0) hash ^= Records.GetHashCode();
       if (HasWatermark) hash ^= Watermark.GetHashCode();
       if (LeavesOnly != false) hash ^= LeavesOnly.GetHashCode();
+      if (DigestPurpose != 0) hash ^= DigestPurpose.GetHashCode();
+      if (RequireTopLayerConfirmation != false) hash ^= RequireTopLayerConfirmation.GetHashCode();
       if (Ext.Length != 0) hash ^= Ext.GetHashCode();
       if (custom_ != null) hash ^= Custom.GetHashCode();
       if (_unknownFields != null) {
@@ -3101,6 +4746,14 @@ namespace SuMultiplayer.Protocol.Terrain {
         output.WriteRawTag(56);
         output.WriteBool(LeavesOnly);
       }
+      if (DigestPurpose != 0) {
+        output.WriteRawTag(64);
+        output.WriteUInt32(DigestPurpose);
+      }
+      if (RequireTopLayerConfirmation != false) {
+        output.WriteRawTag(72);
+        output.WriteBool(RequireTopLayerConfirmation);
+      }
       if (Ext.Length != 0) {
         output.WriteRawTag(162, 6);
         output.WriteBytes(Ext);
@@ -3147,6 +4800,14 @@ namespace SuMultiplayer.Protocol.Terrain {
         output.WriteRawTag(56);
         output.WriteBool(LeavesOnly);
       }
+      if (DigestPurpose != 0) {
+        output.WriteRawTag(64);
+        output.WriteUInt32(DigestPurpose);
+      }
+      if (RequireTopLayerConfirmation != false) {
+        output.WriteRawTag(72);
+        output.WriteBool(RequireTopLayerConfirmation);
+      }
       if (Ext.Length != 0) {
         output.WriteRawTag(162, 6);
         output.WriteBytes(Ext);
@@ -3184,6 +4845,12 @@ namespace SuMultiplayer.Protocol.Terrain {
         size += 1 + pb::CodedOutputStream.ComputeInt64Size(Watermark);
       }
       if (LeavesOnly != false) {
+        size += 1 + 1;
+      }
+      if (DigestPurpose != 0) {
+        size += 1 + pb::CodedOutputStream.ComputeUInt32Size(DigestPurpose);
+      }
+      if (RequireTopLayerConfirmation != false) {
         size += 1 + 1;
       }
       if (Ext.Length != 0) {
@@ -3227,6 +4894,12 @@ namespace SuMultiplayer.Protocol.Terrain {
       }
       if (other.LeavesOnly != false) {
         LeavesOnly = other.LeavesOnly;
+      }
+      if (other.DigestPurpose != 0) {
+        DigestPurpose = other.DigestPurpose;
+      }
+      if (other.RequireTopLayerConfirmation != false) {
+        RequireTopLayerConfirmation = other.RequireTopLayerConfirmation;
       }
       if (other.Ext.Length != 0) {
         Ext = other.Ext;
@@ -3285,6 +4958,14 @@ namespace SuMultiplayer.Protocol.Terrain {
           }
           case 56: {
             LeavesOnly = input.ReadBool();
+            break;
+          }
+          case 64: {
+            DigestPurpose = input.ReadUInt32();
+            break;
+          }
+          case 72: {
+            RequireTopLayerConfirmation = input.ReadBool();
             break;
           }
           case 802: {
@@ -3348,6 +5029,14 @@ namespace SuMultiplayer.Protocol.Terrain {
             LeavesOnly = input.ReadBool();
             break;
           }
+          case 64: {
+            DigestPurpose = input.ReadUInt32();
+            break;
+          }
+          case 72: {
+            RequireTopLayerConfirmation = input.ReadBool();
+            break;
+          }
           case 802: {
             Ext = input.ReadBytes();
             break;
@@ -3384,7 +5073,7 @@ namespace SuMultiplayer.Protocol.Terrain {
     [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
     [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
     public static pbr::MessageDescriptor Descriptor {
-      get { return global::SuMultiplayer.Protocol.Terrain.TerrainReflection.Descriptor.MessageTypes[7]; }
+      get { return global::SuMultiplayer.Protocol.Terrain.TerrainReflection.Descriptor.MessageTypes[9]; }
     }
 
     [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
@@ -4066,7 +5755,7 @@ namespace SuMultiplayer.Protocol.Terrain {
     [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
     [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
     public static pbr::MessageDescriptor Descriptor {
-      get { return global::SuMultiplayer.Protocol.Terrain.TerrainReflection.Descriptor.MessageTypes[8]; }
+      get { return global::SuMultiplayer.Protocol.Terrain.TerrainReflection.Descriptor.MessageTypes[10]; }
     }
 
     [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
@@ -4535,7 +6224,7 @@ namespace SuMultiplayer.Protocol.Terrain {
     [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
     [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
     public static pbr::MessageDescriptor Descriptor {
-      get { return global::SuMultiplayer.Protocol.Terrain.TerrainReflection.Descriptor.MessageTypes[9]; }
+      get { return global::SuMultiplayer.Protocol.Terrain.TerrainReflection.Descriptor.MessageTypes[11]; }
     }
 
     [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
@@ -5279,7 +6968,7 @@ namespace SuMultiplayer.Protocol.Terrain {
     [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
     [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
     public static pbr::MessageDescriptor Descriptor {
-      get { return global::SuMultiplayer.Protocol.Terrain.TerrainReflection.Descriptor.MessageTypes[10]; }
+      get { return global::SuMultiplayer.Protocol.Terrain.TerrainReflection.Descriptor.MessageTypes[12]; }
     }
 
     [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
@@ -5556,7 +7245,7 @@ namespace SuMultiplayer.Protocol.Terrain {
     [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
     [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
     public static pbr::MessageDescriptor Descriptor {
-      get { return global::SuMultiplayer.Protocol.Terrain.TerrainReflection.Descriptor.MessageTypes[11]; }
+      get { return global::SuMultiplayer.Protocol.Terrain.TerrainReflection.Descriptor.MessageTypes[13]; }
     }
 
     [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
@@ -5795,7 +7484,7 @@ namespace SuMultiplayer.Protocol.Terrain {
     [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
     [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
     public static pbr::MessageDescriptor Descriptor {
-      get { return global::SuMultiplayer.Protocol.Terrain.TerrainReflection.Descriptor.MessageTypes[12]; }
+      get { return global::SuMultiplayer.Protocol.Terrain.TerrainReflection.Descriptor.MessageTypes[14]; }
     }
 
     [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
@@ -6067,7 +7756,7 @@ namespace SuMultiplayer.Protocol.Terrain {
     [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
     [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
     public static pbr::MessageDescriptor Descriptor {
-      get { return global::SuMultiplayer.Protocol.Terrain.TerrainReflection.Descriptor.MessageTypes[13]; }
+      get { return global::SuMultiplayer.Protocol.Terrain.TerrainReflection.Descriptor.MessageTypes[15]; }
     }
 
     [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
@@ -6265,7 +7954,7 @@ namespace SuMultiplayer.Protocol.Terrain {
     [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
     [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
     public static pbr::MessageDescriptor Descriptor {
-      get { return global::SuMultiplayer.Protocol.Terrain.TerrainReflection.Descriptor.MessageTypes[14]; }
+      get { return global::SuMultiplayer.Protocol.Terrain.TerrainReflection.Descriptor.MessageTypes[16]; }
     }
 
     [global::System.Diagnostics.DebuggerNonUserCodeAttribute]

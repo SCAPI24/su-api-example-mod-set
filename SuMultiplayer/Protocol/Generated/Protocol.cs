@@ -90,7 +90,7 @@ namespace SuMultiplayer.Protocol {
             "EhAKCGlkZW50aXR5GAcgASgJIpcBChBQbGF5ZXJTcGF3blN0YXRlEgwKBGZ1",
             "bGwYASABKAgSEAoIcmV2aXNpb24YAiABKA0SMAoHZW50cmllcxgDIAMoCzIf",
             "LnN1bXAucHJvdG9jb2wuUGxheWVyU3Bhd25FbnRyeRILCgNleHQYZCABKAwS",
-            "JAoGY3VzdG9tGGUgASgLMhQuZ29vZ2xlLnByb3RvYnVmLkFueSqiGgoLTWVz",
+            "JAoGY3VzdG9tGGUgASgLMhQuZ29vZ2xlLnByb3RvYnVmLkFueSrfGgoLTWVz",
             "c2FnZVR5cGUSHAoYTUVTU0FHRV9UWVBFX1VOU1BFQ0lGSUVEEAASCQoFSEVM",
             "TE8QARINCglIRUxMT19BQ0sQAhITCg9JTlRFUkVTVF9VUERBVEUQAxIXChND",
             "SFVOS19ESUdFU1RfUkVQT1JUEAQSEQoNQ0hVTktfVkVSRElDVBAFEhAKDENI",
@@ -161,12 +161,13 @@ namespace SuMultiplayer.Protocol {
             "TlQQbxIZChVXT1JMRF9DT05UUk9MX1JFUVVFU1QQcBIYChRXT1JMRF9DT05U",
             "Uk9MX1JFU1VMVBBxEhEKDU1PVU5UX1JFUVVFU1QQchIPCgtNT1VOVF9TVEFU",
             "RRBzEhAKDFBMQVlFUl9TUEFXThB0EggKBFBJTkcQdRIICgRQT05HEHYSGAoU",
-            "QkxPQ0tfREVTVFJPWV9FRkZFQ1QQdxIfChpURVJSQUlOX0RJQUdOT1NUSUNf",
-            "Q09OVFJPTBCXARIeChlURVJSQUlOX0RJQUdOT1NUSUNfUkVQT1JUEJgBEh4K",
-            "GVRPUF9MQVlFUl9NSVNNQVRDSF9SRVBPUlQQmQESEgoNVE9QX0xBWUVSX0ZJ",
-            "WBCaARIdChhDTElFTlRfUlVOVElNRV9URUxFTUVUUlkQkQESFwoSTElWRV9N",
-            "QVBfVEVMRU1FVFJZEJIBIgQIZBBkIgQIbhBuQhtIAaoCFlN1TXVsdGlwbGF5",
-            "ZXIuUHJvdG9jb2xiBnByb3RvMw=="));
+            "QkxPQ0tfREVTVFJPWV9FRkZFQ1QQdxIcChdUT1BfTEFZRVJfRElHRVNUX1JF",
+            "UE9SVBCyARIdChhUT1BfTEFZRVJfRElHRVNUX1ZFUkRJQ1QQswESHwoaVEVS",
+            "UkFJTl9ESUFHTk9TVElDX0NPTlRST0wQlwESHgoZVEVSUkFJTl9ESUFHTk9T",
+            "VElDX1JFUE9SVBCYARIeChlUT1BfTEFZRVJfTUlTTUFUQ0hfUkVQT1JUEJkB",
+            "EhIKDVRPUF9MQVlFUl9GSVgQmgESHQoYQ0xJRU5UX1JVTlRJTUVfVEVMRU1F",
+            "VFJZEJEBEhcKEkxJVkVfTUFQX1RFTEVNRVRSWRCSASIECGQQZCIECG4QbkIb",
+            "SAGqAhZTdU11bHRpcGxheWVyLlByb3RvY29sYgZwcm90bzM="));
       descriptor = pbr::FileDescriptor.FromGeneratedCode(descriptorData,
           new pbr::FileDescriptor[] { global::Google.Protobuf.WellKnownTypes.AnyReflection.Descriptor, },
           new pbr::GeneratedClrTypeInfo(new[] {typeof(global::SuMultiplayer.Protocol.MessageType), }, null, new pbr::GeneratedClrTypeInfo[] {
@@ -738,6 +739,11 @@ namespace SuMultiplayer.Protocol {
     /// 方块破坏表现（碎屑 / 落叶粒子）。只同步表现，不改格；append-only。
     /// </summary>
     [pbr::OriginalName("BLOCK_DESTROY_EFFECT")] BlockDestroyEffect = 119,
+    /// <summary>
+    /// Terrain digest stages: top-layer first sync and patch confirmation.
+    /// </summary>
+    [pbr::OriginalName("TOP_LAYER_DIGEST_REPORT")] TopLayerDigestReport = 178,
+    [pbr::OriginalName("TOP_LAYER_DIGEST_VERDICT")] TopLayerDigestVerdict = 179,
     /// <summary>
     /// On-demand terrain resync diagnostic control/sample.
     /// </summary>

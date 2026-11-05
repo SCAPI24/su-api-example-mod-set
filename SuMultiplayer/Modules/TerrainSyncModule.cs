@@ -93,6 +93,7 @@ namespace SuMultiplayer.Modules
         private long m_circuitTicketRequestSentMs;
         private TerrainSyncHost m_host;
         private TerrainSyncClient m_clientSync;
+        private readonly HashSet<ChunkKey> m_footprintVerifiedResidency = new HashSet<ChunkKey>();
         private ChunkKey m_lastCenter;
         private bool m_hasCenter;
         /// <summary>上一次上报的兴趣半径（区块）；旧实现按半径去重（m_lastSentClientTerrainInterestRadius）。</summary>
@@ -972,6 +973,7 @@ namespace SuMultiplayer.Modules
             m_bridge.ChunkWireIncluded += HandleChunkWireIncluded;
             m_bridge.FrameArrived += HandleFrame;
             m_bridge.HostCellChanged += HandleHostCellChanged;
+            m_bridge.HostCellClassified += HandleHostCellClassified;
             m_attached = true;
             // 刻意**不在这里开通道**：建房/加入是玩家的操作，不是启动配置。
             Log("地形同步模块就绪（通道等玩家操作：游戏内 CR 建房 / Play 屏点房间加入）");
@@ -1137,7 +1139,7 @@ namespace SuMultiplayer.Modules
                 Log("player-primary-connected host=" + m_wantHost + " port=" + m_wantPort);
                 m_client.FrameReceived += m_bridge.PostFrame;
                 m_clientSync = new TerrainSyncClient(m_bridge, m_client, m_options, attachToChannel: false,
-                    messages: m_messages);
+                    messages: m_messages, footprintVerified: m_footprintVerifiedResidency);
                 m_clientSync.MultiplayerModVersion = MultiplayerModCompatibility.ModVersion;
                 m_clientSync.MultiplayerProtocolVersion = MultiplayerModCompatibility.ProtocolVersion;
                 m_clientSync.MultiplayerProtocolHash = MultiplayerModCompatibility.ProtocolHash;
@@ -2231,6 +2233,7 @@ namespace SuMultiplayer.Modules
             // 客户端旧世界的摘要状态与排队中的核对工作**全部作废**，必须清掉并重新排队全部常驻区块
             // —— 否则同一块在旧世界里的 Fresh 结论会被拿来给新世界背书（等于伪造匹配）。
             // 放在 Pump 之前置位、由同一个 Tick 末尾的 TryRequeueResidentChunks 在新常驻集合上执行。
+            m_footprintVerifiedResidency.Clear();
             if (m_clientSync != null)
                 m_clientSync.OnClientWorldReplaced("世界已激活 / Project 换新：旧世界的核对状态作废，重新排队常驻区块");
             try
@@ -3233,6 +3236,7 @@ namespace SuMultiplayer.Modules
         {
             // 客户端：块被引擎释放（离开内存）→ 从实时地图线框集合里移除（v8）。
             m_clientSync?.OnMemoryChunkFreed(key);
+            m_footprintVerifiedResidency.Remove(key);
             if (m_verbose && AllowVerboseChunkLog())
                 Log("区块释放（离开内存）" + key + "（内存区块 " + m_bridge.AllocatedCount +
                     " · 常驻 " + m_bridge.ResidentCount + "）");
@@ -3245,6 +3249,7 @@ namespace SuMultiplayer.Modules
         private void HandleChunkWireExcluded(ChunkKey key, string reason)
         {
             m_clientSync?.OnMemoryChunkFreed(key);
+            m_footprintVerifiedResidency.Remove(key);
             LogWarning("[SuMP][terrain-sync] 内存区块不再上报 " + key + "：" + reason +
                 " · 当前内存区块 " + m_bridge.AllocatedCount + " / 常驻 " + m_bridge.ResidentCount +
                 "（memoryNotResident " + m_bridge.MemoryNotResident + "）");
@@ -3303,6 +3308,13 @@ namespace SuMultiplayer.Modules
             if (m_verbose && sent > 0)
                 Log("下发改动 " + key + " (" + edit.X + "," + edit.Y + "," + edit.Z + ") → " + sent +
                     " 个投递目标（内存集合包含该块的身份 ∪ 兴趣窗口订阅者）");
+        }
+
+        private void HandleHostCellClassified(ChunkKey key, CellEdit edit, ChunkMutationKind kind)
+        {
+            TerrainSyncHost host = m_host;
+            if (host == null) return;
+            host.MarkChunkMutation(key, kind);
         }
 
         /// <summary>
@@ -3758,6 +3770,7 @@ namespace SuMultiplayer.Modules
             try { m_bridge.ChunkWireIncluded -= HandleChunkWireIncluded; } catch (Exception) { }
             try { m_bridge.FrameArrived -= HandleFrame; } catch (Exception) { }
             try { m_bridge.HostCellChanged -= HandleHostCellChanged; } catch (Exception) { }
+            try { m_bridge.HostCellClassified -= HandleHostCellClassified; } catch (Exception) { }
             StopChannel();
             if (m_shell != null)
             {

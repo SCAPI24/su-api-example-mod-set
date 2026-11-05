@@ -1,5 +1,9 @@
 using System;
+using System.Buffers;
 using System.Collections.Generic;
+using System.Collections.Concurrent;
+using System.Threading;
+using System.Threading.Tasks;
 
 namespace SuMultiplayer.Terrain
 {
@@ -16,6 +20,17 @@ namespace SuMultiplayer.Terrain
         public override bool Equals(object obj) => obj is ChunkKey other && Equals(other);
         public override int GetHashCode() => (X * 397) ^ Z;
         public override string ToString() => "(" + X + "," + Z + ")";
+    }
+
+    public static class ChunkDigestFootprint
+    {
+        public static bool Contains(ChunkKey center, ChunkKey key)
+        {
+            int dx = Math.Abs(key.X - center.X);
+            int dz = Math.Abs(key.Z - center.Z);
+            return (dx == 0 && dz == 0) || (dx == 1 && dz == 0) ||
+                (dx == 0 && dz == 1);
+        }
     }
 
     /// <summary>
@@ -41,7 +56,9 @@ namespace SuMultiplayer.Terrain
         /// 或 <c>CreateFallenLeaves</c> 新生成了落叶方块（Contents 261）。
         /// 只在**真实写入 chunk 之后**才打这个标记（离队即标记是不允许的：队列项可能不落地）。
         /// </summary>
-        Leaves = 1 << 1
+        Leaves = 1 << 1,
+        /// <summary>玩家或其他非季节地形内容发生变化；与 Season 同块出现时按 HasContentChange 处理。</summary>
+        Content = 1 << 2
     }
 
     /// <summary>
@@ -220,6 +237,32 @@ namespace SuMultiplayer.Terrain
             m_computed = true;
         }
 
+        public void ComputePacked(int[] cells)
+        {
+            if (cells == null) throw new ArgumentNullException(nameof(cells));
+            if (cells.Length < SizeXZ * SizeXZ * Height)
+                throw new ArgumentException("Cell snapshot is smaller than one chunk.", nameof(cells));
+            for (int i = 0; i < SliceCount; i++) m_slices[i] = 2166136261u;
+            m_shaftHash = 0u;
+            for (int column = 0; column < SizeXZ * SizeXZ; column++)
+            {
+                int columnBase = column * Height;
+                for (int slice = 0; slice < SliceCount; slice++)
+                {
+                    uint hash = m_slices[slice];
+                    int start = columnBase + (slice << 4);
+                    int end = start + SliceHeight;
+                    for (int i = start; i < end; i++)
+                    {
+                        hash ^= unchecked((uint)cells[i]) & 0xFFFFC3FFu;
+                        hash *= 16777619u;
+                    }
+                    m_slices[slice] = hash;
+                }
+            }
+            m_computed = true;
+        }
+
         /// <summary>
         /// **顶层摘要**：16×16 = 256 个"顶格"的内容摘要，用于 chunk 加载时的快速校验。
         ///
@@ -276,6 +319,30 @@ namespace SuMultiplayer.Terrain
             m_topLayerComputed = true;
         }
 
+        public void ComputeTopLayerSnapshot(int[] topHeights, int[] topValues)
+        {
+            if (topHeights == null) throw new ArgumentNullException(nameof(topHeights));
+            if (topValues == null) throw new ArgumentNullException(nameof(topValues));
+            if (topHeights.Length < SizeXZ * SizeXZ || topValues.Length < SizeXZ * SizeXZ)
+                throw new ArgumentException("Top-layer snapshot is smaller than 256 columns.");
+            uint heightHash = 2166136261u;
+            uint blockHash = 2166136261u;
+            for (int x = 0; x < SizeXZ; x++)
+            {
+                for (int z = 0; z < SizeXZ; z++)
+                {
+                    int column = x + z * SizeXZ;
+                    heightHash ^= unchecked((uint)topHeights[column]);
+                    heightHash *= 16777619u;
+                    blockHash ^= unchecked((uint)topValues[column]) & 0xFFFFC3FFu;
+                    blockHash *= 16777619u;
+                }
+            }
+            m_topHeightHash = heightHash;
+            m_topBlockHash = blockHash;
+            m_topLayerComputed = true;
+        }
+
         /// <summary>需要把 shafts 计入时，加载时一并算（<see cref="IncludeShafts"/> 为 true 才有效）。</summary>
         public void ComputeShafts(Func<int, int, int> shaftSource)
         {
@@ -324,6 +391,201 @@ namespace SuMultiplayer.Terrain
         Mismatch = 2
     }
 
+    public enum DigestWorkKind : byte
+    {
+        TopLayerInitial = 0,
+        TopLayerConfirmation = 1,
+        FullFinal = 2,
+        FullExplicit = 3,
+        TopLayerRefresh = 4
+    }
+
+    public readonly struct DigestWorkResult
+    {
+        public DigestWorkResult(ChunkKey key, int generation, DigestWorkKind kind,
+            uint value, uint topHeightHash, uint topBlockHash, string error, uint purpose = 0u)
+        {
+            Key = key;
+            Generation = generation;
+            Kind = kind;
+            Value = value;
+            TopHeightHash = topHeightHash;
+            TopBlockHash = topBlockHash;
+            Error = error ?? string.Empty;
+            Purpose = purpose;
+        }
+
+        public ChunkKey Key { get; }
+        public int Generation { get; }
+        public DigestWorkKind Kind { get; }
+        public uint Value { get; }
+        public uint TopHeightHash { get; }
+        public uint TopBlockHash { get; }
+        public string Error { get; }
+        public bool Succeeded => Error.Length == 0;
+        public uint Purpose { get; }
+    }
+
+    public sealed class ChunkDigestPool : IDisposable
+    {
+        private readonly SemaphoreSlim m_topSlots;
+        private readonly SemaphoreSlim m_fullSlots;
+        private readonly ConcurrentQueue<DigestWorkResult> m_completed =
+            new ConcurrentQueue<DigestWorkResult>();
+        private bool m_disposed;
+
+        public ChunkDigestPool(int topSlots = 20, int fullSlots = 4)
+        {
+            m_topSlots = new SemaphoreSlim(Math.Max(1, topSlots), Math.Max(1, topSlots));
+            m_fullSlots = new SemaphoreSlim(Math.Max(1, fullSlots), Math.Max(1, fullSlots));
+        }
+
+        public bool TrySubmitTopLayer(ChunkKey key, int generation, int[] cells, int[] shafts,
+            DigestWorkKind kind, uint purpose = 0u)
+        {
+            if (m_disposed) throw new ObjectDisposedException(nameof(ChunkDigestPool));
+            if (cells == null) throw new ArgumentNullException(nameof(cells));
+            if (shafts == null) throw new ArgumentNullException(nameof(shafts));
+            if (!m_topSlots.Wait(0)) return false;
+
+            int[] heights = ArrayPool<int>.Shared.Rent(ChunkDigest.SizeXZ * ChunkDigest.SizeXZ);
+            int[] values = ArrayPool<int>.Shared.Rent(ChunkDigest.SizeXZ * ChunkDigest.SizeXZ);
+            try
+            {
+                for (int x = 0; x < ChunkDigest.SizeXZ; x++)
+                {
+                    for (int z = 0; z < ChunkDigest.SizeXZ; z++)
+                    {
+                        int column = x + z * ChunkDigest.SizeXZ;
+                        int top = shafts[column] & 0xFF;
+                        heights[column] = top;
+                        values[column] = cells[top + x * ChunkDigest.Height +
+                            z * ChunkDigest.Height * ChunkDigest.SizeXZ];
+                    }
+                }
+                int[] capturedHeights = heights;
+                int[] capturedValues = values;
+                heights = null;
+                values = null;
+                Task.Run(() => ComputeTopLayer(key, generation, kind, capturedHeights, capturedValues, purpose));
+                return true;
+            }
+            catch
+            {
+                if (heights != null) ArrayPool<int>.Shared.Return(heights);
+                if (values != null) ArrayPool<int>.Shared.Return(values);
+                m_topSlots.Release();
+                throw;
+            }
+        }
+
+        public bool TrySubmitFull(ChunkKey key, int generation, int[] cells, DigestWorkKind kind)
+        {
+            if (m_disposed) throw new ObjectDisposedException(nameof(ChunkDigestPool));
+            if (cells == null) throw new ArgumentNullException(nameof(cells));
+            if (!m_fullSlots.Wait(0)) return false;
+            int[] snapshot = ArrayPool<int>.Shared.Rent(ChunkDigest.SizeXZ * ChunkDigest.SizeXZ * ChunkDigest.Height);
+            try
+            {
+                Array.Copy(cells, snapshot, ChunkDigest.SizeXZ * ChunkDigest.SizeXZ * ChunkDigest.Height);
+                int[] captured = snapshot;
+                snapshot = null;
+                Task.Run(() => ComputeFull(key, generation, kind, captured));
+                return true;
+            }
+            catch
+            {
+                if (snapshot != null) ArrayPool<int>.Shared.Return(snapshot);
+                m_fullSlots.Release();
+                throw;
+            }
+        }
+
+        public bool TrySubmitFull(ChunkKey key, int generation, ChunkPackedValueSource source,
+            DigestWorkKind kind)
+        {
+            if (m_disposed) throw new ObjectDisposedException(nameof(ChunkDigestPool));
+            if (source == null) throw new ArgumentNullException(nameof(source));
+            if (!m_fullSlots.Wait(0)) return false;
+            int[] snapshot = ArrayPool<int>.Shared.Rent(ChunkDigest.SizeXZ * ChunkDigest.SizeXZ * ChunkDigest.Height);
+            try
+            {
+                for (int i = 0; i < ChunkDigest.SizeXZ * ChunkDigest.SizeXZ * ChunkDigest.Height; i++)
+                    snapshot[i] = source(i);
+                int[] captured = snapshot;
+                snapshot = null;
+                Task.Run(() => ComputeFull(key, generation, kind, captured));
+                return true;
+            }
+            catch
+            {
+                if (snapshot != null) ArrayPool<int>.Shared.Return(snapshot);
+                m_fullSlots.Release();
+                throw;
+            }
+        }
+
+        public int DrainCompleted(ICollection<DigestWorkResult> target, int maximum)
+        {
+            if (target == null) throw new ArgumentNullException(nameof(target));
+            int count = 0;
+            while (count < Math.Max(0, maximum) && m_completed.TryDequeue(out DigestWorkResult result))
+            {
+                target.Add(result);
+                count++;
+            }
+            return count;
+        }
+
+        private void ComputeTopLayer(ChunkKey key, int generation, DigestWorkKind kind,
+            int[] heights, int[] values, uint purpose)
+        {
+            try
+            {
+                var digest = new ChunkDigest();
+                digest.ComputeTopLayerSnapshot(heights, values);
+                m_completed.Enqueue(new DigestWorkResult(key, generation, kind, 0u,
+                    digest.TopHeightHash, digest.TopBlockHash, null, purpose));
+            }
+            catch (Exception e)
+            {
+                m_completed.Enqueue(new DigestWorkResult(key, generation, kind, 0u, 0u, 0u,
+                    e.GetType().Name + ": " + e.Message, purpose));
+            }
+            finally
+            {
+                ArrayPool<int>.Shared.Return(heights);
+                ArrayPool<int>.Shared.Return(values);
+                m_topSlots.Release();
+            }
+        }
+
+        private void ComputeFull(ChunkKey key, int generation, DigestWorkKind kind, int[] snapshot)
+        {
+            try
+            {
+                var digest = new ChunkDigest();
+                digest.ComputePacked(snapshot);
+                m_completed.Enqueue(new DigestWorkResult(key, generation, kind, digest.Value, 0u, 0u, null));
+            }
+            catch (Exception e)
+            {
+                m_completed.Enqueue(new DigestWorkResult(key, generation, kind, 0u, 0u, 0u,
+                    e.GetType().Name + ": " + e.Message));
+            }
+            finally
+            {
+                ArrayPool<int>.Shared.Return(snapshot);
+                m_fullSlots.Release();
+            }
+        }
+
+        public void Dispose()
+        {
+            m_disposed = true;
+        }
+    }
+
     /// <summary>客户端一个 chunk 的新鲜度状态。</summary>
     public enum ChunkFreshness : byte
     {
@@ -340,9 +602,11 @@ namespace SuMultiplayer.Terrain
     /// <summary>一条上报条目（客户端 → 主机）。</summary>
     public readonly struct DigestEntry
     {
-        public DigestEntry(ChunkKey key, uint hash) { Key = key; Hash = hash; }
+        public DigestEntry(ChunkKey key, uint hash, uint purpose = 0u)
+        { Key = key; Hash = hash; Purpose = purpose; }
         public ChunkKey Key { get; }
         public uint Hash { get; }
+        public uint Purpose { get; }
     }
 
     /// <summary>

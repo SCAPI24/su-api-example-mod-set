@@ -30,6 +30,9 @@ namespace SuMultiplayer.Engine
 
         // 临时缓冲，避免每帧分配
         private readonly List<Point3> m_capture = new List<Point3>(1024);
+        private readonly HashSet<Point3> m_seasonCaptureBaseline = new HashSet<Point3>();
+        private readonly HashSet<Point3> m_seasonMutationCells = new HashSet<Point3>();
+        private readonly HashSet<Point3> m_leavesMutationCells = new HashSet<Point3>();
         private readonly HashSet<Point3> m_clientCircuitCaptureBaseline = new HashSet<Point3>();
         private readonly List<Point3> m_clientCircuitWrites = new List<Point3>();
         public long ClientCircuitCellsSuppressed { get; private set; }
@@ -792,12 +795,53 @@ namespace SuMultiplayer.Engine
                 }
                 else
                 {
-                    bridge.PublishHostCells(m_capture);
+                    bridge.PublishHostCells(m_capture, m_seasonMutationCells, m_leavesMutationCells);
                 }
             }
 
             // Source: Survivalcraft/Game/SubsystemTerrain.cs:SubsystemTerrain.ProcessModifiedCells
             ProcessModifiedCells();
+        }
+
+        /// <summary>
+        /// 执行引擎天气的既有地形回调，并标记该回调真实新写入改动表的格。
+        /// Source: Survivalcraft/Game/SubsystemWeather.cs:SubsystemWeather.Load
+        /// </summary>
+        internal void RunSeasonMutation(TerrainChunk chunk, Action mutation)
+        {
+            if (chunk == null) throw new ArgumentNullException(nameof(chunk));
+            if (mutation == null) throw new ArgumentNullException(nameof(mutation));
+            if (!EnsureModifiedCellsBound())
+                throw new InvalidOperationException(
+                    "Weather terrain mutation cannot be classified because SubsystemTerrain.m_modifiedCells is unavailable.");
+
+            m_seasonCaptureBaseline.Clear();
+            int minX = chunk.Origin.X;
+            int minZ = chunk.Origin.Y;
+            int maxX = minX + TerrainChunk.Size - 1;
+            int maxZ = minZ + TerrainChunk.Size - 1;
+            foreach (Point3 cell in m_modifiedCells.Keys)
+                if (cell.X >= minX && cell.X <= maxX && cell.Z >= minZ && cell.Z <= maxZ)
+                    m_seasonCaptureBaseline.Add(cell);
+
+            try
+            {
+                mutation();
+            }
+            finally
+            {
+                foreach (Point3 cell in m_modifiedCells.Keys)
+                {
+                    if (cell.X < minX || cell.X > maxX || cell.Z < minZ || cell.Z > maxZ) continue;
+                    if (!m_seasonCaptureBaseline.Contains(cell)) m_seasonMutationCells.Add(cell);
+                }
+                m_seasonCaptureBaseline.Clear();
+            }
+        }
+
+        internal void NoteLeavesMutationCell(int worldX, int worldY, int worldZ)
+        {
+            m_leavesMutationCells.Add(new Point3(worldX, worldY, worldZ));
         }
 
         /// <summary>

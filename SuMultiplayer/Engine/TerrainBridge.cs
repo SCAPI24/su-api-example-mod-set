@@ -165,6 +165,8 @@ namespace SuMultiplayer.Engine
         public event Action<ReceivedFrame> FrameArrived;
         /// <summary>主机侧权威改动（已捕获，尚未下发）。</summary>
         public event Action<ChunkKey, CellEdit> HostCellChanged;
+        /// <summary>主机已捕获的格改分类；在普通广播回调之前触发。</summary>
+        public event Action<ChunkKey, CellEdit, ChunkMutationKind> HostCellClassified;
         /// <summary>主机格子改动已进入地形同步序号，再交给 circuit watermark/index 跟踪。</summary>
         public event Action<ChunkKey, CellEdit> HostCellPublished;
         /// <summary>客户端通过既有主机 CellChange / chunk resync 落地后的权威格值。</summary>
@@ -1556,7 +1558,8 @@ namespace SuMultiplayer.Engine
         }
 
         /// <summary>主机侧：把捕获到的改动交给模块下发（每格一次事件，模块自己批量）。</summary>
-        public void PublishHostCells(ICollection<Point3> cells)
+        public void PublishHostCells(ICollection<Point3> cells, ISet<Point3> seasonCells = null,
+            ISet<Point3> leavesCells = null)
         {
             if (cells == null || cells.Count == 0) return;
             Action<ChunkKey, CellEdit> handler = HostCellChanged;
@@ -1564,6 +1567,10 @@ namespace SuMultiplayer.Engine
             {
                 // 没有订阅者 = 抓到也发不出去（装配未就绪 / 模块下线）：如实计数，不静默。
                 NoteHostCaptureMiss(cells.Count, "没有主机广播订阅者（地形模块未装配 / 正在下线）");
+                if (seasonCells != null)
+                    foreach (Point3 cell in cells) seasonCells.Remove(cell);
+                if (leavesCells != null)
+                    foreach (Point3 cell in cells) leavesCells.Remove(cell);
                 return;
             }
             Game.Terrain terrain = CurrentTerrain;
@@ -1592,6 +1599,10 @@ namespace SuMultiplayer.Engine
                 var edit = new CellEdit(cell.X & 15, cell.Y, cell.Z & 15,
                     Game.Terrain.ExtractContents(value), Game.Terrain.ExtractData(value));
                 HostCellsCaptured++;
+                bool isLeaves = leavesCells != null && leavesCells.Remove(cell);
+                bool isSeason = isLeaves || (seasonCells != null && seasonCells.Remove(cell));
+                HostCellClassified?.Invoke(key, edit,
+                    isSeason ? ChunkMutationKind.Season : ChunkMutationKind.Content);
                 handler(key, edit);
                 HostCellPublished?.Invoke(key, edit);
             }

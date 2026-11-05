@@ -1,5 +1,7 @@
 # SuMultiplayer 自检套件（Tools/Verification）
 
+> **TsVerify 已废弃**：该套件基于旧版地形摘要与裁决流程，不再维护，也不作为当前地形同步实现的验收依据。表格中的历史通过数和运行说明仅供追溯旧实现。
+
 把原先散落在仓库外临时目录（磁盘/换机即丢）的自动化回归网收进仓库，作为 SuMultiplayer 的常规回归网。
 
 设计原则：
@@ -30,7 +32,8 @@
 
 | 套件 | 用途 | 一条命令 | 当前基线（v8 实测） |
 |---|---|---|---|
-| tsverify | 地形摘要/裁决链/身份归档/欠更新/每帧预算/位置快照/客户端内存集合/世界传输闸门/会话追帧（真实 TCP） | `dotnet run -c Release --project Mod/SuMultiplayer/Tools/Verification/TsVerify/TsVerify.csproj` | **430/430 通过** |
+| digest-pool-verify | 当前顶层/完整摘要池：紧凑顶层快照、完整快照复制、脚下五块范围 | `dotnet run -c Release --project Mod/SuMultiplayer/Tools/Verification/DigestPoolVerify/DigestPoolVerify.csproj` | **7/7 通过** |
+| tsverify（已废弃） | 旧版地形摘要/裁决链回归；不覆盖当前实现 | 不再运行或用于验收 | 历史基线：430/430 通过 |
 | tsverify-before | 改前对照（修复前 Terrain 源码快照，阴性对照） | `dotnet run -c Release --project Mod/SuMultiplayer/Tools/Verification/TsVerifyBefore/TsVerifyBefore.csproj` | **116/121 通过，5 失败（预期）** |
 | lmverify | 实时地图载荷编解码（v8）+ 工具 `/state` JSON | `dotnet run -c Release --project Mod/SuMultiplayer/Tools/Verification/LmVerify/LmVerify.csproj` | **79/79 通过** |
 | lmsample | 打印一份真实 `/state` JSON 样本（非通过/失败型） | `dotnet run -c Release --project Mod/SuMultiplayer/Tools/Verification/LmSample/LmSample.csproj` | 打印样本，退出码 0 |
@@ -39,7 +42,9 @@
 
 > 也可以用 `--project` 指到对应 `.csproj` 后加 `--no-build` 复用上次构建；首次跑必须联网 restore。
 
-## 1. tsverify — 地形同步 / 裁决链主回归网
+## 1. tsverify（已废弃）— 旧版地形同步 / 裁决链回归网
+
+本节为历史记录。该套件与当前地形摘要及裁决流程不再保持同步；不要用它的结果判断当前实现是否正确。
 
 ### 用途
 
