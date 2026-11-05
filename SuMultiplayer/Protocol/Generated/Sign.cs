@@ -25,7 +25,7 @@ namespace SuMultiplayer.Protocol {
       byte[] descriptorData = global::System.Convert.FromBase64String(
           string.Concat(
             "CgpzaWduLnByb3RvEg1zdW1wLnByb3RvY29sIlkKClNpZ25SZWNvcmQSCQoB",
-            "eBgBIAEoBRIJCgF5GAIgASgFEgkKAXoYAyABKAUSDQoFbGluZXMYBCADKAkS",
+            "eBgBIAEoERIJCgF5GAIgASgFEgkKAXoYAyABKBESDQoFbGluZXMYBCADKAkS",
             "DgoGY29sb3JzGAUgAygNEgsKA3VybBgGIAEoCSJlCglTaWduU3RhdGUSEAoI",
             "cmV2aXNpb24YASABKAUSDAoEZnVsbBgCIAEoCBIoCgVzaWducxgDIAMoCzIZ",
             "LnN1bXAucHJvdG9jb2wuU2lnblJlY29yZBIOCgZyZWFzb24YBCABKAkiOQoP",
@@ -35,7 +35,7 @@ namespace SuMultiplayer.Protocol {
             "DgoGcmVhc29uGAMgASgJIkQKDlNpZ25FZGl0UmVzdWx0EhAKCHNlcXVlbmNl",
             "GAEgASgDEhAKCGFjY2VwdGVkGAIgASgIEg4KBnJlYXNvbhgDIAEoCSJ5ChBT",
             "aWduVHJpZ2dlckV2ZW50EhAKCGV2ZW50X2lkGAEgASgDEhMKC3NlcnZlcl90",
-            "aWNrGAIgASgDEgkKAXgYAyABKAUSCQoBeRgEIAEoBRIJCgF6GAUgASgFEg0K",
+            "aWNrGAIgASgDEgkKAXgYAyABKBESCQoBeRgEIAEoBRIJCgF6GAUgASgREg0K",
             "BWxpbmVzGAYgAygJEg4KBmNvbG9ycxgHIAMoDUIbSAGqAhZTdU11bHRpcGxh",
             "eWVyLlByb3RvY29sYgZwcm90bzM="));
       descriptor = pbr::FileDescriptor.FromGeneratedCode(descriptorData,
@@ -236,7 +236,7 @@ namespace SuMultiplayer.Protocol {
     #else
       if (X != 0) {
         output.WriteRawTag(8);
-        output.WriteInt32(X);
+        output.WriteSInt32(X);
       }
       if (Y != 0) {
         output.WriteRawTag(16);
@@ -244,7 +244,7 @@ namespace SuMultiplayer.Protocol {
       }
       if (Z != 0) {
         output.WriteRawTag(24);
-        output.WriteInt32(Z);
+        output.WriteSInt32(Z);
       }
       lines_.WriteTo(output, _repeated_lines_codec);
       colors_.WriteTo(output, _repeated_colors_codec);
@@ -264,7 +264,7 @@ namespace SuMultiplayer.Protocol {
     void pb::IBufferMessage.InternalWriteTo(ref pb::WriteContext output) {
       if (X != 0) {
         output.WriteRawTag(8);
-        output.WriteInt32(X);
+        output.WriteSInt32(X);
       }
       if (Y != 0) {
         output.WriteRawTag(16);
@@ -272,7 +272,7 @@ namespace SuMultiplayer.Protocol {
       }
       if (Z != 0) {
         output.WriteRawTag(24);
-        output.WriteInt32(Z);
+        output.WriteSInt32(Z);
       }
       lines_.WriteTo(ref output, _repeated_lines_codec);
       colors_.WriteTo(ref output, _repeated_colors_codec);
@@ -291,13 +291,13 @@ namespace SuMultiplayer.Protocol {
     public int CalculateSize() {
       int size = 0;
       if (X != 0) {
-        size += 1 + pb::CodedOutputStream.ComputeInt32Size(X);
+        size += 1 + pb::CodedOutputStream.ComputeSInt32Size(X);
       }
       if (Y != 0) {
         size += 1 + pb::CodedOutputStream.ComputeInt32Size(Y);
       }
       if (Z != 0) {
-        size += 1 + pb::CodedOutputStream.ComputeInt32Size(Z);
+        size += 1 + pb::CodedOutputStream.ComputeSInt32Size(Z);
       }
       size += lines_.CalculateSize(_repeated_lines_codec);
       size += colors_.CalculateSize(_repeated_colors_codec);
@@ -350,7 +350,7 @@ namespace SuMultiplayer.Protocol {
             _unknownFields = pb::UnknownFieldSet.MergeFieldFrom(_unknownFields, input);
             break;
           case 8: {
-            X = input.ReadInt32();
+            X = input.ReadSInt32();
             break;
           }
           case 16: {
@@ -358,7 +358,7 @@ namespace SuMultiplayer.Protocol {
             break;
           }
           case 24: {
-            Z = input.ReadInt32();
+            Z = input.ReadSInt32();
             break;
           }
           case 34: {
@@ -394,7 +394,7 @@ namespace SuMultiplayer.Protocol {
             _unknownFields = pb::UnknownFieldSet.MergeFieldFrom(_unknownFields, ref input);
             break;
           case 8: {
-            X = input.ReadInt32();
+            X = input.ReadSInt32();
             break;
           }
           case 16: {
@@ -402,7 +402,7 @@ namespace SuMultiplayer.Protocol {
             break;
           }
           case 24: {
-            Z = input.ReadInt32();
+            Z = input.ReadSInt32();
             break;
           }
           case 34: {
@@ -1701,7 +1701,7 @@ namespace SuMultiplayer.Protocol {
       }
       if (X != 0) {
         output.WriteRawTag(24);
-        output.WriteInt32(X);
+        output.WriteSInt32(X);
       }
       if (Y != 0) {
         output.WriteRawTag(32);
@@ -1709,7 +1709,7 @@ namespace SuMultiplayer.Protocol {
       }
       if (Z != 0) {
         output.WriteRawTag(40);
-        output.WriteInt32(Z);
+        output.WriteSInt32(Z);
       }
       lines_.WriteTo(output, _repeated_lines_codec);
       colors_.WriteTo(output, _repeated_colors_codec);
@@ -1733,7 +1733,7 @@ namespace SuMultiplayer.Protocol {
       }
       if (X != 0) {
         output.WriteRawTag(24);
-        output.WriteInt32(X);
+        output.WriteSInt32(X);
       }
       if (Y != 0) {
         output.WriteRawTag(32);
@@ -1741,7 +1741,7 @@ namespace SuMultiplayer.Protocol {
       }
       if (Z != 0) {
         output.WriteRawTag(40);
-        output.WriteInt32(Z);
+        output.WriteSInt32(Z);
       }
       lines_.WriteTo(ref output, _repeated_lines_codec);
       colors_.WriteTo(ref output, _repeated_colors_codec);
@@ -1762,13 +1762,13 @@ namespace SuMultiplayer.Protocol {
         size += 1 + pb::CodedOutputStream.ComputeInt64Size(ServerTick);
       }
       if (X != 0) {
-        size += 1 + pb::CodedOutputStream.ComputeInt32Size(X);
+        size += 1 + pb::CodedOutputStream.ComputeSInt32Size(X);
       }
       if (Y != 0) {
         size += 1 + pb::CodedOutputStream.ComputeInt32Size(Y);
       }
       if (Z != 0) {
-        size += 1 + pb::CodedOutputStream.ComputeInt32Size(Z);
+        size += 1 + pb::CodedOutputStream.ComputeSInt32Size(Z);
       }
       size += lines_.CalculateSize(_repeated_lines_codec);
       size += colors_.CalculateSize(_repeated_colors_codec);
@@ -1829,7 +1829,7 @@ namespace SuMultiplayer.Protocol {
             break;
           }
           case 24: {
-            X = input.ReadInt32();
+            X = input.ReadSInt32();
             break;
           }
           case 32: {
@@ -1837,7 +1837,7 @@ namespace SuMultiplayer.Protocol {
             break;
           }
           case 40: {
-            Z = input.ReadInt32();
+            Z = input.ReadSInt32();
             break;
           }
           case 50: {
@@ -1877,7 +1877,7 @@ namespace SuMultiplayer.Protocol {
             break;
           }
           case 24: {
-            X = input.ReadInt32();
+            X = input.ReadSInt32();
             break;
           }
           case 32: {
@@ -1885,7 +1885,7 @@ namespace SuMultiplayer.Protocol {
             break;
           }
           case 40: {
-            Z = input.ReadInt32();
+            Z = input.ReadSInt32();
             break;
           }
           case 50: {

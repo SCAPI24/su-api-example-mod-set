@@ -26,9 +26,9 @@ message WorldInfo {
   float fog_intensity = 10;
   int32 fog_seed = 11;
   bool has_lightning = 12;
-  int32 lightning_x = 13;
+  sint32 lightning_x = 13;
   int32 lightning_y = 14;
-  int32 lightning_z = 15;
+  sint32 lightning_z = 15;
   int32 lightning_revision = 16;
   int64 world_time_revision = 17;
   bool time_accelerated = 18;

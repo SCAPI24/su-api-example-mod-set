@@ -12,9 +12,9 @@ option optimize_for = SPEED;
 // table is small compared with terrain).
 
 message SignRecord {
-  int32 x = 1;
+  sint32 x = 1;
   int32 y = 2;
-  int32 z = 3;
+  sint32 z = 3;
   // Exactly 4 lines; empty string = blank line.
   repeated string lines = 4;
   // Exactly 4 packed Color values (Color.PackedValue).
@@ -55,9 +55,9 @@ message SignEditResult {
 message SignTriggerEvent {
   int64 event_id = 1;
   int64 server_tick = 2;
-  int32 x = 3;
+  sint32 x = 3;
   int32 y = 4;
-  int32 z = 5;
+  sint32 z = 5;
   repeated string lines = 6;
   repeated uint32 colors = 7;
 }

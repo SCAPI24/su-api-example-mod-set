@@ -26,14 +26,14 @@ namespace SuMultiplayer.Protocol.Effects {
           string.Concat(
             "Cg1lZmZlY3RzLnByb3RvEgxzdW1wLmVmZmVjdHMaGWdvb2dsZS9wcm90b2J1",
             "Zi9hbnkucHJvdG8aDnBvc2l0aW9uLnByb3RvIjoKB0NlbGxLZXkSCQoBeBgB",
-            "IAEoERIJCgF5GAIgASgREgkKAXoYAyABKBESDgoGc2l6emxlGAQgASgIIqMB",
+            "IAEoERIJCgF5GAIgASgFEgkKAXoYAyABKBESDgoGc2l6emxlGAQgASgIIqMB",
             "Cg5CdXJuQXdheUVmZmVjdBIRCgljbGllbnRfaWQYASABKAUSEwoLc2VydmVy",
             "X3RpY2sYAiABKAMSJAoFY2VsbHMYAyADKAsyFS5zdW1wLmVmZmVjdHMuQ2Vs",
             "bEtleRIQCghldmVudF9pZBgEIAEoDRILCgNleHQYZCABKAwSJAoGY3VzdG9t",
             "GGUgASgLMhQuZ29vZ2xlLnByb3RvYnVmLkFueSKnAQoXQ2FtcGZpcmVFeHRp",
             "bmd1aXNoRXZlbnQSEQoJY2xpZW50X2lkGAEgASgFEhMKC3NlcnZlcl90aWNr",
             "GAIgASgDEhAKCGV2ZW50X2lkGAMgASgNEgkKAXgYBCABKBESCQoBeRgFIAEo",
-            "ERIJCgF6GAYgASgREgsKA2V4dBhkIAEoDBIkCgZjdXN0b20YZSABKAsyFC5n",
+            "BRIJCgF6GAYgASgREgsKA2V4dBhkIAEoDBIkCgZjdXN0b20YZSABKAsyFC5n",
             "b29nbGUucHJvdG9idWYuQW55IoUBCgtXYXRlclNwbGFzaBIlCghwb3NpdGlv",
             "bhgBIAEoCzITLnN1bXAucG9zaXRpb24uVmVjMxINCgVsYXJnZRgCIAEoCBIN",
             "CgVzb3VuZBgDIAEoCBILCgNleHQYZCABKAwSJAoGY3VzdG9tGGUgASgLMhQu",
@@ -212,7 +212,7 @@ namespace SuMultiplayer.Protocol.Effects {
       }
       if (Y != 0) {
         output.WriteRawTag(16);
-        output.WriteSInt32(Y);
+        output.WriteInt32(Y);
       }
       if (Z != 0) {
         output.WriteRawTag(24);
@@ -238,7 +238,7 @@ namespace SuMultiplayer.Protocol.Effects {
       }
       if (Y != 0) {
         output.WriteRawTag(16);
-        output.WriteSInt32(Y);
+        output.WriteInt32(Y);
       }
       if (Z != 0) {
         output.WriteRawTag(24);
@@ -262,7 +262,7 @@ namespace SuMultiplayer.Protocol.Effects {
         size += 1 + pb::CodedOutputStream.ComputeSInt32Size(X);
       }
       if (Y != 0) {
-        size += 1 + pb::CodedOutputStream.ComputeSInt32Size(Y);
+        size += 1 + pb::CodedOutputStream.ComputeInt32Size(Y);
       }
       if (Z != 0) {
         size += 1 + pb::CodedOutputStream.ComputeSInt32Size(Z);
@@ -318,7 +318,7 @@ namespace SuMultiplayer.Protocol.Effects {
             break;
           }
           case 16: {
-            Y = input.ReadSInt32();
+            Y = input.ReadInt32();
             break;
           }
           case 24: {
@@ -353,7 +353,7 @@ namespace SuMultiplayer.Protocol.Effects {
             break;
           }
           case 16: {
-            Y = input.ReadSInt32();
+            Y = input.ReadInt32();
             break;
           }
           case 24: {
@@ -1004,7 +1004,7 @@ namespace SuMultiplayer.Protocol.Effects {
       }
       if (Y != 0) {
         output.WriteRawTag(40);
-        output.WriteSInt32(Y);
+        output.WriteInt32(Y);
       }
       if (Z != 0) {
         output.WriteRawTag(48);
@@ -1046,7 +1046,7 @@ namespace SuMultiplayer.Protocol.Effects {
       }
       if (Y != 0) {
         output.WriteRawTag(40);
-        output.WriteSInt32(Y);
+        output.WriteInt32(Y);
       }
       if (Z != 0) {
         output.WriteRawTag(48);
@@ -1083,7 +1083,7 @@ namespace SuMultiplayer.Protocol.Effects {
         size += 1 + pb::CodedOutputStream.ComputeSInt32Size(X);
       }
       if (Y != 0) {
-        size += 1 + pb::CodedOutputStream.ComputeSInt32Size(Y);
+        size += 1 + pb::CodedOutputStream.ComputeInt32Size(Y);
       }
       if (Z != 0) {
         size += 1 + pb::CodedOutputStream.ComputeSInt32Size(Z);
@@ -1169,7 +1169,7 @@ namespace SuMultiplayer.Protocol.Effects {
             break;
           }
           case 40: {
-            Y = input.ReadSInt32();
+            Y = input.ReadInt32();
             break;
           }
           case 48: {
@@ -1223,7 +1223,7 @@ namespace SuMultiplayer.Protocol.Effects {
             break;
           }
           case 40: {
-            Y = input.ReadSInt32();
+            Y = input.ReadInt32();
             break;
           }
           case 48: {

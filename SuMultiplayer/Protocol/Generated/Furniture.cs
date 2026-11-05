@@ -31,12 +31,12 @@ namespace SuMultiplayer.Protocol {
             "CgpydW5fY291bnRzGAcgAygFQgIQARIWCgpydW5fdmFsdWVzGAggAygFQgIQ",
             "ARIUCgxjb250ZW50X2hhc2gYCSABKBAisAMKFkZ1cm5pdHVyZURlc2lnblJl",
             "cXVlc3QSEAoIc2VxdWVuY2UYASABKAMSLAoCb3AYAiABKA4yIC5zdW1wLnBy",
-            "b3RvY29sLkZ1cm5pdHVyZURlc2lnbk9wEg8KB3N0YXJ0X3gYAyABKAUSDwoH",
-            "c3RhcnRfeRgEIAEoBRIPCgdzdGFydF96GAUgASgFEgwKBGZhY2UYBiABKAUS",
+            "b3RvY29sLkZ1cm5pdHVyZURlc2lnbk9wEg8KB3N0YXJ0X3gYAyABKBESDwoH",
+            "c3RhcnRfeRgEIAEoBRIPCgdzdGFydF96GAUgASgREgwKBGZhY2UYBiABKAUS",
             "EgoKcmVzb2x1dGlvbhgHIAEoBRIMCgRuYW1lGAggASgJEhgKEGludGVyYWN0",
             "aW9uX21vZGUYCSABKA0SFgoKcnVuX2NvdW50cxgKIAMoBUICEAESFgoKcnVu",
-            "X3ZhbHVlcxgLIAMoBUICEAESFAoIc291cmNlX3gYDCADKAVCAhABEhQKCHNv",
-            "dXJjZV95GA0gAygFQgIQARIUCghzb3VyY2VfehgOIAMoBUICEAESGQoNc291",
+            "X3ZhbHVlcxgLIAMoBUICEAESFAoIc291cmNlX3gYDCADKBFCAhABEhQKCHNv",
+            "dXJjZV95GA0gAygFQgIQARIUCghzb3VyY2VfehgOIAMoEUICEAESGQoNc291",
             "cmNlX3ZhbHVlcxgPIAMoBUICEAESGQoRYmFzZV9kZXNpZ25faW5kZXgYECAB",
             "KAUSEwoLcGFpbnRfY29sb3IYESABKAUSEgoFcmVhY2gYEiABKAJIAIgBAUII",
             "CgZfcmVhY2gitgEKFUZ1cm5pdHVyZURlc2lnblJlc3VsdBIQCghzZXF1ZW5j",
@@ -816,7 +816,7 @@ namespace SuMultiplayer.Protocol {
     /// <summary>Field number for the "source_x" field.</summary>
     public const int SourceXFieldNumber = 12;
     private static readonly pb::FieldCodec<int> _repeated_sourceX_codec
-        = pb::FieldCodec.ForInt32(98);
+        = pb::FieldCodec.ForSInt32(98);
     private readonly pbc::RepeatedField<int> sourceX_ = new pbc::RepeatedField<int>();
     /// <summary>
     /// CREATE: source cells (the blocks the design was scanned from, or the
@@ -843,7 +843,7 @@ namespace SuMultiplayer.Protocol {
     /// <summary>Field number for the "source_z" field.</summary>
     public const int SourceZFieldNumber = 14;
     private static readonly pb::FieldCodec<int> _repeated_sourceZ_codec
-        = pb::FieldCodec.ForInt32(114);
+        = pb::FieldCodec.ForSInt32(114);
     private readonly pbc::RepeatedField<int> sourceZ_ = new pbc::RepeatedField<int>();
     [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
     [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
@@ -1011,7 +1011,7 @@ namespace SuMultiplayer.Protocol {
       }
       if (StartX != 0) {
         output.WriteRawTag(24);
-        output.WriteInt32(StartX);
+        output.WriteSInt32(StartX);
       }
       if (StartY != 0) {
         output.WriteRawTag(32);
@@ -1019,7 +1019,7 @@ namespace SuMultiplayer.Protocol {
       }
       if (StartZ != 0) {
         output.WriteRawTag(40);
-        output.WriteInt32(StartZ);
+        output.WriteSInt32(StartZ);
       }
       if (Face != 0) {
         output.WriteRawTag(48);
@@ -1075,7 +1075,7 @@ namespace SuMultiplayer.Protocol {
       }
       if (StartX != 0) {
         output.WriteRawTag(24);
-        output.WriteInt32(StartX);
+        output.WriteSInt32(StartX);
       }
       if (StartY != 0) {
         output.WriteRawTag(32);
@@ -1083,7 +1083,7 @@ namespace SuMultiplayer.Protocol {
       }
       if (StartZ != 0) {
         output.WriteRawTag(40);
-        output.WriteInt32(StartZ);
+        output.WriteSInt32(StartZ);
       }
       if (Face != 0) {
         output.WriteRawTag(48);
@@ -1136,13 +1136,13 @@ namespace SuMultiplayer.Protocol {
         size += 1 + pb::CodedOutputStream.ComputeEnumSize((int) Op);
       }
       if (StartX != 0) {
-        size += 1 + pb::CodedOutputStream.ComputeInt32Size(StartX);
+        size += 1 + pb::CodedOutputStream.ComputeSInt32Size(StartX);
       }
       if (StartY != 0) {
         size += 1 + pb::CodedOutputStream.ComputeInt32Size(StartY);
       }
       if (StartZ != 0) {
-        size += 1 + pb::CodedOutputStream.ComputeInt32Size(StartZ);
+        size += 1 + pb::CodedOutputStream.ComputeSInt32Size(StartZ);
       }
       if (Face != 0) {
         size += 1 + pb::CodedOutputStream.ComputeInt32Size(Face);
@@ -1253,7 +1253,7 @@ namespace SuMultiplayer.Protocol {
             break;
           }
           case 24: {
-            StartX = input.ReadInt32();
+            StartX = input.ReadSInt32();
             break;
           }
           case 32: {
@@ -1261,7 +1261,7 @@ namespace SuMultiplayer.Protocol {
             break;
           }
           case 40: {
-            StartZ = input.ReadInt32();
+            StartZ = input.ReadSInt32();
             break;
           }
           case 48: {
@@ -1350,7 +1350,7 @@ namespace SuMultiplayer.Protocol {
             break;
           }
           case 24: {
-            StartX = input.ReadInt32();
+            StartX = input.ReadSInt32();
             break;
           }
           case 32: {
@@ -1358,7 +1358,7 @@ namespace SuMultiplayer.Protocol {
             break;
           }
           case 40: {
-            StartZ = input.ReadInt32();
+            StartZ = input.ReadSInt32();
             break;
           }
           case 48: {

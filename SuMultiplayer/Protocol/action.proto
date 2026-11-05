@@ -100,9 +100,9 @@ message PlayerAction {
   sump.position.Vec3 aim_origin = 11;
   sump.position.Vec3 aim_direction = 12;
   bool has_cell = 13;
-  int32 cell_x = 14;
+  sint32 cell_x = 14;
   int32 cell_y = 15;
-  int32 cell_z = 16;
+  sint32 cell_z = 16;
   int32 cell_face = 17;          // CellFace.Face（0..5）
   float dig_progress = 18;       // ComponentMiner.DigProgress（0..1）
   bool has_position = 19;

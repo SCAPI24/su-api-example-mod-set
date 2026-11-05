@@ -54,9 +54,9 @@ enum ContainerKind {
 message BlockUseRequest {
   // Per-connection monotonic sequence; the result echoes it.
   int64 sequence = 1;
-  int32 x = 2;
+  sint32 x = 2;
   int32 y = 3;
-  int32 z = 4;
+  sint32 z = 4;
   // CellFace.Face 0..5 (the face the client clicked).
   int32 face = 5;
   // Terrain contents the client observed (host rejects a stale/mismatched target).
@@ -88,18 +88,18 @@ message BlockUseResult {
   // NONE = no panel (native interaction: door / button / furniture / ...);
   // anything else = the host sent ContainerState first and the client may open the panel.
   ContainerKind container_kind = 5;
-  int32 x = 6;
+  sint32 x = 6;
   int32 y = 7;
-  int32 z = 8;
+  sint32 z = 8;
 }
 
 // Host -> client: authoritative contents of one block-entity inventory.
 // Sent before BlockUseResult on open, and after every accepted edit (and whenever the
 // host itself changes an opened container, e.g. a furnace finishing a smelt).
 message ContainerState {
-  int32 x = 1;
+  sint32 x = 1;
   int32 y = 2;
-  int32 z = 3;
+  sint32 z = 3;
   ContainerKind container_kind = 4;
   // Host revision; edits must carry the revision they are based on.
   int32 revision = 5;
@@ -112,9 +112,9 @@ message ContainerState {
 // player-inventory snapshot used to prove no items were created in the container.
 message ContainerEditRequest {
   int64 sequence = 1;
-  int32 x = 2;
+  sint32 x = 2;
   int32 y = 3;
-  int32 z = 4;
+  sint32 z = 4;
   ContainerKind container_kind = 5;
   // The authoritative revision the client last applied.
   int32 base_revision = 6;
@@ -165,9 +165,9 @@ message ContainerEditResult {
 //         progress bar value = SmeltingProgress)
 // Source: Survivalcraft/Game/LitFurnaceBlock.cs (Index = 65)
 message FurnaceState {
-  int32 x = 1;
+  sint32 x = 1;
   int32 y = 2;
-  int32 z = 3;
+  sint32 z = 3;
   // Host monotonic per-furnace revision: the client drops an older state as stale
   // (equal revision is a resend and is applied idempotently).
   int32 revision = 4;

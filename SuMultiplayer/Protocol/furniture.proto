@@ -78,9 +78,9 @@ message FurnitureDesignRequest {
   // Per-connection monotonic sequence; the result echoes it.
   int64 sequence = 1;
   FurnitureDesignOp op = 2;
-  int32 start_x = 3;
+  sint32 start_x = 3;
   int32 start_y = 4;
-  int32 start_z = 5;
+  sint32 start_z = 5;
   // CellFace.Face 0..5 the client clicked (diagnostics; validation uses cells).
   int32 face = 6;
   // CREATE: design payload (bounded by SuMultiplayer.Net.FurnitureDesignCodec).
@@ -92,9 +92,9 @@ message FurnitureDesignRequest {
   // CREATE: source cells (the blocks the design was scanned from, or the
   // single furniture cell for an edit). The host re-reads them and requires an
   // exact light-normalised match before touching the world.
-  repeated int32 source_x = 12 [packed = true];
+  repeated sint32 source_x = 12 [packed = true];
   repeated int32 source_y = 13 [packed = true];
-  repeated int32 source_z = 14 [packed = true];
+  repeated sint32 source_z = 14 [packed = true];
   repeated int32 source_values = 15 [packed = true];
   // CREATE (edit): source design index, -1 = new design.
   int32 base_design_index = 16;

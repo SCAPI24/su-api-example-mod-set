@@ -38,7 +38,7 @@ import "position.proto";
 // One burned-away cell (world coordinates).
 message CellKey {
   sint32 x = 1;
-  sint32 y = 2;
+  int32 y = 2;
   sint32 z = 3;
   // true = eligible for Audio/Sizzles when within 16 m of the local player.
   bool sizzle = 4;
@@ -87,7 +87,7 @@ message CampfireExtinguishEvent {
   uint32 event_id = 3;
   // World coordinates of the campfire cell (contents 209, data 0).
   sint32 x = 4;
-  sint32 y = 5;
+  int32 y = 5;
   sint32 z = 6;
 
   bytes ext = 100;

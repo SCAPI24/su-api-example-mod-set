@@ -33,8 +33,8 @@ namespace SuMultiplayer.Protocol.WorldInfo {
             "X3N0YXJ0ZWQYBiABKAgSHwoXcHJlY2lwaXRhdGlvbl9pbnRlbnNpdHkYByAB",
             "KAISEwoLZm9nX3N0YXJ0ZWQYCCABKAgSFAoMZm9nX3Byb2dyZXNzGAkgASgC",
             "EhUKDWZvZ19pbnRlbnNpdHkYCiABKAISEAoIZm9nX3NlZWQYCyABKAUSFQoN",
-            "aGFzX2xpZ2h0bmluZxgMIAEoCBITCgtsaWdodG5pbmdfeBgNIAEoBRITCgts",
-            "aWdodG5pbmdfeRgOIAEoBRITCgtsaWdodG5pbmdfehgPIAEoBRIaChJsaWdo",
+            "aGFzX2xpZ2h0bmluZxgMIAEoCBITCgtsaWdodG5pbmdfeBgNIAEoERITCgts",
+            "aWdodG5pbmdfeRgOIAEoBRITCgtsaWdodG5pbmdfehgPIAEoERIaChJsaWdo",
             "dG5pbmdfcmV2aXNpb24YECABKAUSGwoTd29ybGRfdGltZV9yZXZpc2lvbhgR",
             "IAEoAxIYChB0aW1lX2FjY2VsZXJhdGVkGBIgASgIEhMKC3RpbWVfZmFjdG9y",
             "GBMgASgCEi4KCHNldHRpbmdzGBQgAygLMhwuc3VtcC53b3JsZGluZm8uV29y",
@@ -794,7 +794,7 @@ namespace SuMultiplayer.Protocol.WorldInfo {
       }
       if (LightningX != 0) {
         output.WriteRawTag(104);
-        output.WriteInt32(LightningX);
+        output.WriteSInt32(LightningX);
       }
       if (LightningY != 0) {
         output.WriteRawTag(112);
@@ -802,7 +802,7 @@ namespace SuMultiplayer.Protocol.WorldInfo {
       }
       if (LightningZ != 0) {
         output.WriteRawTag(120);
-        output.WriteInt32(LightningZ);
+        output.WriteSInt32(LightningZ);
       }
       if (LightningRevision != 0) {
         output.WriteRawTag(128, 1);
@@ -897,7 +897,7 @@ namespace SuMultiplayer.Protocol.WorldInfo {
       }
       if (LightningX != 0) {
         output.WriteRawTag(104);
-        output.WriteInt32(LightningX);
+        output.WriteSInt32(LightningX);
       }
       if (LightningY != 0) {
         output.WriteRawTag(112);
@@ -905,7 +905,7 @@ namespace SuMultiplayer.Protocol.WorldInfo {
       }
       if (LightningZ != 0) {
         output.WriteRawTag(120);
-        output.WriteInt32(LightningZ);
+        output.WriteSInt32(LightningZ);
       }
       if (LightningRevision != 0) {
         output.WriteRawTag(128, 1);
@@ -987,13 +987,13 @@ namespace SuMultiplayer.Protocol.WorldInfo {
         size += 1 + 1;
       }
       if (LightningX != 0) {
-        size += 1 + pb::CodedOutputStream.ComputeInt32Size(LightningX);
+        size += 1 + pb::CodedOutputStream.ComputeSInt32Size(LightningX);
       }
       if (LightningY != 0) {
         size += 1 + pb::CodedOutputStream.ComputeInt32Size(LightningY);
       }
       if (LightningZ != 0) {
-        size += 1 + pb::CodedOutputStream.ComputeInt32Size(LightningZ);
+        size += 1 + pb::CodedOutputStream.ComputeSInt32Size(LightningZ);
       }
       if (LightningRevision != 0) {
         size += 2 + pb::CodedOutputStream.ComputeInt32Size(LightningRevision);
@@ -1173,7 +1173,7 @@ namespace SuMultiplayer.Protocol.WorldInfo {
             break;
           }
           case 104: {
-            LightningX = input.ReadInt32();
+            LightningX = input.ReadSInt32();
             break;
           }
           case 112: {
@@ -1181,7 +1181,7 @@ namespace SuMultiplayer.Protocol.WorldInfo {
             break;
           }
           case 120: {
-            LightningZ = input.ReadInt32();
+            LightningZ = input.ReadSInt32();
             break;
           }
           case 128: {
@@ -1291,7 +1291,7 @@ namespace SuMultiplayer.Protocol.WorldInfo {
             break;
           }
           case 104: {
-            LightningX = input.ReadInt32();
+            LightningX = input.ReadSInt32();
             break;
           }
           case 112: {
@@ -1299,7 +1299,7 @@ namespace SuMultiplayer.Protocol.WorldInfo {
             break;
           }
           case 120: {
-            LightningZ = input.ReadInt32();
+            LightningZ = input.ReadSInt32();
             break;
           }
           case 128: {

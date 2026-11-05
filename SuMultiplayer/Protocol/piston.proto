@@ -56,9 +56,9 @@ message PistonMove {
   //   · PISTON     = 活塞方块所在格（引擎 MovingBlockSet.Tag 的 Point3）；
   //   · COLLAPSING = 塌落列最上面一格（引擎 AddMovingBlockSet 的起始位置 new Vector3(p)；
   //                  引擎给该集合的 Tag 是 null，客户端用这里的位置建本地集合的 Tag）。
-  int32 x = 1;
+  sint32 x = 1;
   int32 y = 2;
-  int32 z = 3;
+  sint32 z = 3;
   // 运动开始时活塞格的完整 value（contents=237 + light + data；data 里含 isExtended / mode /
   // face / maxExtension / pullCount / speed）。COLLAPSING 时填 0（源格已被引擎清掉，没有可信的值）。
   int32 piston_value = 4;
@@ -82,9 +82,9 @@ message PistonMove {
 }
 
 message PistonBlock {
-  int32 x = 1;
+  sint32 x = 1;
   int32 y = 2;
-  int32 z = 3;
+  sint32 z = 3;
   int32 value = 4;
 }
 
@@ -103,9 +103,9 @@ message PistonMoveEnd {
 }
 
 message PistonMoveEndEntry {
-  int32 x = 1;
+  sint32 x = 1;
   int32 y = 2;
-  int32 z = 3;
+  sint32 z = 3;
   // true  = 集合移动到了 TargetPosition。
   //         PISTON：正常落点（最终格由主机 CellChange 下发）；
   //         COLLAPSING：掉到目标点（= 整列一直落到世界上方以外，没有撞到任何方块）。

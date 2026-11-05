@@ -27,7 +27,7 @@ namespace SuMultiplayer.Protocol.Piston {
             "CgxwaXN0b24ucHJvdG8SC3N1bXAucGlzdG9uImAKD1Bpc3Rvbk1vdmVFdmVu",
             "dBIQCghldmVudF9pZBgBIAEoDRITCgtzZXJ2ZXJfdGljaxgCIAEoAxImCgVt",
             "b3ZlcxgDIAMoCzIXLnN1bXAucGlzdG9uLlBpc3Rvbk1vdmUi3QIKClBpc3Rv",
-            "bk1vdmUSCQoBeBgBIAEoBRIJCgF5GAIgASgFEgkKAXoYAyABKAUSFAoMcGlz",
+            "bk1vdmUSCQoBeBgBIAEoERIJCgF5GAIgASgFEgkKAXoYAyABKBESFAoMcGlz",
             "dG9uX3ZhbHVlGAQgASgFEgwKBG1vZGUYBSABKAUSDAoEZmFjZRgGIAEoBRIi",
             "CgVzdGFydBgHIAEoCzITLnN1bXAucGlzdG9uLkZsb2F0MxIjCgZ0YXJnZXQY",
             "CCABKAsyEy5zdW1wLnBpc3Rvbi5GbG9hdDMSDQoFc3BlZWQYCSABKAISFAoM",
@@ -35,12 +35,12 @@ namespace SuMultiplayer.Protocol.Piston {
             "c194GAwgASgCEhQKDHNtb290aG5lc3NfeRgNIAEoAhIoCgZibG9ja3MYDiAD",
             "KAsyGC5zdW1wLnBpc3Rvbi5QaXN0b25CbG9jaxIqCgRraW5kGA8gASgOMhwu",
             "c3VtcC5waXN0b24uTW92aW5nQmxvY2tLaW5kIj0KC1Bpc3RvbkJsb2NrEgkK",
-            "AXgYASABKAUSCQoBeRgCIAEoBRIJCgF6GAMgASgFEg0KBXZhbHVlGAQgASgF",
+            "AXgYASABKBESCQoBeRgCIAEoBRIJCgF6GAMgASgREg0KBXZhbHVlGAQgASgF",
             "IikKBkZsb2F0MxIJCgF4GAEgASgCEgkKAXkYAiABKAISCQoBehgDIAEoAiJm",
             "Cg1QaXN0b25Nb3ZlRW5kEhAKCGV2ZW50X2lkGAEgASgNEhMKC3NlcnZlcl90",
             "aWNrGAIgASgDEi4KBW1vdmVzGAMgAygLMh8uc3VtcC5waXN0b24uUGlzdG9u",
             "TW92ZUVuZEVudHJ5IpwBChJQaXN0b25Nb3ZlRW5kRW50cnkSCQoBeBgBIAEo",
-            "BRIJCgF5GAIgASgFEgkKAXoYAyABKAUSEQoJY29tcGxldGVkGAQgASgIEg4K",
+            "ERIJCgF5GAIgASgFEgkKAXoYAyABKBESEQoJY29tcGxldGVkGAQgASgIEg4K",
             "BnJlYXNvbhgFIAEoCRIWCg5zdGFydF9ldmVudF9pZBgGIAEoDRIqCgRraW5k",
             "GAcgASgOMhwuc3VtcC5waXN0b24uTW92aW5nQmxvY2tLaW5kKnQKD01vdmlu",
             "Z0Jsb2NrS2luZBIhCh1NT1ZJTkdfQkxPQ0tfS0lORF9VTlNQRUNJRklFRBAA",
@@ -678,7 +678,7 @@ namespace SuMultiplayer.Protocol.Piston {
     #else
       if (X != 0) {
         output.WriteRawTag(8);
-        output.WriteInt32(X);
+        output.WriteSInt32(X);
       }
       if (Y != 0) {
         output.WriteRawTag(16);
@@ -686,7 +686,7 @@ namespace SuMultiplayer.Protocol.Piston {
       }
       if (Z != 0) {
         output.WriteRawTag(24);
-        output.WriteInt32(Z);
+        output.WriteSInt32(Z);
       }
       if (PistonValue != 0) {
         output.WriteRawTag(32);
@@ -745,7 +745,7 @@ namespace SuMultiplayer.Protocol.Piston {
     void pb::IBufferMessage.InternalWriteTo(ref pb::WriteContext output) {
       if (X != 0) {
         output.WriteRawTag(8);
-        output.WriteInt32(X);
+        output.WriteSInt32(X);
       }
       if (Y != 0) {
         output.WriteRawTag(16);
@@ -753,7 +753,7 @@ namespace SuMultiplayer.Protocol.Piston {
       }
       if (Z != 0) {
         output.WriteRawTag(24);
-        output.WriteInt32(Z);
+        output.WriteSInt32(Z);
       }
       if (PistonValue != 0) {
         output.WriteRawTag(32);
@@ -811,13 +811,13 @@ namespace SuMultiplayer.Protocol.Piston {
     public int CalculateSize() {
       int size = 0;
       if (X != 0) {
-        size += 1 + pb::CodedOutputStream.ComputeInt32Size(X);
+        size += 1 + pb::CodedOutputStream.ComputeSInt32Size(X);
       }
       if (Y != 0) {
         size += 1 + pb::CodedOutputStream.ComputeInt32Size(Y);
       }
       if (Z != 0) {
-        size += 1 + pb::CodedOutputStream.ComputeInt32Size(Z);
+        size += 1 + pb::CodedOutputStream.ComputeSInt32Size(Z);
       }
       if (PistonValue != 0) {
         size += 1 + pb::CodedOutputStream.ComputeInt32Size(PistonValue);
@@ -934,7 +934,7 @@ namespace SuMultiplayer.Protocol.Piston {
             _unknownFields = pb::UnknownFieldSet.MergeFieldFrom(_unknownFields, input);
             break;
           case 8: {
-            X = input.ReadInt32();
+            X = input.ReadSInt32();
             break;
           }
           case 16: {
@@ -942,7 +942,7 @@ namespace SuMultiplayer.Protocol.Piston {
             break;
           }
           case 24: {
-            Z = input.ReadInt32();
+            Z = input.ReadSInt32();
             break;
           }
           case 32: {
@@ -1019,7 +1019,7 @@ namespace SuMultiplayer.Protocol.Piston {
             _unknownFields = pb::UnknownFieldSet.MergeFieldFrom(_unknownFields, ref input);
             break;
           case 8: {
-            X = input.ReadInt32();
+            X = input.ReadSInt32();
             break;
           }
           case 16: {
@@ -1027,7 +1027,7 @@ namespace SuMultiplayer.Protocol.Piston {
             break;
           }
           case 24: {
-            Z = input.ReadInt32();
+            Z = input.ReadSInt32();
             break;
           }
           case 32: {
@@ -1237,7 +1237,7 @@ namespace SuMultiplayer.Protocol.Piston {
     #else
       if (X != 0) {
         output.WriteRawTag(8);
-        output.WriteInt32(X);
+        output.WriteSInt32(X);
       }
       if (Y != 0) {
         output.WriteRawTag(16);
@@ -1245,7 +1245,7 @@ namespace SuMultiplayer.Protocol.Piston {
       }
       if (Z != 0) {
         output.WriteRawTag(24);
-        output.WriteInt32(Z);
+        output.WriteSInt32(Z);
       }
       if (Value != 0) {
         output.WriteRawTag(32);
@@ -1263,7 +1263,7 @@ namespace SuMultiplayer.Protocol.Piston {
     void pb::IBufferMessage.InternalWriteTo(ref pb::WriteContext output) {
       if (X != 0) {
         output.WriteRawTag(8);
-        output.WriteInt32(X);
+        output.WriteSInt32(X);
       }
       if (Y != 0) {
         output.WriteRawTag(16);
@@ -1271,7 +1271,7 @@ namespace SuMultiplayer.Protocol.Piston {
       }
       if (Z != 0) {
         output.WriteRawTag(24);
-        output.WriteInt32(Z);
+        output.WriteSInt32(Z);
       }
       if (Value != 0) {
         output.WriteRawTag(32);
@@ -1288,13 +1288,13 @@ namespace SuMultiplayer.Protocol.Piston {
     public int CalculateSize() {
       int size = 0;
       if (X != 0) {
-        size += 1 + pb::CodedOutputStream.ComputeInt32Size(X);
+        size += 1 + pb::CodedOutputStream.ComputeSInt32Size(X);
       }
       if (Y != 0) {
         size += 1 + pb::CodedOutputStream.ComputeInt32Size(Y);
       }
       if (Z != 0) {
-        size += 1 + pb::CodedOutputStream.ComputeInt32Size(Z);
+        size += 1 + pb::CodedOutputStream.ComputeSInt32Size(Z);
       }
       if (Value != 0) {
         size += 1 + pb::CodedOutputStream.ComputeInt32Size(Value);
@@ -1343,7 +1343,7 @@ namespace SuMultiplayer.Protocol.Piston {
             _unknownFields = pb::UnknownFieldSet.MergeFieldFrom(_unknownFields, input);
             break;
           case 8: {
-            X = input.ReadInt32();
+            X = input.ReadSInt32();
             break;
           }
           case 16: {
@@ -1351,7 +1351,7 @@ namespace SuMultiplayer.Protocol.Piston {
             break;
           }
           case 24: {
-            Z = input.ReadInt32();
+            Z = input.ReadSInt32();
             break;
           }
           case 32: {
@@ -1378,7 +1378,7 @@ namespace SuMultiplayer.Protocol.Piston {
             _unknownFields = pb::UnknownFieldSet.MergeFieldFrom(_unknownFields, ref input);
             break;
           case 8: {
-            X = input.ReadInt32();
+            X = input.ReadSInt32();
             break;
           }
           case 16: {
@@ -1386,7 +1386,7 @@ namespace SuMultiplayer.Protocol.Piston {
             break;
           }
           case 24: {
-            Z = input.ReadInt32();
+            Z = input.ReadSInt32();
             break;
           }
           case 32: {
@@ -2148,7 +2148,7 @@ namespace SuMultiplayer.Protocol.Piston {
     #else
       if (X != 0) {
         output.WriteRawTag(8);
-        output.WriteInt32(X);
+        output.WriteSInt32(X);
       }
       if (Y != 0) {
         output.WriteRawTag(16);
@@ -2156,7 +2156,7 @@ namespace SuMultiplayer.Protocol.Piston {
       }
       if (Z != 0) {
         output.WriteRawTag(24);
-        output.WriteInt32(Z);
+        output.WriteSInt32(Z);
       }
       if (Completed != false) {
         output.WriteRawTag(32);
@@ -2186,7 +2186,7 @@ namespace SuMultiplayer.Protocol.Piston {
     void pb::IBufferMessage.InternalWriteTo(ref pb::WriteContext output) {
       if (X != 0) {
         output.WriteRawTag(8);
-        output.WriteInt32(X);
+        output.WriteSInt32(X);
       }
       if (Y != 0) {
         output.WriteRawTag(16);
@@ -2194,7 +2194,7 @@ namespace SuMultiplayer.Protocol.Piston {
       }
       if (Z != 0) {
         output.WriteRawTag(24);
-        output.WriteInt32(Z);
+        output.WriteSInt32(Z);
       }
       if (Completed != false) {
         output.WriteRawTag(32);
@@ -2223,13 +2223,13 @@ namespace SuMultiplayer.Protocol.Piston {
     public int CalculateSize() {
       int size = 0;
       if (X != 0) {
-        size += 1 + pb::CodedOutputStream.ComputeInt32Size(X);
+        size += 1 + pb::CodedOutputStream.ComputeSInt32Size(X);
       }
       if (Y != 0) {
         size += 1 + pb::CodedOutputStream.ComputeInt32Size(Y);
       }
       if (Z != 0) {
-        size += 1 + pb::CodedOutputStream.ComputeInt32Size(Z);
+        size += 1 + pb::CodedOutputStream.ComputeSInt32Size(Z);
       }
       if (Completed != false) {
         size += 1 + 1;
@@ -2296,7 +2296,7 @@ namespace SuMultiplayer.Protocol.Piston {
             _unknownFields = pb::UnknownFieldSet.MergeFieldFrom(_unknownFields, input);
             break;
           case 8: {
-            X = input.ReadInt32();
+            X = input.ReadSInt32();
             break;
           }
           case 16: {
@@ -2304,7 +2304,7 @@ namespace SuMultiplayer.Protocol.Piston {
             break;
           }
           case 24: {
-            Z = input.ReadInt32();
+            Z = input.ReadSInt32();
             break;
           }
           case 32: {
@@ -2343,7 +2343,7 @@ namespace SuMultiplayer.Protocol.Piston {
             _unknownFields = pb::UnknownFieldSet.MergeFieldFrom(_unknownFields, ref input);
             break;
           case 8: {
-            X = input.ReadInt32();
+            X = input.ReadSInt32();
             break;
           }
           case 16: {
@@ -2351,7 +2351,7 @@ namespace SuMultiplayer.Protocol.Piston {
             break;
           }
           case 24: {
-            Z = input.ReadInt32();
+            Z = input.ReadSInt32();
             break;
           }
           case 32: {

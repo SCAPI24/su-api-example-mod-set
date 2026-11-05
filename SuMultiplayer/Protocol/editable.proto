@@ -48,9 +48,9 @@ enum EditableKind {
 message EditableEditRequest {
   // Per-connection monotonic sequence; the result echoes it.
   int64 sequence = 1;
-  int32 x = 2;
+  sint32 x = 2;
   int32 y = 3;
-  int32 z = 4;
+  sint32 z = 4;
   // Terrain contents the client observed (host rejects a stale/mismatched cell).
   int32 contents = 5;
   EditableKind kind = 6;
@@ -76,9 +76,9 @@ message EditableEditResult {
   // before the first ':' (stale-content / stale-revision / block-changed / ...).
   string reason = 3;
   EditableKind kind = 4;
-  int32 x = 5;
+  sint32 x = 5;
   int32 y = 6;
-  int32 z = 7;
+  sint32 z = 7;
   int32 revision = 8;
 }
 
@@ -86,9 +86,9 @@ message EditableEditResult {
 // Presentation-only on the client: it writes the replica content dictionary and
 // never queues electric simulation / never writes world state.
 message EditableState {
-  int32 x = 1;
+  sint32 x = 1;
   int32 y = 2;
-  int32 z = 3;
+  sint32 z = 3;
   int32 contents = 4;
   EditableKind kind = 5;
   // Host monotonic per-cell revision: the client drops an older state as stale

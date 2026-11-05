@@ -33,8 +33,8 @@ namespace SuMultiplayer.Protocol.Action {
             "ZRgIIAEoBRISCgppdGVtX2NvdW50GAkgASgFEg8KB2hhc19haW0YCiABKAgS",
             "JwoKYWltX29yaWdpbhgLIAEoCzITLnN1bXAucG9zaXRpb24uVmVjMxIqCg1h",
             "aW1fZGlyZWN0aW9uGAwgASgLMhMuc3VtcC5wb3NpdGlvbi5WZWMzEhAKCGhh",
-            "c19jZWxsGA0gASgIEg4KBmNlbGxfeBgOIAEoBRIOCgZjZWxsX3kYDyABKAUS",
-            "DgoGY2VsbF96GBAgASgFEhEKCWNlbGxfZmFjZRgRIAEoBRIUCgxkaWdfcHJv",
+            "c19jZWxsGA0gASgIEg4KBmNlbGxfeBgOIAEoERIOCgZjZWxsX3kYDyABKAUS",
+            "DgoGY2VsbF96GBAgASgREhEKCWNlbGxfZmFjZRgRIAEoBRIUCgxkaWdfcHJv",
             "Z3Jlc3MYEiABKAISFAoMaGFzX3Bvc2l0aW9uGBMgASgIEiUKCHBvc2l0aW9u",
             "GBQgASgLMhMuc3VtcC5wb3NpdGlvbi5WZWMzEhQKDGhhc192ZWxvY2l0eRgV",
             "IAEoCBIlCgh2ZWxvY2l0eRgWIAEoCzITLnN1bXAucG9zaXRpb24uVmVjMxIL",
@@ -776,7 +776,7 @@ namespace SuMultiplayer.Protocol.Action {
       }
       if (CellX != 0) {
         output.WriteRawTag(112);
-        output.WriteInt32(CellX);
+        output.WriteSInt32(CellX);
       }
       if (CellY != 0) {
         output.WriteRawTag(120);
@@ -784,7 +784,7 @@ namespace SuMultiplayer.Protocol.Action {
       }
       if (CellZ != 0) {
         output.WriteRawTag(128, 1);
-        output.WriteInt32(CellZ);
+        output.WriteSInt32(CellZ);
       }
       if (CellFace != 0) {
         output.WriteRawTag(136, 1);
@@ -882,7 +882,7 @@ namespace SuMultiplayer.Protocol.Action {
       }
       if (CellX != 0) {
         output.WriteRawTag(112);
-        output.WriteInt32(CellX);
+        output.WriteSInt32(CellX);
       }
       if (CellY != 0) {
         output.WriteRawTag(120);
@@ -890,7 +890,7 @@ namespace SuMultiplayer.Protocol.Action {
       }
       if (CellZ != 0) {
         output.WriteRawTag(128, 1);
-        output.WriteInt32(CellZ);
+        output.WriteSInt32(CellZ);
       }
       if (CellFace != 0) {
         output.WriteRawTag(136, 1);
@@ -974,13 +974,13 @@ namespace SuMultiplayer.Protocol.Action {
         size += 1 + 1;
       }
       if (CellX != 0) {
-        size += 1 + pb::CodedOutputStream.ComputeInt32Size(CellX);
+        size += 1 + pb::CodedOutputStream.ComputeSInt32Size(CellX);
       }
       if (CellY != 0) {
         size += 1 + pb::CodedOutputStream.ComputeInt32Size(CellY);
       }
       if (CellZ != 0) {
-        size += 2 + pb::CodedOutputStream.ComputeInt32Size(CellZ);
+        size += 2 + pb::CodedOutputStream.ComputeSInt32Size(CellZ);
       }
       if (CellFace != 0) {
         size += 2 + pb::CodedOutputStream.ComputeInt32Size(CellFace);
@@ -1183,7 +1183,7 @@ namespace SuMultiplayer.Protocol.Action {
             break;
           }
           case 112: {
-            CellX = input.ReadInt32();
+            CellX = input.ReadSInt32();
             break;
           }
           case 120: {
@@ -1191,7 +1191,7 @@ namespace SuMultiplayer.Protocol.Action {
             break;
           }
           case 128: {
-            CellZ = input.ReadInt32();
+            CellZ = input.ReadSInt32();
             break;
           }
           case 136: {
@@ -1313,7 +1313,7 @@ namespace SuMultiplayer.Protocol.Action {
             break;
           }
           case 112: {
-            CellX = input.ReadInt32();
+            CellX = input.ReadSInt32();
             break;
           }
           case 120: {
@@ -1321,7 +1321,7 @@ namespace SuMultiplayer.Protocol.Action {
             break;
           }
           case 128: {
-            CellZ = input.ReadInt32();
+            CellZ = input.ReadSInt32();
             break;
           }
           case 136: {
