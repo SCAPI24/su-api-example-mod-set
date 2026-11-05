@@ -85,7 +85,7 @@ namespace SuMultiplayer.Protocol.Telemetry {
             "cmVzGCYgASgEEisKI3JlcXVlc3RlZF9zbmFwc2hvdF9jYXB0dXJlX2ZhaWx1",
             "cmVzGCcgASgEEigKIGhvc3RfYmF0Y2hfY2FwdHVyZV9jaHVua3NfZmFpbGVk",
             "GCggASgEEjIKBnN0YWdlcxgpIAMoCzIiLnN1bXAudGVsZW1ldHJ5LkNpcmN1",
-            "aXRTdGFnZVNhbXBsZSKkAwoTQ2xpZW50Q2lyY3VpdFNhbXBsZRIdChVoYXNo",
+            "aXRTdGFnZVNhbXBsZSKABAoTQ2xpZW50Q2lyY3VpdFNhbXBsZRIdChVoYXNo",
             "X2NhcHR1cmVfZmFpbHVyZXMYASABKAQSIwobaGFzaF9jYXB0dXJlX2NodW5r",
             "c19za2lwcGVkGAIgASgEEhkKEWhhc2hfcmVwb3J0c19zZW50GAMgASgEEhgK",
             "EGhhc2hfY2h1bmtzX3NlbnQYBCABKAQSGwoTc2NvcGVfcmVxdWVzdHNfc2Vu",
@@ -94,77 +94,79 @@ namespace SuMultiplayer.Protocol.Telemetry {
             "cHBsaWVkGAggASgEEhYKDnN0YXRlc19hcHBsaWVkGAkgASgEEhYKDmFwcGx5",
             "X2ZhaWx1cmVzGAogASgEEhkKEXdhdGVybWFya19leHBpcmVkGAsgASgEEhkK",
             "EXNuYXBzaG90X3RpbWVvdXRzGAwgASgEEjIKBnN0YWdlcxgNIAMoCzIiLnN1",
-            "bXAudGVsZW1ldHJ5LkNpcmN1aXRTdGFnZVNhbXBsZSK8BAoTVGVycmFpblJl",
-            "c3luY1NhbXBsZRISCgpyZXF1ZXN0X2lkGAEgASgEEhEKCXdpbmRvd19tcxgC",
-            "IAEoDRITCgtzaGFyZF9ieXRlcxgDIAEoBBIQCghybGVfcnVucxgEIAEoBBIW",
-            "Cg5leHBhbmRlZF9jZWxscxgFIAEoBBIRCglkZWNvZGVfbXMYBiABKAISEAoI",
-            "YXBwbHlfbXMYByABKAISGwoTY2lyY3VpdF9jYWxsYmFja19tcxgIIAEoAhIX",
-            "Cg9maW5hbF9kaWdlc3RfbXMYCSABKAISFQoNYXBwbGllZF9wYXJ0cxgKIAEo",
-            "BBIlCh1ub19wZW5kaW5nX3NpeF9mYWNlX3JvbGxiYWNrcxgLIAEoBBInCh9u",
-            "b19wZW5kaW5nX3NpeF9mYWNlX3JvbGxiYWNrX21zGAwgASgCEhkKEWNodW5r",
-            "X2xvYWRfZXZlbnRzGA0gASgEEhsKE2NodW5rX3VubG9hZF9ldmVudHMYDiAB",
-            "KAQSEwoLaGFzaF9jaGVja3MYDyABKAQSFAoMaGFzaF9tYXRjaGVzGBAgASgE",
-            "EhcKD2hhc2hfbWlzbWF0Y2hlcxgRIAEoBBIPCgdoYXNoX21zGBIgASgCEhMK",
-            "C2hhc2hfbWF4X21zGBMgASgCEhwKFHJlc3luY19jaGFuZ2VkX2NlbGxzGBQg",
-            "ASgEEh4KFnJlc3luY191bmNoYW5nZWRfY2VsbHMYFSABKAQSHQoVdGVycmFp",
-            "bl9pbnZhbGlkYXRpb25zGBYgASgEIpsNChFUZXJyYWluU3luY1NhbXBsZRIW",
-            "Cg5kaWdlc3RfcmVwb3J0cxgBIAEoBBIeChZjZWxsX2NoYW5nZXNfYnJvYWRj",
-            "YXN0GAIgASgEEhsKE2NlbGxfY2hhbmdlX3JlcGFpcnMYAyABKAQSFAoMcmVz",
-            "eW5jX2J5dGVzGAQgASgEEhoKEnJlcG9ydHNfcGVyX3NlY29uZBgFIAEoBBIb",
-            "ChNtaXNtYXRjaF9wZXJfc2Vjb25kGAYgASgEEiIKGnJlc3luY19yZWNlaXZl",
-            "ZF9wZXJfc2Vjb25kGAcgASgEEiEKGXJlc3luY19hcHBsaWVkX3Blcl9zZWNv",
-            "bmQYCCABKAQSHAoUdmVyaWZ5X3JlcXVlc3RzX3NlbnQYCSABKAQSJAocdmVy",
-            "aWZ5X3JlcXVlc3Rfc2VuZF9mYWlsdXJlcxgKIAEoBBIXCg9wZW5kaW5nX3Jl",
-            "cG9ydHMYCyABKA0SFQoNcGVuZGluZ19tYXJrcxgMIAEoDRIXCg9wZW5kaW5n",
-            "X2NsaWVudHMYDSABKA0SEwoLcmVzeW5jX3J1bnMYDiABKAQSHQoVcmVzeW5j",
-            "X2V4cGFuZGVkX2NlbGxzGA8gASgEEhgKEHJlc3luY19lbmNvZGVfbXMYECAB",
-            "KAISGgoScmVzeW5jX3NoYXJkX2J5dGVzGBEgASgEEh0KFW93ZWRfc25hcHNo",
-            "b3RzX3F1ZXVlZBgSIAEoBBIpCiFvd2VkX3NuYXBzaG90c19za2lwcGVkX25v",
-            "X2NvbnRlbnQYEyABKAQSGAoQdG9wX2xheWVyX2NoZWNrcxgUIAEoBBIZChF0",
-            "b3BfbGF5ZXJfbWF0Y2hlcxgVIAEoBBIeChZ0b3BfbGF5ZXJfcmVwb3J0c19z",
-            "ZW50GBYgASgEEiAKGHRvcF9sYXllcl9maXhlc19yZWNlaXZlZBgXIAEoBBIj",
-            "Cht0b3BfbGF5ZXJfZml4X2NlbGxzX2FwcGxpZWQYGCABKAQSIQoZdG9wX2xh",
-            "eWVyX2ZpeF9lc2NhbGF0aW9ucxgZIAEoBBIdChV0b3BfbGF5ZXJfdW5hdmFp",
-            "bGFibGUYGiABKAQSIwobZGlnZXN0c19kZWZlcnJlZF9ub3Rfc3RhYmxlGBsg",
-            "ASgEEh4KFnZlcmRpY3RzX3N0YWxlX3NraXBwZWQYHCABKAQSIwobdG9wX2xh",
-            "eWVyX2ZpeF9mcm9tX21pc21hdGNoGB0gASgEEhwKFHRvcF9sYXllcl9maXhl",
-            "c19zZW50GB4gASgEEiMKG3RvcF9sYXllcl9maXhfc2VuZF9mYWlsdXJlcxgf",
-            "IAEoBBIlCh10b3BfbGF5ZXJfY29udmVyZ2VfdW5yZXBvcnRlZBggIAEoBBIU",
-            "CgxzdGFsZV9oZWFsZWQYISABKAQSKwojdG9wX2xheWVyX2ZpeF9za2lwcGVk",
-            "X25vdF90b3BfbGF5ZXIYIiABKAQSIQoZY2xpZW50X2hhc2hfemVyb192ZXJk",
-            "aWN0cxgjIAEoBBIgChhjbGllbnRfaGFzaF96ZXJvX3NraXBwZWQYJCABKAQS",
-            "IwobcmVwb3J0c19kZWZlcnJlZF9ub3Rfc3RhYmxlGCUgASgEEiwKJHRvcF9s",
-            "YXllcl9maXhfc2tpcHBlZF9ub19jbGllbnRfaGFzaBgmIAEoBBIVCg1sZWF2",
-            "ZXNfbWFya2VkGCcgASgEEiAKGGxlYXZlc19tYXJrZWRfdW5yb3V0YWJsZRgo",
-            "IAEoBBIYChBsZWF2ZXNfb25seV9qb2JzGCkgASgEEhgKEGxlYXZlc19vbmx5",
-            "X3J1bnMYKiABKAQSGQoRbGVhdmVzX29ubHlfYnl0ZXMYKyABKAQSIAoYbGVh",
-            "dmVzX3plcm9fcnVuX2ZhbGxiYWNrGCwgASgEEh4KFmxlYXZlc19yZWNhbGNf",
-            "ZGVmZXJyZWQYLSABKAQSIAoYbGVhdmVzX3RvcF9sYXllcl9za2lwcGVkGC4g",
-            "ASgEEiAKGGxlYXZlc19maXhfc2VuZF9mYWlsdXJlcxgvIAEoBBIcChRsZWF2",
-            "ZXNfcGVuZGluZ19tYXJrcxgwIAEoBBIaChJsZWF2ZXNfZml4X2FwcGxpZWQY",
-            "MSABKAQSGAoQbGVhdmVzX2ZpeF9jZWxscxgyIAEoBBIfChd0b3BfbGF5ZXJf",
-            "dHJpbW1lZF9jZWxscxgzIAEoBBIiChp0b3BfbGF5ZXJfdHJpbV91bmF2YWls",
-            "YWJsZRg0IAEoBBImCh50b3BfbGF5ZXJfZml4X2F0dGVtcHRfZXhjZWVkZWQY",
-            "NSABKAQi3wMKDUxpdmVUZWxlbWV0cnkSEQoJc2FtcGxlX2lkGAEgASgEEhUK",
-            "DXNhbXBsZWRfYXRfbXMYAiABKAQSMwoMaG9zdF9ydW50aW1lGAMgASgLMh0u",
-            "c3VtcC50ZWxlbWV0cnkuUnVudGltZVNhbXBsZRIyCgdjaXJjdWl0GAQgASgL",
-            "MiEuc3VtcC50ZWxlbWV0cnkuQ2lyY3VpdFN5bmNTYW1wbGUSMgoHdGVycmFp",
-            "bhgFIAEoCzIhLnN1bXAudGVsZW1ldHJ5LlRlcnJhaW5TeW5jU2FtcGxlEikK",
-            "BXBlZXJzGAYgAygLMhouc3VtcC50ZWxlbWV0cnkuUGVlclNhbXBsZRIZChFs",
-            "aXZlX21hcF9idWlsZF9tcxgHIAEoAhIXCg9saXZlX21hcF9jaHVua3MYCCAB",
-            "KA0SGAoQbGl2ZV9tYXBfYmF0Y2hlcxgJIAEoDRIbChNsaXZlX21hcF9ieXRl",
-            "c19zZW50GAogASgEEhwKFGxpdmVfbWFwX2ZyYW1lc19zZW50GAsgASgEEhkK",
-            "EWxpdmVfbWFwX3JlcXVlc3RzGAwgASgEEjgKEW1vbml0b3JfdHJhbnNwb3J0",
-            "GA0gASgLMh0uc3VtcC50ZWxlbWV0cnkuQ2hhbm5lbFNhbXBsZSKyAQoWQ2xp",
-            "ZW50UnVudGltZVRlbGVtZXRyeRIuCgdydW50aW1lGAEgASgLMh0uc3VtcC50",
-            "ZWxlbWV0cnkuUnVudGltZVNhbXBsZRI0CgdjaXJjdWl0GAIgASgLMiMuc3Vt",
-            "cC50ZWxlbWV0cnkuQ2xpZW50Q2lyY3VpdFNhbXBsZRIyCgd0ZXJyYWluGAMg",
-            "ASgLMiEuc3VtcC50ZWxlbWV0cnkuVGVycmFpblN5bmNTYW1wbGUiQQoYVGVy",
-            "cmFpbkRpYWdub3N0aWNDb250cm9sEhIKCnJlcXVlc3RfaWQYASABKAQSEQoJ",
-            "d2luZG93X21zGAIgASgNIk4KF1RlcnJhaW5EaWFnbm9zdGljUmVwb3J0EjMK",
-            "BnNhbXBsZRgBIAEoCzIjLnN1bXAudGVsZW1ldHJ5LlRlcnJhaW5SZXN5bmNT",
-            "YW1wbGVCJUgBqgIgU3VNdWx0aXBsYXllci5Qcm90b2NvbC5UZWxlbWV0cnli",
-            "BnByb3RvMw=="));
+            "bXAudGVsZW1ldHJ5LkNpcmN1aXRTdGFnZVNhbXBsZRIZChFzdGFsZV9zY29w",
+            "ZV9yZXVzZRgOIAEoBBIaChJzaW11bGF0aW9uX2VuYWJsZWQYDyABKAgSIwob",
+            "ZnVsbF9zY29wZV9zbmFwc2hvdF9wZW5kaW5nGBAgASgIIrwEChNUZXJyYWlu",
+            "UmVzeW5jU2FtcGxlEhIKCnJlcXVlc3RfaWQYASABKAQSEQoJd2luZG93X21z",
+            "GAIgASgNEhMKC3NoYXJkX2J5dGVzGAMgASgEEhAKCHJsZV9ydW5zGAQgASgE",
+            "EhYKDmV4cGFuZGVkX2NlbGxzGAUgASgEEhEKCWRlY29kZV9tcxgGIAEoAhIQ",
+            "CghhcHBseV9tcxgHIAEoAhIbChNjaXJjdWl0X2NhbGxiYWNrX21zGAggASgC",
+            "EhcKD2ZpbmFsX2RpZ2VzdF9tcxgJIAEoAhIVCg1hcHBsaWVkX3BhcnRzGAog",
+            "ASgEEiUKHW5vX3BlbmRpbmdfc2l4X2ZhY2Vfcm9sbGJhY2tzGAsgASgEEicK",
+            "H25vX3BlbmRpbmdfc2l4X2ZhY2Vfcm9sbGJhY2tfbXMYDCABKAISGQoRY2h1",
+            "bmtfbG9hZF9ldmVudHMYDSABKAQSGwoTY2h1bmtfdW5sb2FkX2V2ZW50cxgO",
+            "IAEoBBITCgtoYXNoX2NoZWNrcxgPIAEoBBIUCgxoYXNoX21hdGNoZXMYECAB",
+            "KAQSFwoPaGFzaF9taXNtYXRjaGVzGBEgASgEEg8KB2hhc2hfbXMYEiABKAIS",
+            "EwoLaGFzaF9tYXhfbXMYEyABKAISHAoUcmVzeW5jX2NoYW5nZWRfY2VsbHMY",
+            "FCABKAQSHgoWcmVzeW5jX3VuY2hhbmdlZF9jZWxscxgVIAEoBBIdChV0ZXJy",
+            "YWluX2ludmFsaWRhdGlvbnMYFiABKAQimw0KEVRlcnJhaW5TeW5jU2FtcGxl",
+            "EhYKDmRpZ2VzdF9yZXBvcnRzGAEgASgEEh4KFmNlbGxfY2hhbmdlc19icm9h",
+            "ZGNhc3QYAiABKAQSGwoTY2VsbF9jaGFuZ2VfcmVwYWlycxgDIAEoBBIUCgxy",
+            "ZXN5bmNfYnl0ZXMYBCABKAQSGgoScmVwb3J0c19wZXJfc2Vjb25kGAUgASgE",
+            "EhsKE21pc21hdGNoX3Blcl9zZWNvbmQYBiABKAQSIgoacmVzeW5jX3JlY2Vp",
+            "dmVkX3Blcl9zZWNvbmQYByABKAQSIQoZcmVzeW5jX2FwcGxpZWRfcGVyX3Nl",
+            "Y29uZBgIIAEoBBIcChR2ZXJpZnlfcmVxdWVzdHNfc2VudBgJIAEoBBIkChx2",
+            "ZXJpZnlfcmVxdWVzdF9zZW5kX2ZhaWx1cmVzGAogASgEEhcKD3BlbmRpbmdf",
+            "cmVwb3J0cxgLIAEoDRIVCg1wZW5kaW5nX21hcmtzGAwgASgNEhcKD3BlbmRp",
+            "bmdfY2xpZW50cxgNIAEoDRITCgtyZXN5bmNfcnVucxgOIAEoBBIdChVyZXN5",
+            "bmNfZXhwYW5kZWRfY2VsbHMYDyABKAQSGAoQcmVzeW5jX2VuY29kZV9tcxgQ",
+            "IAEoAhIaChJyZXN5bmNfc2hhcmRfYnl0ZXMYESABKAQSHQoVb3dlZF9zbmFw",
+            "c2hvdHNfcXVldWVkGBIgASgEEikKIW93ZWRfc25hcHNob3RzX3NraXBwZWRf",
+            "bm9fY29udGVudBgTIAEoBBIYChB0b3BfbGF5ZXJfY2hlY2tzGBQgASgEEhkK",
+            "EXRvcF9sYXllcl9tYXRjaGVzGBUgASgEEh4KFnRvcF9sYXllcl9yZXBvcnRz",
+            "X3NlbnQYFiABKAQSIAoYdG9wX2xheWVyX2ZpeGVzX3JlY2VpdmVkGBcgASgE",
+            "EiMKG3RvcF9sYXllcl9maXhfY2VsbHNfYXBwbGllZBgYIAEoBBIhChl0b3Bf",
+            "bGF5ZXJfZml4X2VzY2FsYXRpb25zGBkgASgEEh0KFXRvcF9sYXllcl91bmF2",
+            "YWlsYWJsZRgaIAEoBBIjChtkaWdlc3RzX2RlZmVycmVkX25vdF9zdGFibGUY",
+            "GyABKAQSHgoWdmVyZGljdHNfc3RhbGVfc2tpcHBlZBgcIAEoBBIjCht0b3Bf",
+            "bGF5ZXJfZml4X2Zyb21fbWlzbWF0Y2gYHSABKAQSHAoUdG9wX2xheWVyX2Zp",
+            "eGVzX3NlbnQYHiABKAQSIwobdG9wX2xheWVyX2ZpeF9zZW5kX2ZhaWx1cmVz",
+            "GB8gASgEEiUKHXRvcF9sYXllcl9jb252ZXJnZV91bnJlcG9ydGVkGCAgASgE",
+            "EhQKDHN0YWxlX2hlYWxlZBghIAEoBBIrCiN0b3BfbGF5ZXJfZml4X3NraXBw",
+            "ZWRfbm90X3RvcF9sYXllchgiIAEoBBIhChljbGllbnRfaGFzaF96ZXJvX3Zl",
+            "cmRpY3RzGCMgASgEEiAKGGNsaWVudF9oYXNoX3plcm9fc2tpcHBlZBgkIAEo",
+            "BBIjChtyZXBvcnRzX2RlZmVycmVkX25vdF9zdGFibGUYJSABKAQSLAokdG9w",
+            "X2xheWVyX2ZpeF9za2lwcGVkX25vX2NsaWVudF9oYXNoGCYgASgEEhUKDWxl",
+            "YXZlc19tYXJrZWQYJyABKAQSIAoYbGVhdmVzX21hcmtlZF91bnJvdXRhYmxl",
+            "GCggASgEEhgKEGxlYXZlc19vbmx5X2pvYnMYKSABKAQSGAoQbGVhdmVzX29u",
+            "bHlfcnVucxgqIAEoBBIZChFsZWF2ZXNfb25seV9ieXRlcxgrIAEoBBIgChhs",
+            "ZWF2ZXNfemVyb19ydW5fZmFsbGJhY2sYLCABKAQSHgoWbGVhdmVzX3JlY2Fs",
+            "Y19kZWZlcnJlZBgtIAEoBBIgChhsZWF2ZXNfdG9wX2xheWVyX3NraXBwZWQY",
+            "LiABKAQSIAoYbGVhdmVzX2ZpeF9zZW5kX2ZhaWx1cmVzGC8gASgEEhwKFGxl",
+            "YXZlc19wZW5kaW5nX21hcmtzGDAgASgEEhoKEmxlYXZlc19maXhfYXBwbGll",
+            "ZBgxIAEoBBIYChBsZWF2ZXNfZml4X2NlbGxzGDIgASgEEh8KF3RvcF9sYXll",
+            "cl90cmltbWVkX2NlbGxzGDMgASgEEiIKGnRvcF9sYXllcl90cmltX3VuYXZh",
+            "aWxhYmxlGDQgASgEEiYKHnRvcF9sYXllcl9maXhfYXR0ZW1wdF9leGNlZWRl",
+            "ZBg1IAEoBCLfAwoNTGl2ZVRlbGVtZXRyeRIRCglzYW1wbGVfaWQYASABKAQS",
+            "FQoNc2FtcGxlZF9hdF9tcxgCIAEoBBIzCgxob3N0X3J1bnRpbWUYAyABKAsy",
+            "HS5zdW1wLnRlbGVtZXRyeS5SdW50aW1lU2FtcGxlEjIKB2NpcmN1aXQYBCAB",
+            "KAsyIS5zdW1wLnRlbGVtZXRyeS5DaXJjdWl0U3luY1NhbXBsZRIyCgd0ZXJy",
+            "YWluGAUgASgLMiEuc3VtcC50ZWxlbWV0cnkuVGVycmFpblN5bmNTYW1wbGUS",
+            "KQoFcGVlcnMYBiADKAsyGi5zdW1wLnRlbGVtZXRyeS5QZWVyU2FtcGxlEhkK",
+            "EWxpdmVfbWFwX2J1aWxkX21zGAcgASgCEhcKD2xpdmVfbWFwX2NodW5rcxgI",
+            "IAEoDRIYChBsaXZlX21hcF9iYXRjaGVzGAkgASgNEhsKE2xpdmVfbWFwX2J5",
+            "dGVzX3NlbnQYCiABKAQSHAoUbGl2ZV9tYXBfZnJhbWVzX3NlbnQYCyABKAQS",
+            "GQoRbGl2ZV9tYXBfcmVxdWVzdHMYDCABKAQSOAoRbW9uaXRvcl90cmFuc3Bv",
+            "cnQYDSABKAsyHS5zdW1wLnRlbGVtZXRyeS5DaGFubmVsU2FtcGxlIrIBChZD",
+            "bGllbnRSdW50aW1lVGVsZW1ldHJ5Ei4KB3J1bnRpbWUYASABKAsyHS5zdW1w",
+            "LnRlbGVtZXRyeS5SdW50aW1lU2FtcGxlEjQKB2NpcmN1aXQYAiABKAsyIy5z",
+            "dW1wLnRlbGVtZXRyeS5DbGllbnRDaXJjdWl0U2FtcGxlEjIKB3RlcnJhaW4Y",
+            "AyABKAsyIS5zdW1wLnRlbGVtZXRyeS5UZXJyYWluU3luY1NhbXBsZSJBChhU",
+            "ZXJyYWluRGlhZ25vc3RpY0NvbnRyb2wSEgoKcmVxdWVzdF9pZBgBIAEoBBIR",
+            "Cgl3aW5kb3dfbXMYAiABKA0iTgoXVGVycmFpbkRpYWdub3N0aWNSZXBvcnQS",
+            "MwoGc2FtcGxlGAEgASgLMiMuc3VtcC50ZWxlbWV0cnkuVGVycmFpblJlc3lu",
+            "Y1NhbXBsZUIlSAGqAiBTdU11bHRpcGxheWVyLlByb3RvY29sLlRlbGVtZXRy",
+            "eWIGcHJvdG8z"));
       descriptor = pbr::FileDescriptor.FromGeneratedCode(descriptorData,
           new pbr::FileDescriptor[] { },
           new pbr::GeneratedClrTypeInfo(null, null, new pbr::GeneratedClrTypeInfo[] {
@@ -175,7 +177,7 @@ namespace SuMultiplayer.Protocol.Telemetry {
             new pbr::GeneratedClrTypeInfo(typeof(global::SuMultiplayer.Protocol.Telemetry.ChannelSample), global::SuMultiplayer.Protocol.Telemetry.ChannelSample.Parser, new[]{ "State", "FramesSent", "BytesSent", "FramesReceived", "BytesReceived", "BackpressureEvents", "ProtocolViolations", "SendQueueHigh", "MessageTypes" }, null, null, null, null),
             new pbr::GeneratedClrTypeInfo(typeof(global::SuMultiplayer.Protocol.Telemetry.PeerSample), global::SuMultiplayer.Protocol.Telemetry.PeerSample.Parser, new[]{ "ClientId", "Key", "Name", "ClientRuntime", "RuntimeAgeMs", "Primary", "Circuit", "ClientCircuit", "TerrainResync", "TerrainResyncAgeMs", "Terrain" }, null, null, null, null),
             new pbr::GeneratedClrTypeInfo(typeof(global::SuMultiplayer.Protocol.Telemetry.CircuitSyncSample), global::SuMultiplayer.Protocol.Telemetry.CircuitSyncSample.Parser, new[]{ "Rounds", "AttachedPeers", "ScopeChunks", "SevenSegmentStates", "SnapshotChunks", "SnapshotElements", "SnapshotParts", "DeltaStates", "SendFailures", "ClientScopeRequests", "ClientScopeChunks", "ClientSnapshotParts", "ClientSnapshotsApplied", "ClientStatesApplied", "ClientApplyFailures", "ClientHashReports", "ClientHashChunks", "ClientWatermarkExpired", "ClientSimulationEnabled", "HostSyncWindowCalls", "HostSyncWindowMs", "HostSyncWindowMaxMs", "HashMismatchesObserved", "HashRepairChunksQueued", "RepairAckHashMismatches", "RepairAckChunksQueued", "SnapshotRequestChunks", "NeedsFullSnapshotChunksQueued", "SnapshotsInitialScope", "SnapshotsHashRepair", "SnapshotsRepairAckRepair", "SnapshotsClientRequest", "SnapshotsNeedsFullRecovery", "SnapshotsPauseBarrier", "SnapshotsTopologyChange", "SnapshotsSendFailureRecovery", "SnapshotSendFailures", "HostBatchCaptureFailures", "RequestedSnapshotCaptureFailures", "HostBatchCaptureChunksFailed", "Stages" }, null, null, null, null),
-            new pbr::GeneratedClrTypeInfo(typeof(global::SuMultiplayer.Protocol.Telemetry.ClientCircuitSample), global::SuMultiplayer.Protocol.Telemetry.ClientCircuitSample.Parser, new[]{ "HashCaptureFailures", "HashCaptureChunksSkipped", "HashReportsSent", "HashChunksSent", "ScopeRequestsSent", "ScopeRequestChunksSent", "SnapshotPartsReceived", "SnapshotsApplied", "StatesApplied", "ApplyFailures", "WatermarkExpired", "SnapshotTimeouts", "Stages" }, null, null, null, null),
+            new pbr::GeneratedClrTypeInfo(typeof(global::SuMultiplayer.Protocol.Telemetry.ClientCircuitSample), global::SuMultiplayer.Protocol.Telemetry.ClientCircuitSample.Parser, new[]{ "HashCaptureFailures", "HashCaptureChunksSkipped", "HashReportsSent", "HashChunksSent", "ScopeRequestsSent", "ScopeRequestChunksSent", "SnapshotPartsReceived", "SnapshotsApplied", "StatesApplied", "ApplyFailures", "WatermarkExpired", "SnapshotTimeouts", "Stages", "StaleScopeReuse", "SimulationEnabled", "FullScopeSnapshotPending" }, null, null, null, null),
             new pbr::GeneratedClrTypeInfo(typeof(global::SuMultiplayer.Protocol.Telemetry.TerrainResyncSample), global::SuMultiplayer.Protocol.Telemetry.TerrainResyncSample.Parser, new[]{ "RequestId", "WindowMs", "ShardBytes", "RleRuns", "ExpandedCells", "DecodeMs", "ApplyMs", "CircuitCallbackMs", "FinalDigestMs", "AppliedParts", "NoPendingSixFaceRollbacks", "NoPendingSixFaceRollbackMs", "ChunkLoadEvents", "ChunkUnloadEvents", "HashChecks", "HashMatches", "HashMismatches", "HashMs", "HashMaxMs", "ResyncChangedCells", "ResyncUnchangedCells", "TerrainInvalidations" }, null, null, null, null),
             new pbr::GeneratedClrTypeInfo(typeof(global::SuMultiplayer.Protocol.Telemetry.TerrainSyncSample), global::SuMultiplayer.Protocol.Telemetry.TerrainSyncSample.Parser, new[]{ "DigestReports", "CellChangesBroadcast", "CellChangeRepairs", "ResyncBytes", "ReportsPerSecond", "MismatchPerSecond", "ResyncReceivedPerSecond", "ResyncAppliedPerSecond", "VerifyRequestsSent", "VerifyRequestSendFailures", "PendingReports", "PendingMarks", "PendingClients", "ResyncRuns", "ResyncExpandedCells", "ResyncEncodeMs", "ResyncShardBytes", "OwedSnapshotsQueued", "OwedSnapshotsSkippedNoContent", "TopLayerChecks", "TopLayerMatches", "TopLayerReportsSent", "TopLayerFixesReceived", "TopLayerFixCellsApplied", "TopLayerFixEscalations", "TopLayerUnavailable", "DigestsDeferredNotStable", "VerdictsStaleSkipped", "TopLayerFixFromMismatch", "TopLayerFixesSent", "TopLayerFixSendFailures", "TopLayerConvergeUnreported", "StaleHealed", "TopLayerFixSkippedNotTopLayer", "ClientHashZeroVerdicts", "ClientHashZeroSkipped", "ReportsDeferredNotStable", "TopLayerFixSkippedNoClientHash", "LeavesMarked", "LeavesMarkedUnroutable", "LeavesOnlyJobs", "LeavesOnlyRuns", "LeavesOnlyBytes", "LeavesZeroRunFallback", "LeavesRecalcDeferred", "LeavesTopLayerSkipped", "LeavesFixSendFailures", "LeavesPendingMarks", "LeavesFixApplied", "LeavesFixCells", "TopLayerTrimmedCells", "TopLayerTrimUnavailable", "TopLayerFixAttemptExceeded" }, null, null, null, null),
             new pbr::GeneratedClrTypeInfo(typeof(global::SuMultiplayer.Protocol.Telemetry.LiveTelemetry), global::SuMultiplayer.Protocol.Telemetry.LiveTelemetry.Parser, new[]{ "SampleId", "SampledAtMs", "HostRuntime", "Circuit", "Terrain", "Peers", "LiveMapBuildMs", "LiveMapChunks", "LiveMapBatches", "LiveMapBytesSent", "LiveMapFramesSent", "LiveMapRequests", "MonitorTransport" }, null, null, null, null),
@@ -4644,6 +4646,9 @@ namespace SuMultiplayer.Protocol.Telemetry {
       watermarkExpired_ = other.watermarkExpired_;
       snapshotTimeouts_ = other.snapshotTimeouts_;
       stages_ = other.stages_.Clone();
+      staleScopeReuse_ = other.staleScopeReuse_;
+      simulationEnabled_ = other.simulationEnabled_;
+      fullScopeSnapshotPending_ = other.fullScopeSnapshotPending_;
       _unknownFields = pb::UnknownFieldSet.Clone(other._unknownFields);
     }
 
@@ -4808,6 +4813,52 @@ namespace SuMultiplayer.Protocol.Telemetry {
       get { return stages_; }
     }
 
+    /// <summary>Field number for the "stale_scope_reuse" field.</summary>
+    public const int StaleScopeReuseFieldNumber = 14;
+    private ulong staleScopeReuse_;
+    /// <summary>
+    /// ---- 电路暂停优化（客户端移动加载 chunk 时不再停模拟）----
+    /// 客户端「scope 响应在途但仍沿用旧 scope 继续模拟」的进入次数。
+    /// </summary>
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public ulong StaleScopeReuse {
+      get { return staleScopeReuse_; }
+      set {
+        staleScopeReuse_ = value;
+      }
+    }
+
+    /// <summary>Field number for the "simulation_enabled" field.</summary>
+    public const int SimulationEnabledFieldNumber = 15;
+    private bool simulationEnabled_;
+    /// <summary>
+    /// 客户端此刻是否真的在推进电路模拟（false = 被暂停；对照下面的 pending 可定位原因）。
+    /// </summary>
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public bool SimulationEnabled {
+      get { return simulationEnabled_; }
+      set {
+        simulationEnabled_ = value;
+      }
+    }
+
+    /// <summary>Field number for the "full_scope_snapshot_pending" field.</summary>
+    public const int FullScopeSnapshotPendingFieldNumber = 16;
+    private bool fullScopeSnapshotPending_;
+    /// <summary>
+    /// 客户端是否在等「全电路范围同 step 快照」（true 时会暂停）。
+    /// </summary>
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public bool FullScopeSnapshotPending {
+      get { return fullScopeSnapshotPending_; }
+      set {
+        fullScopeSnapshotPending_ = value;
+      }
+    }
+
     [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
     [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
     public override bool Equals(object other) {
@@ -4836,6 +4887,9 @@ namespace SuMultiplayer.Protocol.Telemetry {
       if (WatermarkExpired != other.WatermarkExpired) return false;
       if (SnapshotTimeouts != other.SnapshotTimeouts) return false;
       if(!stages_.Equals(other.stages_)) return false;
+      if (StaleScopeReuse != other.StaleScopeReuse) return false;
+      if (SimulationEnabled != other.SimulationEnabled) return false;
+      if (FullScopeSnapshotPending != other.FullScopeSnapshotPending) return false;
       return Equals(_unknownFields, other._unknownFields);
     }
 
@@ -4856,6 +4910,9 @@ namespace SuMultiplayer.Protocol.Telemetry {
       if (WatermarkExpired != 0UL) hash ^= WatermarkExpired.GetHashCode();
       if (SnapshotTimeouts != 0UL) hash ^= SnapshotTimeouts.GetHashCode();
       hash ^= stages_.GetHashCode();
+      if (StaleScopeReuse != 0UL) hash ^= StaleScopeReuse.GetHashCode();
+      if (SimulationEnabled != false) hash ^= SimulationEnabled.GetHashCode();
+      if (FullScopeSnapshotPending != false) hash ^= FullScopeSnapshotPending.GetHashCode();
       if (_unknownFields != null) {
         hash ^= _unknownFields.GetHashCode();
       }
@@ -4923,6 +4980,18 @@ namespace SuMultiplayer.Protocol.Telemetry {
         output.WriteUInt64(SnapshotTimeouts);
       }
       stages_.WriteTo(output, _repeated_stages_codec);
+      if (StaleScopeReuse != 0UL) {
+        output.WriteRawTag(112);
+        output.WriteUInt64(StaleScopeReuse);
+      }
+      if (SimulationEnabled != false) {
+        output.WriteRawTag(120);
+        output.WriteBool(SimulationEnabled);
+      }
+      if (FullScopeSnapshotPending != false) {
+        output.WriteRawTag(128, 1);
+        output.WriteBool(FullScopeSnapshotPending);
+      }
       if (_unknownFields != null) {
         _unknownFields.WriteTo(output);
       }
@@ -4982,6 +5051,18 @@ namespace SuMultiplayer.Protocol.Telemetry {
         output.WriteUInt64(SnapshotTimeouts);
       }
       stages_.WriteTo(ref output, _repeated_stages_codec);
+      if (StaleScopeReuse != 0UL) {
+        output.WriteRawTag(112);
+        output.WriteUInt64(StaleScopeReuse);
+      }
+      if (SimulationEnabled != false) {
+        output.WriteRawTag(120);
+        output.WriteBool(SimulationEnabled);
+      }
+      if (FullScopeSnapshotPending != false) {
+        output.WriteRawTag(128, 1);
+        output.WriteBool(FullScopeSnapshotPending);
+      }
       if (_unknownFields != null) {
         _unknownFields.WriteTo(ref output);
       }
@@ -5029,6 +5110,15 @@ namespace SuMultiplayer.Protocol.Telemetry {
         size += 1 + pb::CodedOutputStream.ComputeUInt64Size(SnapshotTimeouts);
       }
       size += stages_.CalculateSize(_repeated_stages_codec);
+      if (StaleScopeReuse != 0UL) {
+        size += 1 + pb::CodedOutputStream.ComputeUInt64Size(StaleScopeReuse);
+      }
+      if (SimulationEnabled != false) {
+        size += 1 + 1;
+      }
+      if (FullScopeSnapshotPending != false) {
+        size += 2 + 1;
+      }
       if (_unknownFields != null) {
         size += _unknownFields.CalculateSize();
       }
@@ -5078,6 +5168,15 @@ namespace SuMultiplayer.Protocol.Telemetry {
         SnapshotTimeouts = other.SnapshotTimeouts;
       }
       stages_.Add(other.stages_);
+      if (other.StaleScopeReuse != 0UL) {
+        StaleScopeReuse = other.StaleScopeReuse;
+      }
+      if (other.SimulationEnabled != false) {
+        SimulationEnabled = other.SimulationEnabled;
+      }
+      if (other.FullScopeSnapshotPending != false) {
+        FullScopeSnapshotPending = other.FullScopeSnapshotPending;
+      }
       _unknownFields = pb::UnknownFieldSet.MergeFrom(_unknownFields, other._unknownFields);
     }
 
@@ -5149,6 +5248,18 @@ namespace SuMultiplayer.Protocol.Telemetry {
             stages_.AddEntriesFrom(input, _repeated_stages_codec);
             break;
           }
+          case 112: {
+            StaleScopeReuse = input.ReadUInt64();
+            break;
+          }
+          case 120: {
+            SimulationEnabled = input.ReadBool();
+            break;
+          }
+          case 128: {
+            FullScopeSnapshotPending = input.ReadBool();
+            break;
+          }
         }
       }
     #endif
@@ -5218,6 +5329,18 @@ namespace SuMultiplayer.Protocol.Telemetry {
           }
           case 106: {
             stages_.AddEntriesFrom(ref input, _repeated_stages_codec);
+            break;
+          }
+          case 112: {
+            StaleScopeReuse = input.ReadUInt64();
+            break;
+          }
+          case 120: {
+            SimulationEnabled = input.ReadBool();
+            break;
+          }
+          case 128: {
+            FullScopeSnapshotPending = input.ReadBool();
             break;
           }
         }

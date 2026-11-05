@@ -300,6 +300,13 @@ namespace SuMultiplayer.Modules
         private long m_nextHostHashMs;
         private long m_nextClientScopeRefreshMs;
         private long m_clientScopeRequestSentMs;
+        /// <summary>
+        /// 当前是否正在「沿用旧 scope 继续模拟」（scope 响应在途、但旧范围仍然可信）。
+        /// 用于把「优化生效」和「真暂停」区分开：状态行里 staleScopeReuse 计数与它配套。
+        /// </summary>
+        private bool m_clientStaleScopeReuseActive;
+        /// <summary>进入「沿用旧 scope」状态的次数（每次 scoped 请求在途去重计数一次）。</summary>
+        private long m_clientStaleScopeReuseCount;
         private string m_sessionId;
         private int m_lastCircuitStep;
         private int m_lastScheduledOperationStep;
@@ -415,6 +422,8 @@ namespace SuMultiplayer.Modules
             " circuitStep=" + CircuitSimulationPauseSignal.ClientHostStep +
             " localStep=" + DescribeLocalCircuitStep() +
             " circuitSim=" + CircuitSimulationPauseSignal.ClientSimulationEnabled +
+            " staleScopeReuse=" + m_clientStaleScopeReuseCount +
+            (m_clientStaleScopeReuseActive ? "(active)" : "") +
             " clientBlock=" + m_clientSimulationBlockReason +
             " lastTopologyMismatch=" + m_lastTopologyMismatch +
             " topologyBumps=host(" + m_hostTopologyBumps + "/" +
@@ -498,7 +507,12 @@ namespace SuMultiplayer.Modules
                 StatesApplied = (ulong)m_clientStatesApplied,
                 ApplyFailures = (ulong)m_clientApplyFailures,
                 WatermarkExpired = (ulong)m_clientWatermarkExpired,
-                SnapshotTimeouts = (ulong)m_clientSnapshotTimeouts
+                SnapshotTimeouts = (ulong)m_clientSnapshotTimeouts,
+                // 两项暂停优化的效果：staleScopeReuse = 沿用旧 scope 继续模拟的次数；
+                // simulationEnabled = 当前是否真的在推进电路模拟（false = 被暂停）。
+                StaleScopeReuse = (ulong)m_clientStaleScopeReuseCount,
+                SimulationEnabled = CircuitSimulationPauseSignal.ClientSimulationEnabled,
+                FullScopeSnapshotPending = m_clientFullScopeSnapshotPending
             };
             m_probe.AppendWindowAndReset(sample.Stages);
             return sample;
@@ -3443,8 +3457,23 @@ namespace SuMultiplayer.Modules
             }
             if (snapshot.RequestId != 0)
             {
+                // ---- 只在**电路范围真的变了**时才做全局同 step 重快照 ----
+                //
+                // 旧实现用 `nextCircuitScope.Count > 0`（"总共有电路块"），于是：
+                // 客户端移动 → 每加载一个地形块就触发一次全量 scope 请求 →
+                // 这个条件必然成立 → 整个电路范围重做同 step 快照 → 电路模拟暂停。
+                // 哪怕新加载的块**完全没有电路元件**也会暂停（用户实测现象）。
+                //
+                // 正确判据是"电路块集合本身变没变"：
+                //   · 没变 ⇒ 旧块的 m_clientInitializedScope / m_clientChunkBoundaries 全部有效，
+                //     UpdateClientSimulationClock 的逐块检查天然通过 → **立刻可以继续模拟**，
+                //     不需要等任何快照；
+                //   · 变了（新块有电路 / 有块失去电路）⇒ 仍走原来的全局屏障（导线可跨块，
+                //     各块 step 不一致会让客户端求解结果与主机不同，这个对齐不能省）。
+                bool circuitScopeChanged = !nextCircuitScope.SetEquals(m_clientCircuitScope);
                 m_clientFullScopeSnapshotApplied.Clear();
-                m_clientFullScopeSnapshotPending = nextCircuitScope.Count > 0;
+                m_clientFullScopeSnapshotPending =
+                    circuitScopeChanged && nextCircuitScope.Count > 0;
                 m_clientFullScopeSnapshotStep = int.MinValue;
                 m_clientFullScopeSnapshotMinimumStep = 0;
                 m_clientElementRecoveryAttempted = false;
@@ -4646,19 +4675,50 @@ namespace SuMultiplayer.Modules
                 if (m_transport?.IsClient == true)
                     CircuitSimulationPauseSignal.SetClientClock(false,
                         m_lastCircuitStep, m_clientClockPaused, m_clientClockAccelerated);
+                // 这条早退分支也是"没有在沿用旧 scope 跑"：清掉标志，
+                // 否则状态行会一直显示 (active)，下一次进入时也不会重新计数。（诊断准确性）
+                m_clientStaleScopeReuseActive = false;
                 return;
             }
 
+            // ---- 优化：scope 响应在途时用**旧 scope 继续模拟** ----
+            //
+            // 旧实现：RequestClientScope 一发出就把 m_clientScopeAcknowledged 置 false，
+            // 于是"移动 → 地形块集合变化 → ClientScopeChanged() → 请求 scope"这条链
+            // 每次都要把电路模拟停掉一个 scope 往返（用户实测：移动加载 chunk 时电路被暂停）。
+            //
+            // 为什么沿用旧 scope 是安全的：客户端电路求解器的驱动是引擎自己的元件表
+            // SubsystemElectricity.m_electricElements（SuSubsystemElectricity.Update →
+            // RunClientCircuitSimulation → base.Update）。区块卸载时元件随之从该表移除，
+            // 所以求解**永远只碰内存里真实存在的元件**；scope 集合只用于快照 / 事件的范围记账，
+            // 不是"模拟哪些元件"的依据。旧范围里那些还在内存中的元件，其状态本来就是主机给的权威值
+            // （下一步 delta 到来时照常按序应用），不会因为多跑几步而偏离主机。
+            //
+            // 什么时候**不能**沿用（保持原来的暂停）：
+            //   · 已有已知拓扑变更（dirty / awaiting snapshot）→ 那是真实电路变化，必须等快照；
+            //   · 请求发出后超过 ClientScopeRequestTimeoutMs 仍未响应 → 响应可能丢了，
+            //     不能无限用过期范围跑下去，照旧暂停并让上层按超时重发。
+            long nowMs = (long)(m_clock() * 1000.0);
+            bool staleScopeUsable = !m_clientScopeAcknowledged && m_clientScopeRequested &&
+                m_clientScopeRequestSentMs > 0 &&
+                nowMs - m_clientScopeRequestSentMs < ClientScopeRequestTimeoutMs &&
+                m_clientTopologyDirtyChunks.Count == 0 &&
+                m_clientTopologyAwaitingSnapshot.Count == 0;
+            bool reuseActive = staleScopeUsable && m_clientCircuitScope.Count > 0;
+            if (reuseActive && !m_clientStaleScopeReuseActive) m_clientStaleScopeReuseCount++;
+            m_clientStaleScopeReuseActive = reuseActive;
+
             m_chunks.Clear();
             m_chunks.AddRange(m_clientCircuitScope);
-            bool scopeReady = m_clientScopeAcknowledged && m_clientScopeRequested &&
+            bool scopeReady = (m_clientScopeAcknowledged || reuseActive) &&
+                m_clientScopeRequested &&
                 m_chunks.Count <= MaximumInterestChunks &&
                 !m_clientFullScopeSnapshotPending;
             if (!scopeReady)
                 m_clientSimulationBlockReason = m_clientFullScopeSnapshotPending
                     ? "waiting-full-scope-snapshot"
                     : "scope-not-ready:" +
-                        (m_clientScopeAcknowledged ? m_chunks.Count.ToString() :
+                        (m_clientScopeAcknowledged || reuseActive ? m_chunks.Count.ToString() :
                             "unacknowledged");
             if (scopeReady && m_clientTopologyAwaitingSnapshot.Any(
                     key => m_clientCircuitScope.Contains(key) &&
@@ -4696,7 +4756,9 @@ namespace SuMultiplayer.Modules
             bool stopped = m_clientClockPaused || m_clientClockAccelerated;
             if (scopeReady)
                 m_clientSimulationBlockReason = stopped ? "host-stopped" :
-                    m_clientResumePending ? "resume-alignment" : "ready";
+                    m_clientResumePending ? "resume-alignment" :
+                    // 用它把「沿用旧 scope 在跑」和「已确认 scope 在跑」区分开（诊断用）。
+                    reuseActive ? "ready-stale-scope" : "ready";
             if (scopeReady && m_clientResumePending && !stopped)
             {
                 if (!m_world.AlignClientCircuitStep(m_lastCircuitStep, true,

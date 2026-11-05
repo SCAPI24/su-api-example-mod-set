@@ -2345,7 +2345,8 @@ footer{margin-top:20px;padding-top:12px;border-top:1px solid var(--line);font-si
             statesApplied: clientCircuit.statesApplied,
             applyFailures: clientCircuit.applyFailures,
             watermarkExpired: clientCircuit.watermarkExpired,
-            snapshotTimeouts: clientCircuit.snapshotTimeouts
+            snapshotTimeouts: clientCircuit.snapshotTimeouts,
+            staleScopeReuse: clientCircuit.staleScopeReuse
           });
           [
             ["哈希捕获失败", "hashCaptureFailures"],
@@ -2359,7 +2360,9 @@ footer{margin-top:20px;padding-top:12px;border-top:1px solid var(--line);font-si
             ["应用电路状态", "statesApplied"],
             ["应用失败", "applyFailures"],
             ["水位过期", "watermarkExpired"],
-            ["快照超时", "snapshotTimeouts"]
+            ["快照超时", "snapshotTimeouts"],
+            // 移动加载 chunk 时不再停电路：这个数增长说明"沿用旧范围继续模拟"生效了。
+            ["沿用旧范围继续模拟", "staleScopeReuse"]
           ].forEach(function (metric) {
             var value = clientCircuit[metric[1]];
             var rate = formatCounterRate(telemetry, value, clientCircuitRates, metric[1], function (v) {

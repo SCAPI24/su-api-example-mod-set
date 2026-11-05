@@ -130,6 +130,13 @@ message ClientCircuitSample {
   uint64 watermark_expired = 11;
   uint64 snapshot_timeouts = 12;
   repeated CircuitStageSample stages = 13;
+  // ---- 电路暂停优化（客户端移动加载 chunk 时不再停模拟）----
+  // 客户端「scope 响应在途但仍沿用旧 scope 继续模拟」的进入次数。
+  uint64 stale_scope_reuse = 14;
+  // 客户端此刻是否真的在推进电路模拟（false = 被暂停；对照下面的 pending 可定位原因）。
+  bool simulation_enabled = 15;
+  // 客户端是否在等「全电路范围同 step 快照」（true 时会暂停）。
+  bool full_scope_snapshot_pending = 16;
 }
 
 // Host-scheduled, short-lived client diagnostic window for terrain resync.
