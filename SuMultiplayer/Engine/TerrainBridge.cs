@@ -25,7 +25,8 @@ namespace SuMultiplayer.Engine
     /// 角色与业务逻辑都不在这里：这里只有"把引擎事实翻译成事件"和"把事件落回引擎"。
     /// 演示页标记：BRG01。
     /// </summary>
-    public sealed class TerrainBridge : ITerrainWorld
+    public sealed class TerrainBridge : ITerrainWorld, IPackedTerrainWorld, ITopLayerTerrainWorld,
+        IChunkStabilityWorld, ITerrainResyncDiagnosticWorld
     {
         private readonly ConcurrentQueue<ReceivedFrame> m_inbox = new ConcurrentQueue<ReceivedFrame>();
         /// <summary>
@@ -37,6 +38,7 @@ namespace SuMultiplayer.Engine
         private readonly int m_mainThreadId;
         private SubsystemTerrain m_subsystem;
         private bool m_reportedWrongThread;
+        public TerrainResyncDiagnosticWindow ResyncDiagnostics { get; set; }
 
         // ---- 按需单块加载（主机：客户端上报的边缘块，逐块临时地形更新位置）----
         //
@@ -284,6 +286,117 @@ namespace SuMultiplayer.Engine
             };
         }
 
+        public ChunkPackedValueSource GetPackedCellSource(ChunkKey key)
+        {
+            Game.Terrain terrain = CurrentTerrain;
+            TerrainChunk chunk = terrain?.GetChunkAtCoords(key.X, key.Z);
+            if (chunk == null || !ChunkContentStages.IsContentValid((int)chunk.State))
+                return index => 0;
+            return chunk.GetCellValueFast;
+        }
+
+        // TerrainChunk 的私有连续数组（只读投影用）。
+        // 字段名 **没有 m_ 前缀**（Source: Survivalcraft/Game/TerrainChunk.cs:67,69）。
+        private static FieldInfo s_cellsField;
+        private static FieldInfo s_shaftsField;
+
+        /// <summary>
+        /// 顶层摘要的数组通道（<see cref="ITopLayerTerrainWorld"/>）。
+        ///
+        /// ⚠️ 返回的是**引擎内部数组的引用本身**（不是拷贝）。调用方必须：
+        ///   · 取到后**立即用完**，绝不跨帧持有 / 缓存；
+        ///   · 不要写入（数组是引擎的活数据）。
+        /// 原因：<c>TerrainChunk.Dispose</c> 会 <c>ArrayCache.Return</c> 这两个数组，
+        /// 之后可能被别的 chunk 租用 —— 跨帧持有会读到别的块的内容。
+        /// </summary>
+        public bool TryGetChunkArrays(ChunkKey key, out int[] cells, out int[] shafts)
+        {
+            cells = null;
+            shafts = null;
+            EnsureMainThread("TryGetChunkArrays");
+            Game.Terrain terrain = CurrentTerrain;
+            TerrainChunk chunk = terrain?.GetChunkAtCoords(key.X, key.Z);
+            if (chunk == null || !ChunkContentStages.IsContentValid((int)chunk.State)) return false;
+
+            if (s_cellsField == null)
+            {
+                s_cellsField = typeof(TerrainChunk).GetField("Cells",
+                    BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
+            }
+            if (s_shaftsField == null)
+            {
+                s_shaftsField = typeof(TerrainChunk).GetField("Shafts",
+                    BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
+            }
+            if (s_cellsField == null)
+                throw new InvalidOperationException("TerrainChunk.Cells field was not found.");
+            if (s_shaftsField == null)
+                throw new InvalidOperationException("TerrainChunk.Shafts field was not found.");
+
+            cells = s_cellsField.GetValue(chunk) as int[];
+            shafts = s_shaftsField.GetValue(chunk) as int[];
+            if (cells == null || cells.Length < TerrainChunk.Size * TerrainChunk.Size * TerrainChunk.Height)
+                throw new InvalidOperationException(
+                    "TerrainChunk.Cells is null or smaller than one chunk (" +
+                    (cells == null ? "null" : cells.Length.ToString()) + ").");
+            if (shafts == null || shafts.Length < TerrainChunk.Size * TerrainChunk.Size)
+                throw new InvalidOperationException(
+                    "TerrainChunk.Shafts is null or smaller than 256 (" +
+                    (shafts == null ? "null" : shafts.Length.ToString()) + ").");
+            return true;
+        }
+
+        /// <summary>
+        /// 算摘要前的稳定性判定（<see cref="IChunkStabilityWorld"/>）。
+        ///
+        /// 引擎阶段（<c>TerrainChunkState</c>）：
+        ///   NotLoaded(0) → InvalidContents1..4(1..4) → InvalidLight(5) → … → Valid(9)
+        /// 内容在 **InvalidContents4 之后**才算定稿（与 <see cref="ChunkContentStages.IsContentValid"/>
+        /// 同一判据，也与引擎自己的序列化器一致）。
+        ///
+        /// 另外必须看 <c>ThreadState</c>：引擎把内容填充和光照/几何分在不同阶段，
+        /// 只看 <c>State</c> 会在"填充线程还在写 Cell 数组"时就开始读 —— 读到的摘要必然抖动。
+        /// </summary>
+        public bool IsStableForDigest(ChunkKey key, out string reason)
+        {
+            EnsureMainThread("IsStableForDigest");
+            Game.Terrain terrain = CurrentTerrain;
+            if (terrain == null)
+            {
+                reason = "世界未加载";
+                return false;
+            }
+            TerrainChunk chunk = terrain.GetChunkAtCoords(key.X, key.Z);
+            if (chunk == null)
+            {
+                reason = "块不在内存";
+                return false;
+            }
+            int state = (int)chunk.State;
+            if (!ChunkContentStages.IsContentValid(state))
+            {
+                reason = "内容未定稿（State=" + ChunkContentStages.DescribeEngineState(state) + "）";
+                return false;
+            }
+            int threadState = (int)chunk.ThreadState;
+            if (!ChunkContentStages.IsContentValid(threadState))
+            {
+                reason = "填充线程未定稿（ThreadState=" +
+                    ChunkContentStages.DescribeEngineState(threadState) + "）";
+                return false;
+            }
+            reason = string.Empty;
+            return true;
+        }
+
+        /// <summary>该块当前的引擎 State 序数（诊断用；块不在内存时返回 0 = NotLoaded）。</summary>
+        public int EngineStageOf(ChunkKey key)
+        {
+            Game.Terrain terrain = CurrentTerrain;
+            TerrainChunk chunk = terrain?.GetChunkAtCoords(key.X, key.Z);
+            return chunk == null ? ChunkContentStages.EngineStateNotLoaded : (int)chunk.State;
+        }
+
         /// <summary>
         /// 落地一批格。**主线程调用**（来自同步服务处理重传/改动消息时）。
         /// 用 SetCellValueFast + 邻域降级，绕过 ChangeCell —— 否则回传内容会把块重新标脏，
@@ -291,41 +404,117 @@ namespace SuMultiplayer.Engine
         /// </summary>
         public void ApplyCells(ChunkKey key, IReadOnlyList<CellEdit> edits)
         {
+            ApplyCellsCore(key, edits, null, deferInvalidation: false);
+        }
+
+        public int ApplyResyncCells(ChunkKey key, IReadOnlyList<CellEdit> edits,
+            TerrainResyncDiagnosticWindow diagnostics)
+        {
+            return ApplyCellsCore(key, edits, diagnostics, deferInvalidation: true);
+        }
+
+        private int ApplyCellsCore(ChunkKey key, IReadOnlyList<CellEdit> edits,
+            TerrainResyncDiagnosticWindow diagnostics, bool deferInvalidation)
+        {
             EnsureMainThread("ApplyCells");
             Game.Terrain terrain = CurrentTerrain;
-            if (terrain == null || edits == null || edits.Count == 0) return;
+            if (terrain == null || edits == null || edits.Count == 0) return 0;
             int baseX = key.X * 16;
             int baseZ = key.Z * 16;
             TerrainChunk chunk = terrain.GetChunkAtCell(baseX + 8, baseZ + 8);
-            if (chunk == null || chunk.State < TerrainChunkState.InvalidLight) return;   // 块没加载：丢弃（上层会重问）
+            if (chunk == null || chunk.State < TerrainChunkState.InvalidLight) return 0;   // 块没加载：丢弃（上层会重问）
             SubsystemTerrain subsystem = m_subsystem ??
                 GameManager.Project?.FindSubsystem<SubsystemTerrain>(false);
-            for (int i = 0; i < edits.Count; i++)
+            TerrainResyncDiagnosticWindow previousDiagnostics = ResyncDiagnostics;
+            if (diagnostics != null) ResyncDiagnostics = diagnostics;
+            bool measureResyncCallbacks = ResyncDiagnostics != null && ResyncDiagnostics.IsActive;
+            int changedCells = 0;
+            try
             {
-                CellEdit edit = edits[i];
-                if (edit.Y < 0 || edit.Y > 255) continue;
-                int x = baseX + edit.X;
-                int z = baseZ + edit.Z;
-                int value = Game.Terrain.MakeBlockValue(edit.Contents, 0, edit.Data);
-                int oldValue = terrain.GetCellValueFast(x, edit.Y, z);
-                int oldValueWithoutLight = Game.Terrain.ReplaceLight(oldValue, 0);
-                terrain.SetCellValueFast(x, edit.Y, z, value);
-                bool electricCellChanged = ClientReplica && oldValueWithoutLight != value &&
-                    IsElectricCell(oldValueWithoutLight, value);
-                bool electricTopologyChanged = ClientReplica && oldValueWithoutLight != value &&
-                    NotifyElectricTopologyChanged(oldValueWithoutLight, value, x, edit.Y, z);
-                // 客户端补发方块行为通知（单一漏斗）：SetCellValueFast 绕过 ChangeCell，不补就
-                // 没有 OnBlockAdded/Removed/Modified → 营火/火把等 behavior 自己维护的粒子永远陈旧。
-                // 只派发纯表现行为；会写格 / 生成实体的行为被拒绝并计数（mutation-denied）。
-                // 与 ChangeCell 同一比较口径：光照位不参与"是否变化"（ChangeCell 先 ReplaceLight(0)）。
-                if (ClientReplica && oldValueWithoutLight != value)
-                    BlockBehaviorNotify.Notify(subsystem, oldValue, value, x, edit.Y, z);
-                if (ClientReplica && oldValueWithoutLight != value)
-                    ReplicaCellApplied?.Invoke(key, edit);
-                if (electricTopologyChanged)
-                    ReplicaElectricTopologyChanged?.Invoke(key, edit);
-                if (electricCellChanged)
-                    ReplicaElectricCellChanged?.Invoke(key, edit);
+                if (!measureResyncCallbacks)
+                {
+                    for (int i = 0; i < edits.Count; i++)
+                    {
+                        CellEdit edit = edits[i];
+                        if (edit.Y < 0 || edit.Y > 255) continue;
+                        int x = baseX + edit.X;
+                        int z = baseZ + edit.Z;
+                        int value = Game.Terrain.MakeBlockValue(edit.Contents, 0, edit.Data);
+                        int oldValue = terrain.GetCellValueFast(x, edit.Y, z);
+                        int oldValueWithoutLight = Game.Terrain.ReplaceLight(oldValue, 0);
+                        terrain.SetCellValueFast(x, edit.Y, z, value);
+                        if (oldValueWithoutLight != value) changedCells++;
+                        bool electricCellChanged = ClientReplica && oldValueWithoutLight != value &&
+                            IsElectricCell(oldValueWithoutLight, value);
+                        bool electricTopologyChanged = electricCellChanged &&
+                            NotifyElectricTopologyChanged(oldValueWithoutLight, value, x, edit.Y, z);
+                        if (ClientReplica && oldValueWithoutLight != value)
+                            BlockBehaviorNotify.Notify(subsystem, oldValue, value, x, edit.Y, z);
+                        // Source: Mod/SuMultiplayer/Engine/CircuitWorldEngine.cs:HandleReplicaCellApplied
+                        // 普通地形格不需要进入电路六面显示回滚路径；电路格仍保留完整权威应用通知。
+                        if (electricCellChanged)
+                            ReplicaCellApplied?.Invoke(key, edit);
+                        if (electricTopologyChanged)
+                            ReplicaElectricTopologyChanged?.Invoke(key, edit);
+                        if (electricCellChanged)
+                            ReplicaElectricCellChanged?.Invoke(key, edit);
+                    }
+                }
+                else
+                {
+                    for (int i = 0; i < edits.Count; i++)
+                    {
+                        long cellApplyStarted = System.Diagnostics.Stopwatch.GetTimestamp();
+                        long circuitCallbackTicks = 0;
+                        CellEdit edit = edits[i];
+                        if (edit.Y < 0 || edit.Y > 255)
+                        {
+                            ResyncDiagnostics.RecordApplyCell(
+                                System.Diagnostics.Stopwatch.GetTimestamp() - cellApplyStarted);
+                            continue;
+                        }
+                        int x = baseX + edit.X;
+                        int z = baseZ + edit.Z;
+                        int value = Game.Terrain.MakeBlockValue(edit.Contents, 0, edit.Data);
+                        int oldValue = terrain.GetCellValueFast(x, edit.Y, z);
+                        int oldValueWithoutLight = Game.Terrain.ReplaceLight(oldValue, 0);
+                        terrain.SetCellValueFast(x, edit.Y, z, value);
+                        bool cellChanged = oldValueWithoutLight != value;
+                        if (cellChanged) changedCells++;
+                        if (measureResyncCallbacks) ResyncDiagnostics.RecordResyncCell(cellChanged);
+                        bool electricCellChanged = ClientReplica && oldValueWithoutLight != value &&
+                            IsElectricCell(oldValueWithoutLight, value);
+                        bool electricTopologyChanged = false;
+                        if (ClientReplica && oldValueWithoutLight != value)
+                        {
+                            long started = System.Diagnostics.Stopwatch.GetTimestamp();
+                            if (electricCellChanged)
+                                electricTopologyChanged = NotifyElectricTopologyChanged(
+                                    oldValueWithoutLight, value, x, edit.Y, z);
+                            long elapsedTicks = System.Diagnostics.Stopwatch.GetTimestamp() - started;
+                            circuitCallbackTicks += elapsedTicks;
+                            ResyncDiagnostics.RecordCircuitCallback(elapsedTicks);
+                        }
+                        if (ClientReplica && oldValueWithoutLight != value)
+                            BlockBehaviorNotify.Notify(subsystem, oldValue, value, x, edit.Y, z);
+                        if (electricCellChanged)
+                            circuitCallbackTicks += InvokeResyncCallback(
+                                () => ReplicaCellApplied?.Invoke(key, edit));
+                        if (electricTopologyChanged)
+                            circuitCallbackTicks += InvokeResyncCallback(
+                                () => ReplicaElectricTopologyChanged?.Invoke(key, edit));
+                        if (electricCellChanged)
+                            circuitCallbackTicks += InvokeResyncCallback(
+                                () => ReplicaElectricCellChanged?.Invoke(key, edit));
+                        long applyElapsedTicks = System.Diagnostics.Stopwatch.GetTimestamp() - cellApplyStarted;
+                        ResyncDiagnostics.RecordApplyCell(Math.Max(0,
+                            applyElapsedTicks - circuitCallbackTicks));
+                    }
+                }
+            }
+            finally
+            {
+                ResyncDiagnostics = previousDiagnostics;
             }
             AppliedCells += edits.Count;
             AppliedBatches++;
@@ -341,8 +530,36 @@ namespace SuMultiplayer.Engine
             // DowngradeChunkNeighborhoodState 是**实例**方法（旧实现能直接写，是因为它本身派生自
             // SubsystemTerrain），所以这里借子系统实例来调。
             // Source: Survivalcraft/Game/SubsystemTerrain.cs:SubsystemTerrain.ChangeCell
+            if (!deferInvalidation)
+                CompleteResyncChunk(key, changedCells > 0, diagnostics);
+            return changedCells;
+        }
+
+        public void CompleteResyncChunk(ChunkKey key, bool changed,
+            TerrainResyncDiagnosticWindow diagnostics)
+        {
+            if (!changed) return;
+            Game.Terrain terrain = CurrentTerrain;
+            TerrainChunk chunk = terrain?.GetChunkAtCell(key.X * 16 + 8, key.Z * 16 + 8);
+            if (chunk == null) return;
             m_subsystem?.TerrainUpdater?.DowngradeChunkNeighborhoodState(chunk.Coords, 1,
                 TerrainChunkState.InvalidLight, forceGeometryRegeneration: false);
+            diagnostics?.RecordTerrainInvalidation();
+        }
+
+        private long InvokeResyncCallback(Action callback)
+        {
+            TerrainResyncDiagnosticWindow diagnostics = ResyncDiagnostics;
+            if (diagnostics == null)
+            {
+                callback();
+                return 0;
+            }
+            long started = System.Diagnostics.Stopwatch.GetTimestamp();
+            callback();
+            long elapsedTicks = System.Diagnostics.Stopwatch.GetTimestamp() - started;
+            diagnostics.RecordCircuitCallback(elapsedTicks);
+            return elapsedTicks;
         }
 
         // Source: Survivalcraft/Game/SubsystemElectricBlockBehavior.cs:OnBlockAdded/OnBlockRemoved/OnBlockModified

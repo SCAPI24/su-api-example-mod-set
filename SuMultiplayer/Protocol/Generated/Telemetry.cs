@@ -45,76 +45,115 @@ namespace SuMultiplayer.Protocol.Telemetry {
             "ZXNfcmVjZWl2ZWQYBSABKAQSGwoTYmFja3ByZXNzdXJlX2V2ZW50cxgGIAEo",
             "BBIbChNwcm90b2NvbF92aW9sYXRpb25zGAcgASgEEhcKD3NlbmRfcXVldWVf",
             "aGlnaBgIIAEoBBI5Cg1tZXNzYWdlX3R5cGVzGAkgAygLMiIuc3VtcC50ZWxl",
-            "bWV0cnkuTWVzc2FnZVR5cGVUcmFmZmljIqYCCgpQZWVyU2FtcGxlEhEKCWNs",
+            "bWV0cnkuTWVzc2FnZVR5cGVUcmFmZmljIrYDCgpQZWVyU2FtcGxlEhEKCWNs",
             "aWVudF9pZBgBIAEoBRILCgNrZXkYAiABKAkSDAoEbmFtZRgDIAEoCRI1Cg5j",
             "bGllbnRfcnVudGltZRgEIAEoCzIdLnN1bXAudGVsZW1ldHJ5LlJ1bnRpbWVT",
             "YW1wbGUSFgoOcnVudGltZV9hZ2VfbXMYBSABKAQSLgoHcHJpbWFyeRgGIAEo",
             "CzIdLnN1bXAudGVsZW1ldHJ5LkNoYW5uZWxTYW1wbGUSLgoHY2lyY3VpdBgH",
             "IAEoCzIdLnN1bXAudGVsZW1ldHJ5LkNoYW5uZWxTYW1wbGUSOwoOY2xpZW50",
             "X2NpcmN1aXQYCCABKAsyIy5zdW1wLnRlbGVtZXRyeS5DbGllbnRDaXJjdWl0",
-            "U2FtcGxlIsEKChFDaXJjdWl0U3luY1NhbXBsZRIOCgZyb3VuZHMYASABKAQS",
-            "FgoOYXR0YWNoZWRfcGVlcnMYAiABKAQSFAoMc2NvcGVfY2h1bmtzGAMgASgE",
-            "EhwKFHNldmVuX3NlZ21lbnRfc3RhdGVzGAQgASgEEhcKD3NuYXBzaG90X2No",
-            "dW5rcxgFIAEoBBIZChFzbmFwc2hvdF9lbGVtZW50cxgGIAEoBBIWCg5zbmFw",
-            "c2hvdF9wYXJ0cxgHIAEoBBIUCgxkZWx0YV9zdGF0ZXMYCCABKAQSFQoNc2Vu",
-            "ZF9mYWlsdXJlcxgJIAEoBBIdChVjbGllbnRfc2NvcGVfcmVxdWVzdHMYCiAB",
-            "KAQSGwoTY2xpZW50X3Njb3BlX2NodW5rcxgLIAEoBBIdChVjbGllbnRfc25h",
-            "cHNob3RfcGFydHMYDCABKAQSIAoYY2xpZW50X3NuYXBzaG90c19hcHBsaWVk",
-            "GA0gASgEEh0KFWNsaWVudF9zdGF0ZXNfYXBwbGllZBgOIAEoBBIdChVjbGll",
-            "bnRfYXBwbHlfZmFpbHVyZXMYDyABKAQSGwoTY2xpZW50X2hhc2hfcmVwb3J0",
-            "cxgQIAEoBBIaChJjbGllbnRfaGFzaF9jaHVua3MYESABKAQSIAoYY2xpZW50",
-            "X3dhdGVybWFya19leHBpcmVkGBIgASgEEiEKGWNsaWVudF9zaW11bGF0aW9u",
-            "X2VuYWJsZWQYEyABKAgSHgoWaG9zdF9zeW5jX3dpbmRvd19jYWxscxgUIAEo",
-            "BBIbChNob3N0X3N5bmNfd2luZG93X21zGBUgASgCEh8KF2hvc3Rfc3luY193",
-            "aW5kb3dfbWF4X21zGBYgASgCEiAKGGhhc2hfbWlzbWF0Y2hlc19vYnNlcnZl",
-            "ZBgXIAEoBBIhChloYXNoX3JlcGFpcl9jaHVua3NfcXVldWVkGBggASgEEiIK",
-            "GnJlcGFpcl9hY2tfaGFzaF9taXNtYXRjaGVzGBkgASgEEiAKGHJlcGFpcl9h",
-            "Y2tfY2h1bmtzX3F1ZXVlZBgaIAEoBBIfChdzbmFwc2hvdF9yZXF1ZXN0X2No",
-            "dW5rcxgbIAEoBBIpCiFuZWVkc19mdWxsX3NuYXBzaG90X2NodW5rc19xdWV1",
-            "ZWQYHCABKAQSHwoXc25hcHNob3RzX2luaXRpYWxfc2NvcGUYHSABKAQSHQoV",
-            "c25hcHNob3RzX2hhc2hfcmVwYWlyGB4gASgEEiMKG3NuYXBzaG90c19yZXBh",
-            "aXJfYWNrX3JlcGFpchgfIAEoBBIgChhzbmFwc2hvdHNfY2xpZW50X3JlcXVl",
-            "c3QYICABKAQSJQodc25hcHNob3RzX25lZWRzX2Z1bGxfcmVjb3ZlcnkYISAB",
-            "KAQSHwoXc25hcHNob3RzX3BhdXNlX2JhcnJpZXIYIiABKAQSIQoZc25hcHNo",
-            "b3RzX3RvcG9sb2d5X2NoYW5nZRgjIAEoBBInCh9zbmFwc2hvdHNfc2VuZF9m",
-            "YWlsdXJlX3JlY292ZXJ5GCQgASgEEh4KFnNuYXBzaG90X3NlbmRfZmFpbHVy",
-            "ZXMYJSABKAQSIwobaG9zdF9iYXRjaF9jYXB0dXJlX2ZhaWx1cmVzGCYgASgE",
-            "EisKI3JlcXVlc3RlZF9zbmFwc2hvdF9jYXB0dXJlX2ZhaWx1cmVzGCcgASgE",
-            "EigKIGhvc3RfYmF0Y2hfY2FwdHVyZV9jaHVua3NfZmFpbGVkGCggASgEEjIK",
-            "BnN0YWdlcxgpIAMoCzIiLnN1bXAudGVsZW1ldHJ5LkNpcmN1aXRTdGFnZVNh",
-            "bXBsZSKkAwoTQ2xpZW50Q2lyY3VpdFNhbXBsZRIdChVoYXNoX2NhcHR1cmVf",
-            "ZmFpbHVyZXMYASABKAQSIwobaGFzaF9jYXB0dXJlX2NodW5rc19za2lwcGVk",
-            "GAIgASgEEhkKEWhhc2hfcmVwb3J0c19zZW50GAMgASgEEhgKEGhhc2hfY2h1",
-            "bmtzX3NlbnQYBCABKAQSGwoTc2NvcGVfcmVxdWVzdHNfc2VudBgFIAEoBBIh",
-            "ChlzY29wZV9yZXF1ZXN0X2NodW5rc19zZW50GAYgASgEEh8KF3NuYXBzaG90",
-            "X3BhcnRzX3JlY2VpdmVkGAcgASgEEhkKEXNuYXBzaG90c19hcHBsaWVkGAgg",
-            "ASgEEhYKDnN0YXRlc19hcHBsaWVkGAkgASgEEhYKDmFwcGx5X2ZhaWx1cmVz",
-            "GAogASgEEhkKEXdhdGVybWFya19leHBpcmVkGAsgASgEEhkKEXNuYXBzaG90",
-            "X3RpbWVvdXRzGAwgASgEEjIKBnN0YWdlcxgNIAMoCzIiLnN1bXAudGVsZW1l",
-            "dHJ5LkNpcmN1aXRTdGFnZVNhbXBsZSKLAwoRVGVycmFpblN5bmNTYW1wbGUS",
-            "FgoOZGlnZXN0X3JlcG9ydHMYASABKAQSHgoWY2VsbF9jaGFuZ2VzX2Jyb2Fk",
-            "Y2FzdBgCIAEoBBIbChNjZWxsX2NoYW5nZV9yZXBhaXJzGAMgASgEEhQKDHJl",
-            "c3luY19ieXRlcxgEIAEoBBIaChJyZXBvcnRzX3Blcl9zZWNvbmQYBSABKAQS",
-            "GwoTbWlzbWF0Y2hfcGVyX3NlY29uZBgGIAEoBBIiChpyZXN5bmNfcmVjZWl2",
-            "ZWRfcGVyX3NlY29uZBgHIAEoBBIhChlyZXN5bmNfYXBwbGllZF9wZXJfc2Vj",
-            "b25kGAggASgEEhwKFHZlcmlmeV9yZXF1ZXN0c19zZW50GAkgASgEEiQKHHZl",
-            "cmlmeV9yZXF1ZXN0X3NlbmRfZmFpbHVyZXMYCiABKAQSFwoPcGVuZGluZ19y",
-            "ZXBvcnRzGAsgASgNEhUKDXBlbmRpbmdfbWFya3MYDCABKA0SFwoPcGVuZGlu",
-            "Z19jbGllbnRzGA0gASgNIt8DCg1MaXZlVGVsZW1ldHJ5EhEKCXNhbXBsZV9p",
-            "ZBgBIAEoBBIVCg1zYW1wbGVkX2F0X21zGAIgASgEEjMKDGhvc3RfcnVudGlt",
-            "ZRgDIAEoCzIdLnN1bXAudGVsZW1ldHJ5LlJ1bnRpbWVTYW1wbGUSMgoHY2ly",
-            "Y3VpdBgEIAEoCzIhLnN1bXAudGVsZW1ldHJ5LkNpcmN1aXRTeW5jU2FtcGxl",
-            "EjIKB3RlcnJhaW4YBSABKAsyIS5zdW1wLnRlbGVtZXRyeS5UZXJyYWluU3lu",
-            "Y1NhbXBsZRIpCgVwZWVycxgGIAMoCzIaLnN1bXAudGVsZW1ldHJ5LlBlZXJT",
-            "YW1wbGUSGQoRbGl2ZV9tYXBfYnVpbGRfbXMYByABKAISFwoPbGl2ZV9tYXBf",
-            "Y2h1bmtzGAggASgNEhgKEGxpdmVfbWFwX2JhdGNoZXMYCSABKA0SGwoTbGl2",
-            "ZV9tYXBfYnl0ZXNfc2VudBgKIAEoBBIcChRsaXZlX21hcF9mcmFtZXNfc2Vu",
-            "dBgLIAEoBBIZChFsaXZlX21hcF9yZXF1ZXN0cxgMIAEoBBI4ChFtb25pdG9y",
-            "X3RyYW5zcG9ydBgNIAEoCzIdLnN1bXAudGVsZW1ldHJ5LkNoYW5uZWxTYW1w",
-            "bGUifgoWQ2xpZW50UnVudGltZVRlbGVtZXRyeRIuCgdydW50aW1lGAEgASgL",
-            "Mh0uc3VtcC50ZWxlbWV0cnkuUnVudGltZVNhbXBsZRI0CgdjaXJjdWl0GAIg",
-            "ASgLMiMuc3VtcC50ZWxlbWV0cnkuQ2xpZW50Q2lyY3VpdFNhbXBsZUIlSAGq",
-            "AiBTdU11bHRpcGxheWVyLlByb3RvY29sLlRlbGVtZXRyeWIGcHJvdG8z"));
+            "U2FtcGxlEjsKDnRlcnJhaW5fcmVzeW5jGAkgASgLMiMuc3VtcC50ZWxlbWV0",
+            "cnkuVGVycmFpblJlc3luY1NhbXBsZRIdChV0ZXJyYWluX3Jlc3luY19hZ2Vf",
+            "bXMYCiABKAQSMgoHdGVycmFpbhgLIAEoCzIhLnN1bXAudGVsZW1ldHJ5LlRl",
+            "cnJhaW5TeW5jU2FtcGxlIsEKChFDaXJjdWl0U3luY1NhbXBsZRIOCgZyb3Vu",
+            "ZHMYASABKAQSFgoOYXR0YWNoZWRfcGVlcnMYAiABKAQSFAoMc2NvcGVfY2h1",
+            "bmtzGAMgASgEEhwKFHNldmVuX3NlZ21lbnRfc3RhdGVzGAQgASgEEhcKD3Nu",
+            "YXBzaG90X2NodW5rcxgFIAEoBBIZChFzbmFwc2hvdF9lbGVtZW50cxgGIAEo",
+            "BBIWCg5zbmFwc2hvdF9wYXJ0cxgHIAEoBBIUCgxkZWx0YV9zdGF0ZXMYCCAB",
+            "KAQSFQoNc2VuZF9mYWlsdXJlcxgJIAEoBBIdChVjbGllbnRfc2NvcGVfcmVx",
+            "dWVzdHMYCiABKAQSGwoTY2xpZW50X3Njb3BlX2NodW5rcxgLIAEoBBIdChVj",
+            "bGllbnRfc25hcHNob3RfcGFydHMYDCABKAQSIAoYY2xpZW50X3NuYXBzaG90",
+            "c19hcHBsaWVkGA0gASgEEh0KFWNsaWVudF9zdGF0ZXNfYXBwbGllZBgOIAEo",
+            "BBIdChVjbGllbnRfYXBwbHlfZmFpbHVyZXMYDyABKAQSGwoTY2xpZW50X2hh",
+            "c2hfcmVwb3J0cxgQIAEoBBIaChJjbGllbnRfaGFzaF9jaHVua3MYESABKAQS",
+            "IAoYY2xpZW50X3dhdGVybWFya19leHBpcmVkGBIgASgEEiEKGWNsaWVudF9z",
+            "aW11bGF0aW9uX2VuYWJsZWQYEyABKAgSHgoWaG9zdF9zeW5jX3dpbmRvd19j",
+            "YWxscxgUIAEoBBIbChNob3N0X3N5bmNfd2luZG93X21zGBUgASgCEh8KF2hv",
+            "c3Rfc3luY193aW5kb3dfbWF4X21zGBYgASgCEiAKGGhhc2hfbWlzbWF0Y2hl",
+            "c19vYnNlcnZlZBgXIAEoBBIhChloYXNoX3JlcGFpcl9jaHVua3NfcXVldWVk",
+            "GBggASgEEiIKGnJlcGFpcl9hY2tfaGFzaF9taXNtYXRjaGVzGBkgASgEEiAK",
+            "GHJlcGFpcl9hY2tfY2h1bmtzX3F1ZXVlZBgaIAEoBBIfChdzbmFwc2hvdF9y",
+            "ZXF1ZXN0X2NodW5rcxgbIAEoBBIpCiFuZWVkc19mdWxsX3NuYXBzaG90X2No",
+            "dW5rc19xdWV1ZWQYHCABKAQSHwoXc25hcHNob3RzX2luaXRpYWxfc2NvcGUY",
+            "HSABKAQSHQoVc25hcHNob3RzX2hhc2hfcmVwYWlyGB4gASgEEiMKG3NuYXBz",
+            "aG90c19yZXBhaXJfYWNrX3JlcGFpchgfIAEoBBIgChhzbmFwc2hvdHNfY2xp",
+            "ZW50X3JlcXVlc3QYICABKAQSJQodc25hcHNob3RzX25lZWRzX2Z1bGxfcmVj",
+            "b3ZlcnkYISABKAQSHwoXc25hcHNob3RzX3BhdXNlX2JhcnJpZXIYIiABKAQS",
+            "IQoZc25hcHNob3RzX3RvcG9sb2d5X2NoYW5nZRgjIAEoBBInCh9zbmFwc2hv",
+            "dHNfc2VuZF9mYWlsdXJlX3JlY292ZXJ5GCQgASgEEh4KFnNuYXBzaG90X3Nl",
+            "bmRfZmFpbHVyZXMYJSABKAQSIwobaG9zdF9iYXRjaF9jYXB0dXJlX2ZhaWx1",
+            "cmVzGCYgASgEEisKI3JlcXVlc3RlZF9zbmFwc2hvdF9jYXB0dXJlX2ZhaWx1",
+            "cmVzGCcgASgEEigKIGhvc3RfYmF0Y2hfY2FwdHVyZV9jaHVua3NfZmFpbGVk",
+            "GCggASgEEjIKBnN0YWdlcxgpIAMoCzIiLnN1bXAudGVsZW1ldHJ5LkNpcmN1",
+            "aXRTdGFnZVNhbXBsZSKkAwoTQ2xpZW50Q2lyY3VpdFNhbXBsZRIdChVoYXNo",
+            "X2NhcHR1cmVfZmFpbHVyZXMYASABKAQSIwobaGFzaF9jYXB0dXJlX2NodW5r",
+            "c19za2lwcGVkGAIgASgEEhkKEWhhc2hfcmVwb3J0c19zZW50GAMgASgEEhgK",
+            "EGhhc2hfY2h1bmtzX3NlbnQYBCABKAQSGwoTc2NvcGVfcmVxdWVzdHNfc2Vu",
+            "dBgFIAEoBBIhChlzY29wZV9yZXF1ZXN0X2NodW5rc19zZW50GAYgASgEEh8K",
+            "F3NuYXBzaG90X3BhcnRzX3JlY2VpdmVkGAcgASgEEhkKEXNuYXBzaG90c19h",
+            "cHBsaWVkGAggASgEEhYKDnN0YXRlc19hcHBsaWVkGAkgASgEEhYKDmFwcGx5",
+            "X2ZhaWx1cmVzGAogASgEEhkKEXdhdGVybWFya19leHBpcmVkGAsgASgEEhkK",
+            "EXNuYXBzaG90X3RpbWVvdXRzGAwgASgEEjIKBnN0YWdlcxgNIAMoCzIiLnN1",
+            "bXAudGVsZW1ldHJ5LkNpcmN1aXRTdGFnZVNhbXBsZSK8BAoTVGVycmFpblJl",
+            "c3luY1NhbXBsZRISCgpyZXF1ZXN0X2lkGAEgASgEEhEKCXdpbmRvd19tcxgC",
+            "IAEoDRITCgtzaGFyZF9ieXRlcxgDIAEoBBIQCghybGVfcnVucxgEIAEoBBIW",
+            "Cg5leHBhbmRlZF9jZWxscxgFIAEoBBIRCglkZWNvZGVfbXMYBiABKAISEAoI",
+            "YXBwbHlfbXMYByABKAISGwoTY2lyY3VpdF9jYWxsYmFja19tcxgIIAEoAhIX",
+            "Cg9maW5hbF9kaWdlc3RfbXMYCSABKAISFQoNYXBwbGllZF9wYXJ0cxgKIAEo",
+            "BBIlCh1ub19wZW5kaW5nX3NpeF9mYWNlX3JvbGxiYWNrcxgLIAEoBBInCh9u",
+            "b19wZW5kaW5nX3NpeF9mYWNlX3JvbGxiYWNrX21zGAwgASgCEhkKEWNodW5r",
+            "X2xvYWRfZXZlbnRzGA0gASgEEhsKE2NodW5rX3VubG9hZF9ldmVudHMYDiAB",
+            "KAQSEwoLaGFzaF9jaGVja3MYDyABKAQSFAoMaGFzaF9tYXRjaGVzGBAgASgE",
+            "EhcKD2hhc2hfbWlzbWF0Y2hlcxgRIAEoBBIPCgdoYXNoX21zGBIgASgCEhMK",
+            "C2hhc2hfbWF4X21zGBMgASgCEhwKFHJlc3luY19jaGFuZ2VkX2NlbGxzGBQg",
+            "ASgEEh4KFnJlc3luY191bmNoYW5nZWRfY2VsbHMYFSABKAQSHQoVdGVycmFp",
+            "bl9pbnZhbGlkYXRpb25zGBYgASgEIswJChFUZXJyYWluU3luY1NhbXBsZRIW",
+            "Cg5kaWdlc3RfcmVwb3J0cxgBIAEoBBIeChZjZWxsX2NoYW5nZXNfYnJvYWRj",
+            "YXN0GAIgASgEEhsKE2NlbGxfY2hhbmdlX3JlcGFpcnMYAyABKAQSFAoMcmVz",
+            "eW5jX2J5dGVzGAQgASgEEhoKEnJlcG9ydHNfcGVyX3NlY29uZBgFIAEoBBIb",
+            "ChNtaXNtYXRjaF9wZXJfc2Vjb25kGAYgASgEEiIKGnJlc3luY19yZWNlaXZl",
+            "ZF9wZXJfc2Vjb25kGAcgASgEEiEKGXJlc3luY19hcHBsaWVkX3Blcl9zZWNv",
+            "bmQYCCABKAQSHAoUdmVyaWZ5X3JlcXVlc3RzX3NlbnQYCSABKAQSJAocdmVy",
+            "aWZ5X3JlcXVlc3Rfc2VuZF9mYWlsdXJlcxgKIAEoBBIXCg9wZW5kaW5nX3Jl",
+            "cG9ydHMYCyABKA0SFQoNcGVuZGluZ19tYXJrcxgMIAEoDRIXCg9wZW5kaW5n",
+            "X2NsaWVudHMYDSABKA0SEwoLcmVzeW5jX3J1bnMYDiABKAQSHQoVcmVzeW5j",
+            "X2V4cGFuZGVkX2NlbGxzGA8gASgEEhgKEHJlc3luY19lbmNvZGVfbXMYECAB",
+            "KAISGgoScmVzeW5jX3NoYXJkX2J5dGVzGBEgASgEEh0KFW93ZWRfc25hcHNo",
+            "b3RzX3F1ZXVlZBgSIAEoBBIpCiFvd2VkX3NuYXBzaG90c19za2lwcGVkX25v",
+            "X2NvbnRlbnQYEyABKAQSGAoQdG9wX2xheWVyX2NoZWNrcxgUIAEoBBIZChF0",
+            "b3BfbGF5ZXJfbWF0Y2hlcxgVIAEoBBIeChZ0b3BfbGF5ZXJfcmVwb3J0c19z",
+            "ZW50GBYgASgEEiAKGHRvcF9sYXllcl9maXhlc19yZWNlaXZlZBgXIAEoBBIj",
+            "Cht0b3BfbGF5ZXJfZml4X2NlbGxzX2FwcGxpZWQYGCABKAQSIQoZdG9wX2xh",
+            "eWVyX2ZpeF9lc2NhbGF0aW9ucxgZIAEoBBIdChV0b3BfbGF5ZXJfdW5hdmFp",
+            "bGFibGUYGiABKAQSIwobZGlnZXN0c19kZWZlcnJlZF9ub3Rfc3RhYmxlGBsg",
+            "ASgEEh4KFnZlcmRpY3RzX3N0YWxlX3NraXBwZWQYHCABKAQSIwobdG9wX2xh",
+            "eWVyX2ZpeF9mcm9tX21pc21hdGNoGB0gASgEEhwKFHRvcF9sYXllcl9maXhl",
+            "c19zZW50GB4gASgEEiMKG3RvcF9sYXllcl9maXhfc2VuZF9mYWlsdXJlcxgf",
+            "IAEoBBIlCh10b3BfbGF5ZXJfY29udmVyZ2VfdW5yZXBvcnRlZBggIAEoBBIU",
+            "CgxzdGFsZV9oZWFsZWQYISABKAQSKwojdG9wX2xheWVyX2ZpeF9za2lwcGVk",
+            "X25vdF90b3BfbGF5ZXIYIiABKAQSIQoZY2xpZW50X2hhc2hfemVyb192ZXJk",
+            "aWN0cxgjIAEoBBIgChhjbGllbnRfaGFzaF96ZXJvX3NraXBwZWQYJCABKAQS",
+            "IwobcmVwb3J0c19kZWZlcnJlZF9ub3Rfc3RhYmxlGCUgASgEEiwKJHRvcF9s",
+            "YXllcl9maXhfc2tpcHBlZF9ub19jbGllbnRfaGFzaBgmIAEoBCLfAwoNTGl2",
+            "ZVRlbGVtZXRyeRIRCglzYW1wbGVfaWQYASABKAQSFQoNc2FtcGxlZF9hdF9t",
+            "cxgCIAEoBBIzCgxob3N0X3J1bnRpbWUYAyABKAsyHS5zdW1wLnRlbGVtZXRy",
+            "eS5SdW50aW1lU2FtcGxlEjIKB2NpcmN1aXQYBCABKAsyIS5zdW1wLnRlbGVt",
+            "ZXRyeS5DaXJjdWl0U3luY1NhbXBsZRIyCgd0ZXJyYWluGAUgASgLMiEuc3Vt",
+            "cC50ZWxlbWV0cnkuVGVycmFpblN5bmNTYW1wbGUSKQoFcGVlcnMYBiADKAsy",
+            "Gi5zdW1wLnRlbGVtZXRyeS5QZWVyU2FtcGxlEhkKEWxpdmVfbWFwX2J1aWxk",
+            "X21zGAcgASgCEhcKD2xpdmVfbWFwX2NodW5rcxgIIAEoDRIYChBsaXZlX21h",
+            "cF9iYXRjaGVzGAkgASgNEhsKE2xpdmVfbWFwX2J5dGVzX3NlbnQYCiABKAQS",
+            "HAoUbGl2ZV9tYXBfZnJhbWVzX3NlbnQYCyABKAQSGQoRbGl2ZV9tYXBfcmVx",
+            "dWVzdHMYDCABKAQSOAoRbW9uaXRvcl90cmFuc3BvcnQYDSABKAsyHS5zdW1w",
+            "LnRlbGVtZXRyeS5DaGFubmVsU2FtcGxlIrIBChZDbGllbnRSdW50aW1lVGVs",
+            "ZW1ldHJ5Ei4KB3J1bnRpbWUYASABKAsyHS5zdW1wLnRlbGVtZXRyeS5SdW50",
+            "aW1lU2FtcGxlEjQKB2NpcmN1aXQYAiABKAsyIy5zdW1wLnRlbGVtZXRyeS5D",
+            "bGllbnRDaXJjdWl0U2FtcGxlEjIKB3RlcnJhaW4YAyABKAsyIS5zdW1wLnRl",
+            "bGVtZXRyeS5UZXJyYWluU3luY1NhbXBsZSJBChhUZXJyYWluRGlhZ25vc3Rp",
+            "Y0NvbnRyb2wSEgoKcmVxdWVzdF9pZBgBIAEoBBIRCgl3aW5kb3dfbXMYAiAB",
+            "KA0iTgoXVGVycmFpbkRpYWdub3N0aWNSZXBvcnQSMwoGc2FtcGxlGAEgASgL",
+            "MiMuc3VtcC50ZWxlbWV0cnkuVGVycmFpblJlc3luY1NhbXBsZUIlSAGqAiBT",
+            "dU11bHRpcGxheWVyLlByb3RvY29sLlRlbGVtZXRyeWIGcHJvdG8z"));
       descriptor = pbr::FileDescriptor.FromGeneratedCode(descriptorData,
           new pbr::FileDescriptor[] { },
           new pbr::GeneratedClrTypeInfo(null, null, new pbr::GeneratedClrTypeInfo[] {
@@ -123,12 +162,15 @@ namespace SuMultiplayer.Protocol.Telemetry {
             new pbr::GeneratedClrTypeInfo(typeof(global::SuMultiplayer.Protocol.Telemetry.CircuitStageSample), global::SuMultiplayer.Protocol.Telemetry.CircuitStageSample.Parser, new[]{ "Id", "Calls", "TotalMs", "MaxMs", "LastMs", "SlowCalls", "MaxContext" }, null, null, null, null),
             new pbr::GeneratedClrTypeInfo(typeof(global::SuMultiplayer.Protocol.Telemetry.MessageTypeTraffic), global::SuMultiplayer.Protocol.Telemetry.MessageTypeTraffic.Parser, new[]{ "TypeId", "Name", "FramesSent", "BytesSent", "FramesReceived", "BytesReceived" }, null, null, null, null),
             new pbr::GeneratedClrTypeInfo(typeof(global::SuMultiplayer.Protocol.Telemetry.ChannelSample), global::SuMultiplayer.Protocol.Telemetry.ChannelSample.Parser, new[]{ "State", "FramesSent", "BytesSent", "FramesReceived", "BytesReceived", "BackpressureEvents", "ProtocolViolations", "SendQueueHigh", "MessageTypes" }, null, null, null, null),
-            new pbr::GeneratedClrTypeInfo(typeof(global::SuMultiplayer.Protocol.Telemetry.PeerSample), global::SuMultiplayer.Protocol.Telemetry.PeerSample.Parser, new[]{ "ClientId", "Key", "Name", "ClientRuntime", "RuntimeAgeMs", "Primary", "Circuit", "ClientCircuit" }, null, null, null, null),
+            new pbr::GeneratedClrTypeInfo(typeof(global::SuMultiplayer.Protocol.Telemetry.PeerSample), global::SuMultiplayer.Protocol.Telemetry.PeerSample.Parser, new[]{ "ClientId", "Key", "Name", "ClientRuntime", "RuntimeAgeMs", "Primary", "Circuit", "ClientCircuit", "TerrainResync", "TerrainResyncAgeMs", "Terrain" }, null, null, null, null),
             new pbr::GeneratedClrTypeInfo(typeof(global::SuMultiplayer.Protocol.Telemetry.CircuitSyncSample), global::SuMultiplayer.Protocol.Telemetry.CircuitSyncSample.Parser, new[]{ "Rounds", "AttachedPeers", "ScopeChunks", "SevenSegmentStates", "SnapshotChunks", "SnapshotElements", "SnapshotParts", "DeltaStates", "SendFailures", "ClientScopeRequests", "ClientScopeChunks", "ClientSnapshotParts", "ClientSnapshotsApplied", "ClientStatesApplied", "ClientApplyFailures", "ClientHashReports", "ClientHashChunks", "ClientWatermarkExpired", "ClientSimulationEnabled", "HostSyncWindowCalls", "HostSyncWindowMs", "HostSyncWindowMaxMs", "HashMismatchesObserved", "HashRepairChunksQueued", "RepairAckHashMismatches", "RepairAckChunksQueued", "SnapshotRequestChunks", "NeedsFullSnapshotChunksQueued", "SnapshotsInitialScope", "SnapshotsHashRepair", "SnapshotsRepairAckRepair", "SnapshotsClientRequest", "SnapshotsNeedsFullRecovery", "SnapshotsPauseBarrier", "SnapshotsTopologyChange", "SnapshotsSendFailureRecovery", "SnapshotSendFailures", "HostBatchCaptureFailures", "RequestedSnapshotCaptureFailures", "HostBatchCaptureChunksFailed", "Stages" }, null, null, null, null),
             new pbr::GeneratedClrTypeInfo(typeof(global::SuMultiplayer.Protocol.Telemetry.ClientCircuitSample), global::SuMultiplayer.Protocol.Telemetry.ClientCircuitSample.Parser, new[]{ "HashCaptureFailures", "HashCaptureChunksSkipped", "HashReportsSent", "HashChunksSent", "ScopeRequestsSent", "ScopeRequestChunksSent", "SnapshotPartsReceived", "SnapshotsApplied", "StatesApplied", "ApplyFailures", "WatermarkExpired", "SnapshotTimeouts", "Stages" }, null, null, null, null),
-            new pbr::GeneratedClrTypeInfo(typeof(global::SuMultiplayer.Protocol.Telemetry.TerrainSyncSample), global::SuMultiplayer.Protocol.Telemetry.TerrainSyncSample.Parser, new[]{ "DigestReports", "CellChangesBroadcast", "CellChangeRepairs", "ResyncBytes", "ReportsPerSecond", "MismatchPerSecond", "ResyncReceivedPerSecond", "ResyncAppliedPerSecond", "VerifyRequestsSent", "VerifyRequestSendFailures", "PendingReports", "PendingMarks", "PendingClients" }, null, null, null, null),
+            new pbr::GeneratedClrTypeInfo(typeof(global::SuMultiplayer.Protocol.Telemetry.TerrainResyncSample), global::SuMultiplayer.Protocol.Telemetry.TerrainResyncSample.Parser, new[]{ "RequestId", "WindowMs", "ShardBytes", "RleRuns", "ExpandedCells", "DecodeMs", "ApplyMs", "CircuitCallbackMs", "FinalDigestMs", "AppliedParts", "NoPendingSixFaceRollbacks", "NoPendingSixFaceRollbackMs", "ChunkLoadEvents", "ChunkUnloadEvents", "HashChecks", "HashMatches", "HashMismatches", "HashMs", "HashMaxMs", "ResyncChangedCells", "ResyncUnchangedCells", "TerrainInvalidations" }, null, null, null, null),
+            new pbr::GeneratedClrTypeInfo(typeof(global::SuMultiplayer.Protocol.Telemetry.TerrainSyncSample), global::SuMultiplayer.Protocol.Telemetry.TerrainSyncSample.Parser, new[]{ "DigestReports", "CellChangesBroadcast", "CellChangeRepairs", "ResyncBytes", "ReportsPerSecond", "MismatchPerSecond", "ResyncReceivedPerSecond", "ResyncAppliedPerSecond", "VerifyRequestsSent", "VerifyRequestSendFailures", "PendingReports", "PendingMarks", "PendingClients", "ResyncRuns", "ResyncExpandedCells", "ResyncEncodeMs", "ResyncShardBytes", "OwedSnapshotsQueued", "OwedSnapshotsSkippedNoContent", "TopLayerChecks", "TopLayerMatches", "TopLayerReportsSent", "TopLayerFixesReceived", "TopLayerFixCellsApplied", "TopLayerFixEscalations", "TopLayerUnavailable", "DigestsDeferredNotStable", "VerdictsStaleSkipped", "TopLayerFixFromMismatch", "TopLayerFixesSent", "TopLayerFixSendFailures", "TopLayerConvergeUnreported", "StaleHealed", "TopLayerFixSkippedNotTopLayer", "ClientHashZeroVerdicts", "ClientHashZeroSkipped", "ReportsDeferredNotStable", "TopLayerFixSkippedNoClientHash" }, null, null, null, null),
             new pbr::GeneratedClrTypeInfo(typeof(global::SuMultiplayer.Protocol.Telemetry.LiveTelemetry), global::SuMultiplayer.Protocol.Telemetry.LiveTelemetry.Parser, new[]{ "SampleId", "SampledAtMs", "HostRuntime", "Circuit", "Terrain", "Peers", "LiveMapBuildMs", "LiveMapChunks", "LiveMapBatches", "LiveMapBytesSent", "LiveMapFramesSent", "LiveMapRequests", "MonitorTransport" }, null, null, null, null),
-            new pbr::GeneratedClrTypeInfo(typeof(global::SuMultiplayer.Protocol.Telemetry.ClientRuntimeTelemetry), global::SuMultiplayer.Protocol.Telemetry.ClientRuntimeTelemetry.Parser, new[]{ "Runtime", "Circuit" }, null, null, null, null)
+            new pbr::GeneratedClrTypeInfo(typeof(global::SuMultiplayer.Protocol.Telemetry.ClientRuntimeTelemetry), global::SuMultiplayer.Protocol.Telemetry.ClientRuntimeTelemetry.Parser, new[]{ "Runtime", "Circuit", "Terrain" }, null, null, null, null),
+            new pbr::GeneratedClrTypeInfo(typeof(global::SuMultiplayer.Protocol.Telemetry.TerrainDiagnosticControl), global::SuMultiplayer.Protocol.Telemetry.TerrainDiagnosticControl.Parser, new[]{ "RequestId", "WindowMs" }, null, null, null, null),
+            new pbr::GeneratedClrTypeInfo(typeof(global::SuMultiplayer.Protocol.Telemetry.TerrainDiagnosticReport), global::SuMultiplayer.Protocol.Telemetry.TerrainDiagnosticReport.Parser, new[]{ "Sample" }, null, null, null, null)
           }));
     }
     #endregion
@@ -2293,6 +2335,9 @@ namespace SuMultiplayer.Protocol.Telemetry {
       primary_ = other.primary_ != null ? other.primary_.Clone() : null;
       circuit_ = other.circuit_ != null ? other.circuit_.Clone() : null;
       clientCircuit_ = other.clientCircuit_ != null ? other.clientCircuit_.Clone() : null;
+      terrainResync_ = other.terrainResync_ != null ? other.terrainResync_.Clone() : null;
+      terrainResyncAgeMs_ = other.terrainResyncAgeMs_;
+      terrain_ = other.terrain_ != null ? other.terrain_.Clone() : null;
       _unknownFields = pb::UnknownFieldSet.Clone(other._unknownFields);
     }
 
@@ -2398,6 +2443,46 @@ namespace SuMultiplayer.Protocol.Telemetry {
       }
     }
 
+    /// <summary>Field number for the "terrain_resync" field.</summary>
+    public const int TerrainResyncFieldNumber = 9;
+    private global::SuMultiplayer.Protocol.Telemetry.TerrainResyncSample terrainResync_;
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public global::SuMultiplayer.Protocol.Telemetry.TerrainResyncSample TerrainResync {
+      get { return terrainResync_; }
+      set {
+        terrainResync_ = value;
+      }
+    }
+
+    /// <summary>Field number for the "terrain_resync_age_ms" field.</summary>
+    public const int TerrainResyncAgeMsFieldNumber = 10;
+    private ulong terrainResyncAgeMs_;
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public ulong TerrainResyncAgeMs {
+      get { return terrainResyncAgeMs_; }
+      set {
+        terrainResyncAgeMs_ = value;
+      }
+    }
+
+    /// <summary>Field number for the "terrain" field.</summary>
+    public const int TerrainFieldNumber = 11;
+    private global::SuMultiplayer.Protocol.Telemetry.TerrainSyncSample terrain_;
+    /// <summary>
+    /// 该玩家端自报的地形同步计数（含顶层摘要校验效果 / 第 6/8 步拦截量）。
+    /// 客户端侧没有 host 的 resyncBytes 等字段，那些留 0（不伪造）。
+    /// </summary>
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public global::SuMultiplayer.Protocol.Telemetry.TerrainSyncSample Terrain {
+      get { return terrain_; }
+      set {
+        terrain_ = value;
+      }
+    }
+
     [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
     [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
     public override bool Equals(object other) {
@@ -2421,6 +2506,9 @@ namespace SuMultiplayer.Protocol.Telemetry {
       if (!object.Equals(Primary, other.Primary)) return false;
       if (!object.Equals(Circuit, other.Circuit)) return false;
       if (!object.Equals(ClientCircuit, other.ClientCircuit)) return false;
+      if (!object.Equals(TerrainResync, other.TerrainResync)) return false;
+      if (TerrainResyncAgeMs != other.TerrainResyncAgeMs) return false;
+      if (!object.Equals(Terrain, other.Terrain)) return false;
       return Equals(_unknownFields, other._unknownFields);
     }
 
@@ -2436,6 +2524,9 @@ namespace SuMultiplayer.Protocol.Telemetry {
       if (primary_ != null) hash ^= Primary.GetHashCode();
       if (circuit_ != null) hash ^= Circuit.GetHashCode();
       if (clientCircuit_ != null) hash ^= ClientCircuit.GetHashCode();
+      if (terrainResync_ != null) hash ^= TerrainResync.GetHashCode();
+      if (TerrainResyncAgeMs != 0UL) hash ^= TerrainResyncAgeMs.GetHashCode();
+      if (terrain_ != null) hash ^= Terrain.GetHashCode();
       if (_unknownFields != null) {
         hash ^= _unknownFields.GetHashCode();
       }
@@ -2486,6 +2577,18 @@ namespace SuMultiplayer.Protocol.Telemetry {
         output.WriteRawTag(66);
         output.WriteMessage(ClientCircuit);
       }
+      if (terrainResync_ != null) {
+        output.WriteRawTag(74);
+        output.WriteMessage(TerrainResync);
+      }
+      if (TerrainResyncAgeMs != 0UL) {
+        output.WriteRawTag(80);
+        output.WriteUInt64(TerrainResyncAgeMs);
+      }
+      if (terrain_ != null) {
+        output.WriteRawTag(90);
+        output.WriteMessage(Terrain);
+      }
       if (_unknownFields != null) {
         _unknownFields.WriteTo(output);
       }
@@ -2528,6 +2631,18 @@ namespace SuMultiplayer.Protocol.Telemetry {
         output.WriteRawTag(66);
         output.WriteMessage(ClientCircuit);
       }
+      if (terrainResync_ != null) {
+        output.WriteRawTag(74);
+        output.WriteMessage(TerrainResync);
+      }
+      if (TerrainResyncAgeMs != 0UL) {
+        output.WriteRawTag(80);
+        output.WriteUInt64(TerrainResyncAgeMs);
+      }
+      if (terrain_ != null) {
+        output.WriteRawTag(90);
+        output.WriteMessage(Terrain);
+      }
       if (_unknownFields != null) {
         _unknownFields.WriteTo(ref output);
       }
@@ -2561,6 +2676,15 @@ namespace SuMultiplayer.Protocol.Telemetry {
       }
       if (clientCircuit_ != null) {
         size += 1 + pb::CodedOutputStream.ComputeMessageSize(ClientCircuit);
+      }
+      if (terrainResync_ != null) {
+        size += 1 + pb::CodedOutputStream.ComputeMessageSize(TerrainResync);
+      }
+      if (TerrainResyncAgeMs != 0UL) {
+        size += 1 + pb::CodedOutputStream.ComputeUInt64Size(TerrainResyncAgeMs);
+      }
+      if (terrain_ != null) {
+        size += 1 + pb::CodedOutputStream.ComputeMessageSize(Terrain);
       }
       if (_unknownFields != null) {
         size += _unknownFields.CalculateSize();
@@ -2609,6 +2733,21 @@ namespace SuMultiplayer.Protocol.Telemetry {
           ClientCircuit = new global::SuMultiplayer.Protocol.Telemetry.ClientCircuitSample();
         }
         ClientCircuit.MergeFrom(other.ClientCircuit);
+      }
+      if (other.terrainResync_ != null) {
+        if (terrainResync_ == null) {
+          TerrainResync = new global::SuMultiplayer.Protocol.Telemetry.TerrainResyncSample();
+        }
+        TerrainResync.MergeFrom(other.TerrainResync);
+      }
+      if (other.TerrainResyncAgeMs != 0UL) {
+        TerrainResyncAgeMs = other.TerrainResyncAgeMs;
+      }
+      if (other.terrain_ != null) {
+        if (terrain_ == null) {
+          Terrain = new global::SuMultiplayer.Protocol.Telemetry.TerrainSyncSample();
+        }
+        Terrain.MergeFrom(other.Terrain);
       }
       _unknownFields = pb::UnknownFieldSet.MergeFrom(_unknownFields, other._unknownFields);
     }
@@ -2673,6 +2812,24 @@ namespace SuMultiplayer.Protocol.Telemetry {
             input.ReadMessage(ClientCircuit);
             break;
           }
+          case 74: {
+            if (terrainResync_ == null) {
+              TerrainResync = new global::SuMultiplayer.Protocol.Telemetry.TerrainResyncSample();
+            }
+            input.ReadMessage(TerrainResync);
+            break;
+          }
+          case 80: {
+            TerrainResyncAgeMs = input.ReadUInt64();
+            break;
+          }
+          case 90: {
+            if (terrain_ == null) {
+              Terrain = new global::SuMultiplayer.Protocol.Telemetry.TerrainSyncSample();
+            }
+            input.ReadMessage(Terrain);
+            break;
+          }
         }
       }
     #endif
@@ -2734,6 +2891,24 @@ namespace SuMultiplayer.Protocol.Telemetry {
               ClientCircuit = new global::SuMultiplayer.Protocol.Telemetry.ClientCircuitSample();
             }
             input.ReadMessage(ClientCircuit);
+            break;
+          }
+          case 74: {
+            if (terrainResync_ == null) {
+              TerrainResync = new global::SuMultiplayer.Protocol.Telemetry.TerrainResyncSample();
+            }
+            input.ReadMessage(TerrainResync);
+            break;
+          }
+          case 80: {
+            TerrainResyncAgeMs = input.ReadUInt64();
+            break;
+          }
+          case 90: {
+            if (terrain_ == null) {
+              Terrain = new global::SuMultiplayer.Protocol.Telemetry.TerrainSyncSample();
+            }
+            input.ReadMessage(Terrain);
             break;
           }
         }
@@ -5041,6 +5216,984 @@ namespace SuMultiplayer.Protocol.Telemetry {
 
   }
 
+  /// <summary>
+  /// Host-scheduled, short-lived client diagnostic window for terrain resync.
+  /// </summary>
+  [global::System.Diagnostics.DebuggerDisplayAttribute("{ToString(),nq}")]
+  public sealed partial class TerrainResyncSample : pb::IMessage<TerrainResyncSample>
+  #if !GOOGLE_PROTOBUF_REFSTRUCT_COMPATIBILITY_MODE
+      , pb::IBufferMessage
+  #endif
+  {
+    private static readonly pb::MessageParser<TerrainResyncSample> _parser = new pb::MessageParser<TerrainResyncSample>(() => new TerrainResyncSample());
+    private pb::UnknownFieldSet _unknownFields;
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public static pb::MessageParser<TerrainResyncSample> Parser { get { return _parser; } }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public static pbr::MessageDescriptor Descriptor {
+      get { return global::SuMultiplayer.Protocol.Telemetry.TelemetryReflection.Descriptor.MessageTypes[8]; }
+    }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    pbr::MessageDescriptor pb::IMessage.Descriptor {
+      get { return Descriptor; }
+    }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public TerrainResyncSample() {
+      OnConstruction();
+    }
+
+    partial void OnConstruction();
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public TerrainResyncSample(TerrainResyncSample other) : this() {
+      requestId_ = other.requestId_;
+      windowMs_ = other.windowMs_;
+      shardBytes_ = other.shardBytes_;
+      rleRuns_ = other.rleRuns_;
+      expandedCells_ = other.expandedCells_;
+      decodeMs_ = other.decodeMs_;
+      applyMs_ = other.applyMs_;
+      circuitCallbackMs_ = other.circuitCallbackMs_;
+      finalDigestMs_ = other.finalDigestMs_;
+      appliedParts_ = other.appliedParts_;
+      noPendingSixFaceRollbacks_ = other.noPendingSixFaceRollbacks_;
+      noPendingSixFaceRollbackMs_ = other.noPendingSixFaceRollbackMs_;
+      chunkLoadEvents_ = other.chunkLoadEvents_;
+      chunkUnloadEvents_ = other.chunkUnloadEvents_;
+      hashChecks_ = other.hashChecks_;
+      hashMatches_ = other.hashMatches_;
+      hashMismatches_ = other.hashMismatches_;
+      hashMs_ = other.hashMs_;
+      hashMaxMs_ = other.hashMaxMs_;
+      resyncChangedCells_ = other.resyncChangedCells_;
+      resyncUnchangedCells_ = other.resyncUnchangedCells_;
+      terrainInvalidations_ = other.terrainInvalidations_;
+      _unknownFields = pb::UnknownFieldSet.Clone(other._unknownFields);
+    }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public TerrainResyncSample Clone() {
+      return new TerrainResyncSample(this);
+    }
+
+    /// <summary>Field number for the "request_id" field.</summary>
+    public const int RequestIdFieldNumber = 1;
+    private ulong requestId_;
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public ulong RequestId {
+      get { return requestId_; }
+      set {
+        requestId_ = value;
+      }
+    }
+
+    /// <summary>Field number for the "window_ms" field.</summary>
+    public const int WindowMsFieldNumber = 2;
+    private uint windowMs_;
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public uint WindowMs {
+      get { return windowMs_; }
+      set {
+        windowMs_ = value;
+      }
+    }
+
+    /// <summary>Field number for the "shard_bytes" field.</summary>
+    public const int ShardBytesFieldNumber = 3;
+    private ulong shardBytes_;
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public ulong ShardBytes {
+      get { return shardBytes_; }
+      set {
+        shardBytes_ = value;
+      }
+    }
+
+    /// <summary>Field number for the "rle_runs" field.</summary>
+    public const int RleRunsFieldNumber = 4;
+    private ulong rleRuns_;
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public ulong RleRuns {
+      get { return rleRuns_; }
+      set {
+        rleRuns_ = value;
+      }
+    }
+
+    /// <summary>Field number for the "expanded_cells" field.</summary>
+    public const int ExpandedCellsFieldNumber = 5;
+    private ulong expandedCells_;
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public ulong ExpandedCells {
+      get { return expandedCells_; }
+      set {
+        expandedCells_ = value;
+      }
+    }
+
+    /// <summary>Field number for the "decode_ms" field.</summary>
+    public const int DecodeMsFieldNumber = 6;
+    private float decodeMs_;
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public float DecodeMs {
+      get { return decodeMs_; }
+      set {
+        decodeMs_ = value;
+      }
+    }
+
+    /// <summary>Field number for the "apply_ms" field.</summary>
+    public const int ApplyMsFieldNumber = 7;
+    private float applyMs_;
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public float ApplyMs {
+      get { return applyMs_; }
+      set {
+        applyMs_ = value;
+      }
+    }
+
+    /// <summary>Field number for the "circuit_callback_ms" field.</summary>
+    public const int CircuitCallbackMsFieldNumber = 8;
+    private float circuitCallbackMs_;
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public float CircuitCallbackMs {
+      get { return circuitCallbackMs_; }
+      set {
+        circuitCallbackMs_ = value;
+      }
+    }
+
+    /// <summary>Field number for the "final_digest_ms" field.</summary>
+    public const int FinalDigestMsFieldNumber = 9;
+    private float finalDigestMs_;
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public float FinalDigestMs {
+      get { return finalDigestMs_; }
+      set {
+        finalDigestMs_ = value;
+      }
+    }
+
+    /// <summary>Field number for the "applied_parts" field.</summary>
+    public const int AppliedPartsFieldNumber = 10;
+    private ulong appliedParts_;
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public ulong AppliedParts {
+      get { return appliedParts_; }
+      set {
+        appliedParts_ = value;
+      }
+    }
+
+    /// <summary>Field number for the "no_pending_six_face_rollbacks" field.</summary>
+    public const int NoPendingSixFaceRollbacksFieldNumber = 11;
+    private ulong noPendingSixFaceRollbacks_;
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public ulong NoPendingSixFaceRollbacks {
+      get { return noPendingSixFaceRollbacks_; }
+      set {
+        noPendingSixFaceRollbacks_ = value;
+      }
+    }
+
+    /// <summary>Field number for the "no_pending_six_face_rollback_ms" field.</summary>
+    public const int NoPendingSixFaceRollbackMsFieldNumber = 12;
+    private float noPendingSixFaceRollbackMs_;
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public float NoPendingSixFaceRollbackMs {
+      get { return noPendingSixFaceRollbackMs_; }
+      set {
+        noPendingSixFaceRollbackMs_ = value;
+      }
+    }
+
+    /// <summary>Field number for the "chunk_load_events" field.</summary>
+    public const int ChunkLoadEventsFieldNumber = 13;
+    private ulong chunkLoadEvents_;
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public ulong ChunkLoadEvents {
+      get { return chunkLoadEvents_; }
+      set {
+        chunkLoadEvents_ = value;
+      }
+    }
+
+    /// <summary>Field number for the "chunk_unload_events" field.</summary>
+    public const int ChunkUnloadEventsFieldNumber = 14;
+    private ulong chunkUnloadEvents_;
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public ulong ChunkUnloadEvents {
+      get { return chunkUnloadEvents_; }
+      set {
+        chunkUnloadEvents_ = value;
+      }
+    }
+
+    /// <summary>Field number for the "hash_checks" field.</summary>
+    public const int HashChecksFieldNumber = 15;
+    private ulong hashChecks_;
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public ulong HashChecks {
+      get { return hashChecks_; }
+      set {
+        hashChecks_ = value;
+      }
+    }
+
+    /// <summary>Field number for the "hash_matches" field.</summary>
+    public const int HashMatchesFieldNumber = 16;
+    private ulong hashMatches_;
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public ulong HashMatches {
+      get { return hashMatches_; }
+      set {
+        hashMatches_ = value;
+      }
+    }
+
+    /// <summary>Field number for the "hash_mismatches" field.</summary>
+    public const int HashMismatchesFieldNumber = 17;
+    private ulong hashMismatches_;
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public ulong HashMismatches {
+      get { return hashMismatches_; }
+      set {
+        hashMismatches_ = value;
+      }
+    }
+
+    /// <summary>Field number for the "hash_ms" field.</summary>
+    public const int HashMsFieldNumber = 18;
+    private float hashMs_;
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public float HashMs {
+      get { return hashMs_; }
+      set {
+        hashMs_ = value;
+      }
+    }
+
+    /// <summary>Field number for the "hash_max_ms" field.</summary>
+    public const int HashMaxMsFieldNumber = 19;
+    private float hashMaxMs_;
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public float HashMaxMs {
+      get { return hashMaxMs_; }
+      set {
+        hashMaxMs_ = value;
+      }
+    }
+
+    /// <summary>Field number for the "resync_changed_cells" field.</summary>
+    public const int ResyncChangedCellsFieldNumber = 20;
+    private ulong resyncChangedCells_;
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public ulong ResyncChangedCells {
+      get { return resyncChangedCells_; }
+      set {
+        resyncChangedCells_ = value;
+      }
+    }
+
+    /// <summary>Field number for the "resync_unchanged_cells" field.</summary>
+    public const int ResyncUnchangedCellsFieldNumber = 21;
+    private ulong resyncUnchangedCells_;
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public ulong ResyncUnchangedCells {
+      get { return resyncUnchangedCells_; }
+      set {
+        resyncUnchangedCells_ = value;
+      }
+    }
+
+    /// <summary>Field number for the "terrain_invalidations" field.</summary>
+    public const int TerrainInvalidationsFieldNumber = 22;
+    private ulong terrainInvalidations_;
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public ulong TerrainInvalidations {
+      get { return terrainInvalidations_; }
+      set {
+        terrainInvalidations_ = value;
+      }
+    }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public override bool Equals(object other) {
+      return Equals(other as TerrainResyncSample);
+    }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public bool Equals(TerrainResyncSample other) {
+      if (ReferenceEquals(other, null)) {
+        return false;
+      }
+      if (ReferenceEquals(other, this)) {
+        return true;
+      }
+      if (RequestId != other.RequestId) return false;
+      if (WindowMs != other.WindowMs) return false;
+      if (ShardBytes != other.ShardBytes) return false;
+      if (RleRuns != other.RleRuns) return false;
+      if (ExpandedCells != other.ExpandedCells) return false;
+      if (!pbc::ProtobufEqualityComparers.BitwiseSingleEqualityComparer.Equals(DecodeMs, other.DecodeMs)) return false;
+      if (!pbc::ProtobufEqualityComparers.BitwiseSingleEqualityComparer.Equals(ApplyMs, other.ApplyMs)) return false;
+      if (!pbc::ProtobufEqualityComparers.BitwiseSingleEqualityComparer.Equals(CircuitCallbackMs, other.CircuitCallbackMs)) return false;
+      if (!pbc::ProtobufEqualityComparers.BitwiseSingleEqualityComparer.Equals(FinalDigestMs, other.FinalDigestMs)) return false;
+      if (AppliedParts != other.AppliedParts) return false;
+      if (NoPendingSixFaceRollbacks != other.NoPendingSixFaceRollbacks) return false;
+      if (!pbc::ProtobufEqualityComparers.BitwiseSingleEqualityComparer.Equals(NoPendingSixFaceRollbackMs, other.NoPendingSixFaceRollbackMs)) return false;
+      if (ChunkLoadEvents != other.ChunkLoadEvents) return false;
+      if (ChunkUnloadEvents != other.ChunkUnloadEvents) return false;
+      if (HashChecks != other.HashChecks) return false;
+      if (HashMatches != other.HashMatches) return false;
+      if (HashMismatches != other.HashMismatches) return false;
+      if (!pbc::ProtobufEqualityComparers.BitwiseSingleEqualityComparer.Equals(HashMs, other.HashMs)) return false;
+      if (!pbc::ProtobufEqualityComparers.BitwiseSingleEqualityComparer.Equals(HashMaxMs, other.HashMaxMs)) return false;
+      if (ResyncChangedCells != other.ResyncChangedCells) return false;
+      if (ResyncUnchangedCells != other.ResyncUnchangedCells) return false;
+      if (TerrainInvalidations != other.TerrainInvalidations) return false;
+      return Equals(_unknownFields, other._unknownFields);
+    }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public override int GetHashCode() {
+      int hash = 1;
+      if (RequestId != 0UL) hash ^= RequestId.GetHashCode();
+      if (WindowMs != 0) hash ^= WindowMs.GetHashCode();
+      if (ShardBytes != 0UL) hash ^= ShardBytes.GetHashCode();
+      if (RleRuns != 0UL) hash ^= RleRuns.GetHashCode();
+      if (ExpandedCells != 0UL) hash ^= ExpandedCells.GetHashCode();
+      if (DecodeMs != 0F) hash ^= pbc::ProtobufEqualityComparers.BitwiseSingleEqualityComparer.GetHashCode(DecodeMs);
+      if (ApplyMs != 0F) hash ^= pbc::ProtobufEqualityComparers.BitwiseSingleEqualityComparer.GetHashCode(ApplyMs);
+      if (CircuitCallbackMs != 0F) hash ^= pbc::ProtobufEqualityComparers.BitwiseSingleEqualityComparer.GetHashCode(CircuitCallbackMs);
+      if (FinalDigestMs != 0F) hash ^= pbc::ProtobufEqualityComparers.BitwiseSingleEqualityComparer.GetHashCode(FinalDigestMs);
+      if (AppliedParts != 0UL) hash ^= AppliedParts.GetHashCode();
+      if (NoPendingSixFaceRollbacks != 0UL) hash ^= NoPendingSixFaceRollbacks.GetHashCode();
+      if (NoPendingSixFaceRollbackMs != 0F) hash ^= pbc::ProtobufEqualityComparers.BitwiseSingleEqualityComparer.GetHashCode(NoPendingSixFaceRollbackMs);
+      if (ChunkLoadEvents != 0UL) hash ^= ChunkLoadEvents.GetHashCode();
+      if (ChunkUnloadEvents != 0UL) hash ^= ChunkUnloadEvents.GetHashCode();
+      if (HashChecks != 0UL) hash ^= HashChecks.GetHashCode();
+      if (HashMatches != 0UL) hash ^= HashMatches.GetHashCode();
+      if (HashMismatches != 0UL) hash ^= HashMismatches.GetHashCode();
+      if (HashMs != 0F) hash ^= pbc::ProtobufEqualityComparers.BitwiseSingleEqualityComparer.GetHashCode(HashMs);
+      if (HashMaxMs != 0F) hash ^= pbc::ProtobufEqualityComparers.BitwiseSingleEqualityComparer.GetHashCode(HashMaxMs);
+      if (ResyncChangedCells != 0UL) hash ^= ResyncChangedCells.GetHashCode();
+      if (ResyncUnchangedCells != 0UL) hash ^= ResyncUnchangedCells.GetHashCode();
+      if (TerrainInvalidations != 0UL) hash ^= TerrainInvalidations.GetHashCode();
+      if (_unknownFields != null) {
+        hash ^= _unknownFields.GetHashCode();
+      }
+      return hash;
+    }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public override string ToString() {
+      return pb::JsonFormatter.ToDiagnosticString(this);
+    }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public void WriteTo(pb::CodedOutputStream output) {
+    #if !GOOGLE_PROTOBUF_REFSTRUCT_COMPATIBILITY_MODE
+      output.WriteRawMessage(this);
+    #else
+      if (RequestId != 0UL) {
+        output.WriteRawTag(8);
+        output.WriteUInt64(RequestId);
+      }
+      if (WindowMs != 0) {
+        output.WriteRawTag(16);
+        output.WriteUInt32(WindowMs);
+      }
+      if (ShardBytes != 0UL) {
+        output.WriteRawTag(24);
+        output.WriteUInt64(ShardBytes);
+      }
+      if (RleRuns != 0UL) {
+        output.WriteRawTag(32);
+        output.WriteUInt64(RleRuns);
+      }
+      if (ExpandedCells != 0UL) {
+        output.WriteRawTag(40);
+        output.WriteUInt64(ExpandedCells);
+      }
+      if (DecodeMs != 0F) {
+        output.WriteRawTag(53);
+        output.WriteFloat(DecodeMs);
+      }
+      if (ApplyMs != 0F) {
+        output.WriteRawTag(61);
+        output.WriteFloat(ApplyMs);
+      }
+      if (CircuitCallbackMs != 0F) {
+        output.WriteRawTag(69);
+        output.WriteFloat(CircuitCallbackMs);
+      }
+      if (FinalDigestMs != 0F) {
+        output.WriteRawTag(77);
+        output.WriteFloat(FinalDigestMs);
+      }
+      if (AppliedParts != 0UL) {
+        output.WriteRawTag(80);
+        output.WriteUInt64(AppliedParts);
+      }
+      if (NoPendingSixFaceRollbacks != 0UL) {
+        output.WriteRawTag(88);
+        output.WriteUInt64(NoPendingSixFaceRollbacks);
+      }
+      if (NoPendingSixFaceRollbackMs != 0F) {
+        output.WriteRawTag(101);
+        output.WriteFloat(NoPendingSixFaceRollbackMs);
+      }
+      if (ChunkLoadEvents != 0UL) {
+        output.WriteRawTag(104);
+        output.WriteUInt64(ChunkLoadEvents);
+      }
+      if (ChunkUnloadEvents != 0UL) {
+        output.WriteRawTag(112);
+        output.WriteUInt64(ChunkUnloadEvents);
+      }
+      if (HashChecks != 0UL) {
+        output.WriteRawTag(120);
+        output.WriteUInt64(HashChecks);
+      }
+      if (HashMatches != 0UL) {
+        output.WriteRawTag(128, 1);
+        output.WriteUInt64(HashMatches);
+      }
+      if (HashMismatches != 0UL) {
+        output.WriteRawTag(136, 1);
+        output.WriteUInt64(HashMismatches);
+      }
+      if (HashMs != 0F) {
+        output.WriteRawTag(149, 1);
+        output.WriteFloat(HashMs);
+      }
+      if (HashMaxMs != 0F) {
+        output.WriteRawTag(157, 1);
+        output.WriteFloat(HashMaxMs);
+      }
+      if (ResyncChangedCells != 0UL) {
+        output.WriteRawTag(160, 1);
+        output.WriteUInt64(ResyncChangedCells);
+      }
+      if (ResyncUnchangedCells != 0UL) {
+        output.WriteRawTag(168, 1);
+        output.WriteUInt64(ResyncUnchangedCells);
+      }
+      if (TerrainInvalidations != 0UL) {
+        output.WriteRawTag(176, 1);
+        output.WriteUInt64(TerrainInvalidations);
+      }
+      if (_unknownFields != null) {
+        _unknownFields.WriteTo(output);
+      }
+    #endif
+    }
+
+    #if !GOOGLE_PROTOBUF_REFSTRUCT_COMPATIBILITY_MODE
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    void pb::IBufferMessage.InternalWriteTo(ref pb::WriteContext output) {
+      if (RequestId != 0UL) {
+        output.WriteRawTag(8);
+        output.WriteUInt64(RequestId);
+      }
+      if (WindowMs != 0) {
+        output.WriteRawTag(16);
+        output.WriteUInt32(WindowMs);
+      }
+      if (ShardBytes != 0UL) {
+        output.WriteRawTag(24);
+        output.WriteUInt64(ShardBytes);
+      }
+      if (RleRuns != 0UL) {
+        output.WriteRawTag(32);
+        output.WriteUInt64(RleRuns);
+      }
+      if (ExpandedCells != 0UL) {
+        output.WriteRawTag(40);
+        output.WriteUInt64(ExpandedCells);
+      }
+      if (DecodeMs != 0F) {
+        output.WriteRawTag(53);
+        output.WriteFloat(DecodeMs);
+      }
+      if (ApplyMs != 0F) {
+        output.WriteRawTag(61);
+        output.WriteFloat(ApplyMs);
+      }
+      if (CircuitCallbackMs != 0F) {
+        output.WriteRawTag(69);
+        output.WriteFloat(CircuitCallbackMs);
+      }
+      if (FinalDigestMs != 0F) {
+        output.WriteRawTag(77);
+        output.WriteFloat(FinalDigestMs);
+      }
+      if (AppliedParts != 0UL) {
+        output.WriteRawTag(80);
+        output.WriteUInt64(AppliedParts);
+      }
+      if (NoPendingSixFaceRollbacks != 0UL) {
+        output.WriteRawTag(88);
+        output.WriteUInt64(NoPendingSixFaceRollbacks);
+      }
+      if (NoPendingSixFaceRollbackMs != 0F) {
+        output.WriteRawTag(101);
+        output.WriteFloat(NoPendingSixFaceRollbackMs);
+      }
+      if (ChunkLoadEvents != 0UL) {
+        output.WriteRawTag(104);
+        output.WriteUInt64(ChunkLoadEvents);
+      }
+      if (ChunkUnloadEvents != 0UL) {
+        output.WriteRawTag(112);
+        output.WriteUInt64(ChunkUnloadEvents);
+      }
+      if (HashChecks != 0UL) {
+        output.WriteRawTag(120);
+        output.WriteUInt64(HashChecks);
+      }
+      if (HashMatches != 0UL) {
+        output.WriteRawTag(128, 1);
+        output.WriteUInt64(HashMatches);
+      }
+      if (HashMismatches != 0UL) {
+        output.WriteRawTag(136, 1);
+        output.WriteUInt64(HashMismatches);
+      }
+      if (HashMs != 0F) {
+        output.WriteRawTag(149, 1);
+        output.WriteFloat(HashMs);
+      }
+      if (HashMaxMs != 0F) {
+        output.WriteRawTag(157, 1);
+        output.WriteFloat(HashMaxMs);
+      }
+      if (ResyncChangedCells != 0UL) {
+        output.WriteRawTag(160, 1);
+        output.WriteUInt64(ResyncChangedCells);
+      }
+      if (ResyncUnchangedCells != 0UL) {
+        output.WriteRawTag(168, 1);
+        output.WriteUInt64(ResyncUnchangedCells);
+      }
+      if (TerrainInvalidations != 0UL) {
+        output.WriteRawTag(176, 1);
+        output.WriteUInt64(TerrainInvalidations);
+      }
+      if (_unknownFields != null) {
+        _unknownFields.WriteTo(ref output);
+      }
+    }
+    #endif
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public int CalculateSize() {
+      int size = 0;
+      if (RequestId != 0UL) {
+        size += 1 + pb::CodedOutputStream.ComputeUInt64Size(RequestId);
+      }
+      if (WindowMs != 0) {
+        size += 1 + pb::CodedOutputStream.ComputeUInt32Size(WindowMs);
+      }
+      if (ShardBytes != 0UL) {
+        size += 1 + pb::CodedOutputStream.ComputeUInt64Size(ShardBytes);
+      }
+      if (RleRuns != 0UL) {
+        size += 1 + pb::CodedOutputStream.ComputeUInt64Size(RleRuns);
+      }
+      if (ExpandedCells != 0UL) {
+        size += 1 + pb::CodedOutputStream.ComputeUInt64Size(ExpandedCells);
+      }
+      if (DecodeMs != 0F) {
+        size += 1 + 4;
+      }
+      if (ApplyMs != 0F) {
+        size += 1 + 4;
+      }
+      if (CircuitCallbackMs != 0F) {
+        size += 1 + 4;
+      }
+      if (FinalDigestMs != 0F) {
+        size += 1 + 4;
+      }
+      if (AppliedParts != 0UL) {
+        size += 1 + pb::CodedOutputStream.ComputeUInt64Size(AppliedParts);
+      }
+      if (NoPendingSixFaceRollbacks != 0UL) {
+        size += 1 + pb::CodedOutputStream.ComputeUInt64Size(NoPendingSixFaceRollbacks);
+      }
+      if (NoPendingSixFaceRollbackMs != 0F) {
+        size += 1 + 4;
+      }
+      if (ChunkLoadEvents != 0UL) {
+        size += 1 + pb::CodedOutputStream.ComputeUInt64Size(ChunkLoadEvents);
+      }
+      if (ChunkUnloadEvents != 0UL) {
+        size += 1 + pb::CodedOutputStream.ComputeUInt64Size(ChunkUnloadEvents);
+      }
+      if (HashChecks != 0UL) {
+        size += 1 + pb::CodedOutputStream.ComputeUInt64Size(HashChecks);
+      }
+      if (HashMatches != 0UL) {
+        size += 2 + pb::CodedOutputStream.ComputeUInt64Size(HashMatches);
+      }
+      if (HashMismatches != 0UL) {
+        size += 2 + pb::CodedOutputStream.ComputeUInt64Size(HashMismatches);
+      }
+      if (HashMs != 0F) {
+        size += 2 + 4;
+      }
+      if (HashMaxMs != 0F) {
+        size += 2 + 4;
+      }
+      if (ResyncChangedCells != 0UL) {
+        size += 2 + pb::CodedOutputStream.ComputeUInt64Size(ResyncChangedCells);
+      }
+      if (ResyncUnchangedCells != 0UL) {
+        size += 2 + pb::CodedOutputStream.ComputeUInt64Size(ResyncUnchangedCells);
+      }
+      if (TerrainInvalidations != 0UL) {
+        size += 2 + pb::CodedOutputStream.ComputeUInt64Size(TerrainInvalidations);
+      }
+      if (_unknownFields != null) {
+        size += _unknownFields.CalculateSize();
+      }
+      return size;
+    }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public void MergeFrom(TerrainResyncSample other) {
+      if (other == null) {
+        return;
+      }
+      if (other.RequestId != 0UL) {
+        RequestId = other.RequestId;
+      }
+      if (other.WindowMs != 0) {
+        WindowMs = other.WindowMs;
+      }
+      if (other.ShardBytes != 0UL) {
+        ShardBytes = other.ShardBytes;
+      }
+      if (other.RleRuns != 0UL) {
+        RleRuns = other.RleRuns;
+      }
+      if (other.ExpandedCells != 0UL) {
+        ExpandedCells = other.ExpandedCells;
+      }
+      if (other.DecodeMs != 0F) {
+        DecodeMs = other.DecodeMs;
+      }
+      if (other.ApplyMs != 0F) {
+        ApplyMs = other.ApplyMs;
+      }
+      if (other.CircuitCallbackMs != 0F) {
+        CircuitCallbackMs = other.CircuitCallbackMs;
+      }
+      if (other.FinalDigestMs != 0F) {
+        FinalDigestMs = other.FinalDigestMs;
+      }
+      if (other.AppliedParts != 0UL) {
+        AppliedParts = other.AppliedParts;
+      }
+      if (other.NoPendingSixFaceRollbacks != 0UL) {
+        NoPendingSixFaceRollbacks = other.NoPendingSixFaceRollbacks;
+      }
+      if (other.NoPendingSixFaceRollbackMs != 0F) {
+        NoPendingSixFaceRollbackMs = other.NoPendingSixFaceRollbackMs;
+      }
+      if (other.ChunkLoadEvents != 0UL) {
+        ChunkLoadEvents = other.ChunkLoadEvents;
+      }
+      if (other.ChunkUnloadEvents != 0UL) {
+        ChunkUnloadEvents = other.ChunkUnloadEvents;
+      }
+      if (other.HashChecks != 0UL) {
+        HashChecks = other.HashChecks;
+      }
+      if (other.HashMatches != 0UL) {
+        HashMatches = other.HashMatches;
+      }
+      if (other.HashMismatches != 0UL) {
+        HashMismatches = other.HashMismatches;
+      }
+      if (other.HashMs != 0F) {
+        HashMs = other.HashMs;
+      }
+      if (other.HashMaxMs != 0F) {
+        HashMaxMs = other.HashMaxMs;
+      }
+      if (other.ResyncChangedCells != 0UL) {
+        ResyncChangedCells = other.ResyncChangedCells;
+      }
+      if (other.ResyncUnchangedCells != 0UL) {
+        ResyncUnchangedCells = other.ResyncUnchangedCells;
+      }
+      if (other.TerrainInvalidations != 0UL) {
+        TerrainInvalidations = other.TerrainInvalidations;
+      }
+      _unknownFields = pb::UnknownFieldSet.MergeFrom(_unknownFields, other._unknownFields);
+    }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public void MergeFrom(pb::CodedInputStream input) {
+    #if !GOOGLE_PROTOBUF_REFSTRUCT_COMPATIBILITY_MODE
+      input.ReadRawMessage(this);
+    #else
+      uint tag;
+      while ((tag = input.ReadTag()) != 0) {
+      if ((tag & 7) == 4) {
+        // Abort on any end group tag.
+        return;
+      }
+      switch(tag) {
+          default:
+            _unknownFields = pb::UnknownFieldSet.MergeFieldFrom(_unknownFields, input);
+            break;
+          case 8: {
+            RequestId = input.ReadUInt64();
+            break;
+          }
+          case 16: {
+            WindowMs = input.ReadUInt32();
+            break;
+          }
+          case 24: {
+            ShardBytes = input.ReadUInt64();
+            break;
+          }
+          case 32: {
+            RleRuns = input.ReadUInt64();
+            break;
+          }
+          case 40: {
+            ExpandedCells = input.ReadUInt64();
+            break;
+          }
+          case 53: {
+            DecodeMs = input.ReadFloat();
+            break;
+          }
+          case 61: {
+            ApplyMs = input.ReadFloat();
+            break;
+          }
+          case 69: {
+            CircuitCallbackMs = input.ReadFloat();
+            break;
+          }
+          case 77: {
+            FinalDigestMs = input.ReadFloat();
+            break;
+          }
+          case 80: {
+            AppliedParts = input.ReadUInt64();
+            break;
+          }
+          case 88: {
+            NoPendingSixFaceRollbacks = input.ReadUInt64();
+            break;
+          }
+          case 101: {
+            NoPendingSixFaceRollbackMs = input.ReadFloat();
+            break;
+          }
+          case 104: {
+            ChunkLoadEvents = input.ReadUInt64();
+            break;
+          }
+          case 112: {
+            ChunkUnloadEvents = input.ReadUInt64();
+            break;
+          }
+          case 120: {
+            HashChecks = input.ReadUInt64();
+            break;
+          }
+          case 128: {
+            HashMatches = input.ReadUInt64();
+            break;
+          }
+          case 136: {
+            HashMismatches = input.ReadUInt64();
+            break;
+          }
+          case 149: {
+            HashMs = input.ReadFloat();
+            break;
+          }
+          case 157: {
+            HashMaxMs = input.ReadFloat();
+            break;
+          }
+          case 160: {
+            ResyncChangedCells = input.ReadUInt64();
+            break;
+          }
+          case 168: {
+            ResyncUnchangedCells = input.ReadUInt64();
+            break;
+          }
+          case 176: {
+            TerrainInvalidations = input.ReadUInt64();
+            break;
+          }
+        }
+      }
+    #endif
+    }
+
+    #if !GOOGLE_PROTOBUF_REFSTRUCT_COMPATIBILITY_MODE
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    void pb::IBufferMessage.InternalMergeFrom(ref pb::ParseContext input) {
+      uint tag;
+      while ((tag = input.ReadTag()) != 0) {
+      if ((tag & 7) == 4) {
+        // Abort on any end group tag.
+        return;
+      }
+      switch(tag) {
+          default:
+            _unknownFields = pb::UnknownFieldSet.MergeFieldFrom(_unknownFields, ref input);
+            break;
+          case 8: {
+            RequestId = input.ReadUInt64();
+            break;
+          }
+          case 16: {
+            WindowMs = input.ReadUInt32();
+            break;
+          }
+          case 24: {
+            ShardBytes = input.ReadUInt64();
+            break;
+          }
+          case 32: {
+            RleRuns = input.ReadUInt64();
+            break;
+          }
+          case 40: {
+            ExpandedCells = input.ReadUInt64();
+            break;
+          }
+          case 53: {
+            DecodeMs = input.ReadFloat();
+            break;
+          }
+          case 61: {
+            ApplyMs = input.ReadFloat();
+            break;
+          }
+          case 69: {
+            CircuitCallbackMs = input.ReadFloat();
+            break;
+          }
+          case 77: {
+            FinalDigestMs = input.ReadFloat();
+            break;
+          }
+          case 80: {
+            AppliedParts = input.ReadUInt64();
+            break;
+          }
+          case 88: {
+            NoPendingSixFaceRollbacks = input.ReadUInt64();
+            break;
+          }
+          case 101: {
+            NoPendingSixFaceRollbackMs = input.ReadFloat();
+            break;
+          }
+          case 104: {
+            ChunkLoadEvents = input.ReadUInt64();
+            break;
+          }
+          case 112: {
+            ChunkUnloadEvents = input.ReadUInt64();
+            break;
+          }
+          case 120: {
+            HashChecks = input.ReadUInt64();
+            break;
+          }
+          case 128: {
+            HashMatches = input.ReadUInt64();
+            break;
+          }
+          case 136: {
+            HashMismatches = input.ReadUInt64();
+            break;
+          }
+          case 149: {
+            HashMs = input.ReadFloat();
+            break;
+          }
+          case 157: {
+            HashMaxMs = input.ReadFloat();
+            break;
+          }
+          case 160: {
+            ResyncChangedCells = input.ReadUInt64();
+            break;
+          }
+          case 168: {
+            ResyncUnchangedCells = input.ReadUInt64();
+            break;
+          }
+          case 176: {
+            TerrainInvalidations = input.ReadUInt64();
+            break;
+          }
+        }
+      }
+    }
+    #endif
+
+  }
+
   [global::System.Diagnostics.DebuggerDisplayAttribute("{ToString(),nq}")]
   public sealed partial class TerrainSyncSample : pb::IMessage<TerrainSyncSample>
   #if !GOOGLE_PROTOBUF_REFSTRUCT_COMPATIBILITY_MODE
@@ -5056,7 +6209,7 @@ namespace SuMultiplayer.Protocol.Telemetry {
     [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
     [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
     public static pbr::MessageDescriptor Descriptor {
-      get { return global::SuMultiplayer.Protocol.Telemetry.TelemetryReflection.Descriptor.MessageTypes[8]; }
+      get { return global::SuMultiplayer.Protocol.Telemetry.TelemetryReflection.Descriptor.MessageTypes[9]; }
     }
 
     [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
@@ -5089,6 +6242,31 @@ namespace SuMultiplayer.Protocol.Telemetry {
       pendingReports_ = other.pendingReports_;
       pendingMarks_ = other.pendingMarks_;
       pendingClients_ = other.pendingClients_;
+      resyncRuns_ = other.resyncRuns_;
+      resyncExpandedCells_ = other.resyncExpandedCells_;
+      resyncEncodeMs_ = other.resyncEncodeMs_;
+      resyncShardBytes_ = other.resyncShardBytes_;
+      owedSnapshotsQueued_ = other.owedSnapshotsQueued_;
+      owedSnapshotsSkippedNoContent_ = other.owedSnapshotsSkippedNoContent_;
+      topLayerChecks_ = other.topLayerChecks_;
+      topLayerMatches_ = other.topLayerMatches_;
+      topLayerReportsSent_ = other.topLayerReportsSent_;
+      topLayerFixesReceived_ = other.topLayerFixesReceived_;
+      topLayerFixCellsApplied_ = other.topLayerFixCellsApplied_;
+      topLayerFixEscalations_ = other.topLayerFixEscalations_;
+      topLayerUnavailable_ = other.topLayerUnavailable_;
+      digestsDeferredNotStable_ = other.digestsDeferredNotStable_;
+      verdictsStaleSkipped_ = other.verdictsStaleSkipped_;
+      topLayerFixFromMismatch_ = other.topLayerFixFromMismatch_;
+      topLayerFixesSent_ = other.topLayerFixesSent_;
+      topLayerFixSendFailures_ = other.topLayerFixSendFailures_;
+      topLayerConvergeUnreported_ = other.topLayerConvergeUnreported_;
+      staleHealed_ = other.staleHealed_;
+      topLayerFixSkippedNotTopLayer_ = other.topLayerFixSkippedNotTopLayer_;
+      clientHashZeroVerdicts_ = other.clientHashZeroVerdicts_;
+      clientHashZeroSkipped_ = other.clientHashZeroSkipped_;
+      reportsDeferredNotStable_ = other.reportsDeferredNotStable_;
+      topLayerFixSkippedNoClientHash_ = other.topLayerFixSkippedNoClientHash_;
       _unknownFields = pb::UnknownFieldSet.Clone(other._unknownFields);
     }
 
@@ -5254,6 +6432,342 @@ namespace SuMultiplayer.Protocol.Telemetry {
       }
     }
 
+    /// <summary>Field number for the "resync_runs" field.</summary>
+    public const int ResyncRunsFieldNumber = 14;
+    private ulong resyncRuns_;
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public ulong ResyncRuns {
+      get { return resyncRuns_; }
+      set {
+        resyncRuns_ = value;
+      }
+    }
+
+    /// <summary>Field number for the "resync_expanded_cells" field.</summary>
+    public const int ResyncExpandedCellsFieldNumber = 15;
+    private ulong resyncExpandedCells_;
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public ulong ResyncExpandedCells {
+      get { return resyncExpandedCells_; }
+      set {
+        resyncExpandedCells_ = value;
+      }
+    }
+
+    /// <summary>Field number for the "resync_encode_ms" field.</summary>
+    public const int ResyncEncodeMsFieldNumber = 16;
+    private float resyncEncodeMs_;
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public float ResyncEncodeMs {
+      get { return resyncEncodeMs_; }
+      set {
+        resyncEncodeMs_ = value;
+      }
+    }
+
+    /// <summary>Field number for the "resync_shard_bytes" field.</summary>
+    public const int ResyncShardBytesFieldNumber = 17;
+    private ulong resyncShardBytes_;
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public ulong ResyncShardBytes {
+      get { return resyncShardBytes_; }
+      set {
+        resyncShardBytes_ = value;
+      }
+    }
+
+    /// <summary>Field number for the "owed_snapshots_queued" field.</summary>
+    public const int OwedSnapshotsQueuedFieldNumber = 18;
+    private ulong owedSnapshotsQueued_;
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public ulong OwedSnapshotsQueued {
+      get { return owedSnapshotsQueued_; }
+      set {
+        owedSnapshotsQueued_ = value;
+      }
+    }
+
+    /// <summary>Field number for the "owed_snapshots_skipped_no_content" field.</summary>
+    public const int OwedSnapshotsSkippedNoContentFieldNumber = 19;
+    private ulong owedSnapshotsSkippedNoContent_;
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public ulong OwedSnapshotsSkippedNoContent {
+      get { return owedSnapshotsSkippedNoContent_; }
+      set {
+        owedSnapshotsSkippedNoContent_ = value;
+      }
+    }
+
+    /// <summary>Field number for the "top_layer_checks" field.</summary>
+    public const int TopLayerChecksFieldNumber = 20;
+    private ulong topLayerChecks_;
+    /// <summary>
+    /// ---- 顶层摘要校验（16×16 = 256 格；见 doc/chunk-digest-tiered-verify-plan.md）----
+    /// 客户端把"整块回传"降级为"只补顶层差异格"的效果，全部可观测。
+    /// </summary>
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public ulong TopLayerChecks {
+      get { return topLayerChecks_; }
+      set {
+        topLayerChecks_ = value;
+      }
+    }
+
+    /// <summary>Field number for the "top_layer_matches" field.</summary>
+    public const int TopLayerMatchesFieldNumber = 21;
+    private ulong topLayerMatches_;
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public ulong TopLayerMatches {
+      get { return topLayerMatches_; }
+      set {
+        topLayerMatches_ = value;
+      }
+    }
+
+    /// <summary>Field number for the "top_layer_reports_sent" field.</summary>
+    public const int TopLayerReportsSentFieldNumber = 22;
+    private ulong topLayerReportsSent_;
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public ulong TopLayerReportsSent {
+      get { return topLayerReportsSent_; }
+      set {
+        topLayerReportsSent_ = value;
+      }
+    }
+
+    /// <summary>Field number for the "top_layer_fixes_received" field.</summary>
+    public const int TopLayerFixesReceivedFieldNumber = 23;
+    private ulong topLayerFixesReceived_;
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public ulong TopLayerFixesReceived {
+      get { return topLayerFixesReceived_; }
+      set {
+        topLayerFixesReceived_ = value;
+      }
+    }
+
+    /// <summary>Field number for the "top_layer_fix_cells_applied" field.</summary>
+    public const int TopLayerFixCellsAppliedFieldNumber = 24;
+    private ulong topLayerFixCellsApplied_;
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public ulong TopLayerFixCellsApplied {
+      get { return topLayerFixCellsApplied_; }
+      set {
+        topLayerFixCellsApplied_ = value;
+      }
+    }
+
+    /// <summary>Field number for the "top_layer_fix_escalations" field.</summary>
+    public const int TopLayerFixEscalationsFieldNumber = 25;
+    private ulong topLayerFixEscalations_;
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public ulong TopLayerFixEscalations {
+      get { return topLayerFixEscalations_; }
+      set {
+        topLayerFixEscalations_ = value;
+      }
+    }
+
+    /// <summary>Field number for the "top_layer_unavailable" field.</summary>
+    public const int TopLayerUnavailableFieldNumber = 26;
+    private ulong topLayerUnavailable_;
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public ulong TopLayerUnavailable {
+      get { return topLayerUnavailable_; }
+      set {
+        topLayerUnavailable_ = value;
+      }
+    }
+
+    /// <summary>Field number for the "digests_deferred_not_stable" field.</summary>
+    public const int DigestsDeferredNotStableFieldNumber = 27;
+    private ulong digestsDeferredNotStable_;
+    /// <summary>
+    /// ---- 第 6/8 步：内容未定稿 / 迟到的裁决（都不再触发整块回传）----
+    /// </summary>
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public ulong DigestsDeferredNotStable {
+      get { return digestsDeferredNotStable_; }
+      set {
+        digestsDeferredNotStable_ = value;
+      }
+    }
+
+    /// <summary>Field number for the "verdicts_stale_skipped" field.</summary>
+    public const int VerdictsStaleSkippedFieldNumber = 28;
+    private ulong verdictsStaleSkipped_;
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public ulong VerdictsStaleSkipped {
+      get { return verdictsStaleSkipped_; }
+      set {
+        verdictsStaleSkipped_ = value;
+      }
+    }
+
+    /// <summary>Field number for the "top_layer_fix_from_mismatch" field.</summary>
+    public const int TopLayerFixFromMismatchFieldNumber = 29;
+    private ulong topLayerFixFromMismatch_;
+    /// <summary>
+    /// ---- 主机侧：Mismatch 走顶层补丁（而不是整块回传）----
+    /// 这是"缺块 → NotReady → 按需加载 → 顶层比对 → 只补顶层"这条链路的直接证据。
+    /// </summary>
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public ulong TopLayerFixFromMismatch {
+      get { return topLayerFixFromMismatch_; }
+      set {
+        topLayerFixFromMismatch_ = value;
+      }
+    }
+
+    /// <summary>Field number for the "top_layer_fixes_sent" field.</summary>
+    public const int TopLayerFixesSentFieldNumber = 30;
+    private ulong topLayerFixesSent_;
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public ulong TopLayerFixesSent {
+      get { return topLayerFixesSent_; }
+      set {
+        topLayerFixesSent_ = value;
+      }
+    }
+
+    /// <summary>Field number for the "top_layer_fix_send_failures" field.</summary>
+    public const int TopLayerFixSendFailuresFieldNumber = 31;
+    private ulong topLayerFixSendFailures_;
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public ulong TopLayerFixSendFailures {
+      get { return topLayerFixSendFailures_; }
+      set {
+        topLayerFixSendFailures_ = value;
+      }
+    }
+
+    /// <summary>Field number for the "top_layer_converge_unreported" field.</summary>
+    public const int TopLayerConvergeUnreportedFieldNumber = 32;
+    private ulong topLayerConvergeUnreported_;
+    /// <summary>
+    /// ---- 收敛闭环（修"灰框永久残留"）----
+    /// 顶层补丁已收敛、但块不在内存集合导致没能回摘要的次数。
+    /// </summary>
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public ulong TopLayerConvergeUnreported {
+      get { return topLayerConvergeUnreported_; }
+      set {
+        topLayerConvergeUnreported_ = value;
+      }
+    }
+
+    /// <summary>Field number for the "stale_healed" field.</summary>
+    public const int StaleHealedFieldNumber = 33;
+    private ulong staleHealed_;
+    /// <summary>
+    /// 卡在"不一致"超时后被自愈（强制退回未核对 + 重新上报）的块次数。
+    /// </summary>
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public ulong StaleHealed {
+      get { return staleHealed_; }
+      set {
+        staleHealed_ = value;
+      }
+    }
+
+    /// <summary>Field number for the "top_layer_fix_skipped_not_top_layer" field.</summary>
+    public const int TopLayerFixSkippedNotTopLayerFieldNumber = 34;
+    private ulong topLayerFixSkippedNotTopLayer_;
+    /// <summary>
+    /// Mismatch 但顶层并不不同（差异在深处）→ 改走整块回传的次数。
+    /// 不为 0 是正常的（草/流体/树/火焰类差异）；暴涨说明客户端顶层 hash 有问题。
+    /// </summary>
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public ulong TopLayerFixSkippedNotTopLayer {
+      get { return topLayerFixSkippedNotTopLayer_; }
+      set {
+        topLayerFixSkippedNotTopLayer_ = value;
+      }
+    }
+
+    /// <summary>Field number for the "client_hash_zero_verdicts" field.</summary>
+    public const int ClientHashZeroVerdictsFieldNumber = 35;
+    private ulong clientHashZeroVerdicts_;
+    /// <summary>
+    /// ---- clientHash == 0（语义是"客户端未知"，不是"不一致"）----
+    /// 主机：收到 0 并改判 NotReady 的次数（改判前是误判成红框 + 整块回传）。
+    /// </summary>
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public ulong ClientHashZeroVerdicts {
+      get { return clientHashZeroVerdicts_; }
+      set {
+        clientHashZeroVerdicts_ = value;
+      }
+    }
+
+    /// <summary>Field number for the "client_hash_zero_skipped" field.</summary>
+    public const int ClientHashZeroSkippedFieldNumber = 36;
+    private ulong clientHashZeroSkipped_;
+    /// <summary>
+    /// 客户端：算出 / 缓存到 0 因而**没发出去**的次数（不发 0 → 不再被主机误判）。
+    /// </summary>
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public ulong ClientHashZeroSkipped {
+      get { return clientHashZeroSkipped_; }
+      set {
+        clientHashZeroSkipped_ = value;
+      }
+    }
+
+    /// <summary>Field number for the "reports_deferred_not_stable" field.</summary>
+    public const int ReportsDeferredNotStableFieldNumber = 37;
+    private ulong reportsDeferredNotStable_;
+    /// <summary>
+    /// 客户端：发送时因内容未定稿而延后的上报条数（不发 0，下一帧重试）。
+    /// </summary>
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public ulong ReportsDeferredNotStable {
+      get { return reportsDeferredNotStable_; }
+      set {
+        reportsDeferredNotStable_ = value;
+      }
+    }
+
+    /// <summary>Field number for the "top_layer_fix_skipped_no_client_hash" field.</summary>
+    public const int TopLayerFixSkippedNoClientHashFieldNumber = 38;
+    private ulong topLayerFixSkippedNoClientHash_;
+    /// <summary>
+    /// 客户端没带顶层 hash → 主机无法判断差异位置、保守走整块的次数。**应为 0**；
+    /// 不为 0 说明客户端有路径没刷新顶层 hash（就是"红框那一刻卡一下"的根因）。
+    /// </summary>
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public ulong TopLayerFixSkippedNoClientHash {
+      get { return topLayerFixSkippedNoClientHash_; }
+      set {
+        topLayerFixSkippedNoClientHash_ = value;
+      }
+    }
+
     [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
     [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
     public override bool Equals(object other) {
@@ -5282,6 +6796,31 @@ namespace SuMultiplayer.Protocol.Telemetry {
       if (PendingReports != other.PendingReports) return false;
       if (PendingMarks != other.PendingMarks) return false;
       if (PendingClients != other.PendingClients) return false;
+      if (ResyncRuns != other.ResyncRuns) return false;
+      if (ResyncExpandedCells != other.ResyncExpandedCells) return false;
+      if (!pbc::ProtobufEqualityComparers.BitwiseSingleEqualityComparer.Equals(ResyncEncodeMs, other.ResyncEncodeMs)) return false;
+      if (ResyncShardBytes != other.ResyncShardBytes) return false;
+      if (OwedSnapshotsQueued != other.OwedSnapshotsQueued) return false;
+      if (OwedSnapshotsSkippedNoContent != other.OwedSnapshotsSkippedNoContent) return false;
+      if (TopLayerChecks != other.TopLayerChecks) return false;
+      if (TopLayerMatches != other.TopLayerMatches) return false;
+      if (TopLayerReportsSent != other.TopLayerReportsSent) return false;
+      if (TopLayerFixesReceived != other.TopLayerFixesReceived) return false;
+      if (TopLayerFixCellsApplied != other.TopLayerFixCellsApplied) return false;
+      if (TopLayerFixEscalations != other.TopLayerFixEscalations) return false;
+      if (TopLayerUnavailable != other.TopLayerUnavailable) return false;
+      if (DigestsDeferredNotStable != other.DigestsDeferredNotStable) return false;
+      if (VerdictsStaleSkipped != other.VerdictsStaleSkipped) return false;
+      if (TopLayerFixFromMismatch != other.TopLayerFixFromMismatch) return false;
+      if (TopLayerFixesSent != other.TopLayerFixesSent) return false;
+      if (TopLayerFixSendFailures != other.TopLayerFixSendFailures) return false;
+      if (TopLayerConvergeUnreported != other.TopLayerConvergeUnreported) return false;
+      if (StaleHealed != other.StaleHealed) return false;
+      if (TopLayerFixSkippedNotTopLayer != other.TopLayerFixSkippedNotTopLayer) return false;
+      if (ClientHashZeroVerdicts != other.ClientHashZeroVerdicts) return false;
+      if (ClientHashZeroSkipped != other.ClientHashZeroSkipped) return false;
+      if (ReportsDeferredNotStable != other.ReportsDeferredNotStable) return false;
+      if (TopLayerFixSkippedNoClientHash != other.TopLayerFixSkippedNoClientHash) return false;
       return Equals(_unknownFields, other._unknownFields);
     }
 
@@ -5302,6 +6841,31 @@ namespace SuMultiplayer.Protocol.Telemetry {
       if (PendingReports != 0) hash ^= PendingReports.GetHashCode();
       if (PendingMarks != 0) hash ^= PendingMarks.GetHashCode();
       if (PendingClients != 0) hash ^= PendingClients.GetHashCode();
+      if (ResyncRuns != 0UL) hash ^= ResyncRuns.GetHashCode();
+      if (ResyncExpandedCells != 0UL) hash ^= ResyncExpandedCells.GetHashCode();
+      if (ResyncEncodeMs != 0F) hash ^= pbc::ProtobufEqualityComparers.BitwiseSingleEqualityComparer.GetHashCode(ResyncEncodeMs);
+      if (ResyncShardBytes != 0UL) hash ^= ResyncShardBytes.GetHashCode();
+      if (OwedSnapshotsQueued != 0UL) hash ^= OwedSnapshotsQueued.GetHashCode();
+      if (OwedSnapshotsSkippedNoContent != 0UL) hash ^= OwedSnapshotsSkippedNoContent.GetHashCode();
+      if (TopLayerChecks != 0UL) hash ^= TopLayerChecks.GetHashCode();
+      if (TopLayerMatches != 0UL) hash ^= TopLayerMatches.GetHashCode();
+      if (TopLayerReportsSent != 0UL) hash ^= TopLayerReportsSent.GetHashCode();
+      if (TopLayerFixesReceived != 0UL) hash ^= TopLayerFixesReceived.GetHashCode();
+      if (TopLayerFixCellsApplied != 0UL) hash ^= TopLayerFixCellsApplied.GetHashCode();
+      if (TopLayerFixEscalations != 0UL) hash ^= TopLayerFixEscalations.GetHashCode();
+      if (TopLayerUnavailable != 0UL) hash ^= TopLayerUnavailable.GetHashCode();
+      if (DigestsDeferredNotStable != 0UL) hash ^= DigestsDeferredNotStable.GetHashCode();
+      if (VerdictsStaleSkipped != 0UL) hash ^= VerdictsStaleSkipped.GetHashCode();
+      if (TopLayerFixFromMismatch != 0UL) hash ^= TopLayerFixFromMismatch.GetHashCode();
+      if (TopLayerFixesSent != 0UL) hash ^= TopLayerFixesSent.GetHashCode();
+      if (TopLayerFixSendFailures != 0UL) hash ^= TopLayerFixSendFailures.GetHashCode();
+      if (TopLayerConvergeUnreported != 0UL) hash ^= TopLayerConvergeUnreported.GetHashCode();
+      if (StaleHealed != 0UL) hash ^= StaleHealed.GetHashCode();
+      if (TopLayerFixSkippedNotTopLayer != 0UL) hash ^= TopLayerFixSkippedNotTopLayer.GetHashCode();
+      if (ClientHashZeroVerdicts != 0UL) hash ^= ClientHashZeroVerdicts.GetHashCode();
+      if (ClientHashZeroSkipped != 0UL) hash ^= ClientHashZeroSkipped.GetHashCode();
+      if (ReportsDeferredNotStable != 0UL) hash ^= ReportsDeferredNotStable.GetHashCode();
+      if (TopLayerFixSkippedNoClientHash != 0UL) hash ^= TopLayerFixSkippedNoClientHash.GetHashCode();
       if (_unknownFields != null) {
         hash ^= _unknownFields.GetHashCode();
       }
@@ -5372,6 +6936,106 @@ namespace SuMultiplayer.Protocol.Telemetry {
         output.WriteRawTag(104);
         output.WriteUInt32(PendingClients);
       }
+      if (ResyncRuns != 0UL) {
+        output.WriteRawTag(112);
+        output.WriteUInt64(ResyncRuns);
+      }
+      if (ResyncExpandedCells != 0UL) {
+        output.WriteRawTag(120);
+        output.WriteUInt64(ResyncExpandedCells);
+      }
+      if (ResyncEncodeMs != 0F) {
+        output.WriteRawTag(133, 1);
+        output.WriteFloat(ResyncEncodeMs);
+      }
+      if (ResyncShardBytes != 0UL) {
+        output.WriteRawTag(136, 1);
+        output.WriteUInt64(ResyncShardBytes);
+      }
+      if (OwedSnapshotsQueued != 0UL) {
+        output.WriteRawTag(144, 1);
+        output.WriteUInt64(OwedSnapshotsQueued);
+      }
+      if (OwedSnapshotsSkippedNoContent != 0UL) {
+        output.WriteRawTag(152, 1);
+        output.WriteUInt64(OwedSnapshotsSkippedNoContent);
+      }
+      if (TopLayerChecks != 0UL) {
+        output.WriteRawTag(160, 1);
+        output.WriteUInt64(TopLayerChecks);
+      }
+      if (TopLayerMatches != 0UL) {
+        output.WriteRawTag(168, 1);
+        output.WriteUInt64(TopLayerMatches);
+      }
+      if (TopLayerReportsSent != 0UL) {
+        output.WriteRawTag(176, 1);
+        output.WriteUInt64(TopLayerReportsSent);
+      }
+      if (TopLayerFixesReceived != 0UL) {
+        output.WriteRawTag(184, 1);
+        output.WriteUInt64(TopLayerFixesReceived);
+      }
+      if (TopLayerFixCellsApplied != 0UL) {
+        output.WriteRawTag(192, 1);
+        output.WriteUInt64(TopLayerFixCellsApplied);
+      }
+      if (TopLayerFixEscalations != 0UL) {
+        output.WriteRawTag(200, 1);
+        output.WriteUInt64(TopLayerFixEscalations);
+      }
+      if (TopLayerUnavailable != 0UL) {
+        output.WriteRawTag(208, 1);
+        output.WriteUInt64(TopLayerUnavailable);
+      }
+      if (DigestsDeferredNotStable != 0UL) {
+        output.WriteRawTag(216, 1);
+        output.WriteUInt64(DigestsDeferredNotStable);
+      }
+      if (VerdictsStaleSkipped != 0UL) {
+        output.WriteRawTag(224, 1);
+        output.WriteUInt64(VerdictsStaleSkipped);
+      }
+      if (TopLayerFixFromMismatch != 0UL) {
+        output.WriteRawTag(232, 1);
+        output.WriteUInt64(TopLayerFixFromMismatch);
+      }
+      if (TopLayerFixesSent != 0UL) {
+        output.WriteRawTag(240, 1);
+        output.WriteUInt64(TopLayerFixesSent);
+      }
+      if (TopLayerFixSendFailures != 0UL) {
+        output.WriteRawTag(248, 1);
+        output.WriteUInt64(TopLayerFixSendFailures);
+      }
+      if (TopLayerConvergeUnreported != 0UL) {
+        output.WriteRawTag(128, 2);
+        output.WriteUInt64(TopLayerConvergeUnreported);
+      }
+      if (StaleHealed != 0UL) {
+        output.WriteRawTag(136, 2);
+        output.WriteUInt64(StaleHealed);
+      }
+      if (TopLayerFixSkippedNotTopLayer != 0UL) {
+        output.WriteRawTag(144, 2);
+        output.WriteUInt64(TopLayerFixSkippedNotTopLayer);
+      }
+      if (ClientHashZeroVerdicts != 0UL) {
+        output.WriteRawTag(152, 2);
+        output.WriteUInt64(ClientHashZeroVerdicts);
+      }
+      if (ClientHashZeroSkipped != 0UL) {
+        output.WriteRawTag(160, 2);
+        output.WriteUInt64(ClientHashZeroSkipped);
+      }
+      if (ReportsDeferredNotStable != 0UL) {
+        output.WriteRawTag(168, 2);
+        output.WriteUInt64(ReportsDeferredNotStable);
+      }
+      if (TopLayerFixSkippedNoClientHash != 0UL) {
+        output.WriteRawTag(176, 2);
+        output.WriteUInt64(TopLayerFixSkippedNoClientHash);
+      }
       if (_unknownFields != null) {
         _unknownFields.WriteTo(output);
       }
@@ -5434,6 +7098,106 @@ namespace SuMultiplayer.Protocol.Telemetry {
         output.WriteRawTag(104);
         output.WriteUInt32(PendingClients);
       }
+      if (ResyncRuns != 0UL) {
+        output.WriteRawTag(112);
+        output.WriteUInt64(ResyncRuns);
+      }
+      if (ResyncExpandedCells != 0UL) {
+        output.WriteRawTag(120);
+        output.WriteUInt64(ResyncExpandedCells);
+      }
+      if (ResyncEncodeMs != 0F) {
+        output.WriteRawTag(133, 1);
+        output.WriteFloat(ResyncEncodeMs);
+      }
+      if (ResyncShardBytes != 0UL) {
+        output.WriteRawTag(136, 1);
+        output.WriteUInt64(ResyncShardBytes);
+      }
+      if (OwedSnapshotsQueued != 0UL) {
+        output.WriteRawTag(144, 1);
+        output.WriteUInt64(OwedSnapshotsQueued);
+      }
+      if (OwedSnapshotsSkippedNoContent != 0UL) {
+        output.WriteRawTag(152, 1);
+        output.WriteUInt64(OwedSnapshotsSkippedNoContent);
+      }
+      if (TopLayerChecks != 0UL) {
+        output.WriteRawTag(160, 1);
+        output.WriteUInt64(TopLayerChecks);
+      }
+      if (TopLayerMatches != 0UL) {
+        output.WriteRawTag(168, 1);
+        output.WriteUInt64(TopLayerMatches);
+      }
+      if (TopLayerReportsSent != 0UL) {
+        output.WriteRawTag(176, 1);
+        output.WriteUInt64(TopLayerReportsSent);
+      }
+      if (TopLayerFixesReceived != 0UL) {
+        output.WriteRawTag(184, 1);
+        output.WriteUInt64(TopLayerFixesReceived);
+      }
+      if (TopLayerFixCellsApplied != 0UL) {
+        output.WriteRawTag(192, 1);
+        output.WriteUInt64(TopLayerFixCellsApplied);
+      }
+      if (TopLayerFixEscalations != 0UL) {
+        output.WriteRawTag(200, 1);
+        output.WriteUInt64(TopLayerFixEscalations);
+      }
+      if (TopLayerUnavailable != 0UL) {
+        output.WriteRawTag(208, 1);
+        output.WriteUInt64(TopLayerUnavailable);
+      }
+      if (DigestsDeferredNotStable != 0UL) {
+        output.WriteRawTag(216, 1);
+        output.WriteUInt64(DigestsDeferredNotStable);
+      }
+      if (VerdictsStaleSkipped != 0UL) {
+        output.WriteRawTag(224, 1);
+        output.WriteUInt64(VerdictsStaleSkipped);
+      }
+      if (TopLayerFixFromMismatch != 0UL) {
+        output.WriteRawTag(232, 1);
+        output.WriteUInt64(TopLayerFixFromMismatch);
+      }
+      if (TopLayerFixesSent != 0UL) {
+        output.WriteRawTag(240, 1);
+        output.WriteUInt64(TopLayerFixesSent);
+      }
+      if (TopLayerFixSendFailures != 0UL) {
+        output.WriteRawTag(248, 1);
+        output.WriteUInt64(TopLayerFixSendFailures);
+      }
+      if (TopLayerConvergeUnreported != 0UL) {
+        output.WriteRawTag(128, 2);
+        output.WriteUInt64(TopLayerConvergeUnreported);
+      }
+      if (StaleHealed != 0UL) {
+        output.WriteRawTag(136, 2);
+        output.WriteUInt64(StaleHealed);
+      }
+      if (TopLayerFixSkippedNotTopLayer != 0UL) {
+        output.WriteRawTag(144, 2);
+        output.WriteUInt64(TopLayerFixSkippedNotTopLayer);
+      }
+      if (ClientHashZeroVerdicts != 0UL) {
+        output.WriteRawTag(152, 2);
+        output.WriteUInt64(ClientHashZeroVerdicts);
+      }
+      if (ClientHashZeroSkipped != 0UL) {
+        output.WriteRawTag(160, 2);
+        output.WriteUInt64(ClientHashZeroSkipped);
+      }
+      if (ReportsDeferredNotStable != 0UL) {
+        output.WriteRawTag(168, 2);
+        output.WriteUInt64(ReportsDeferredNotStable);
+      }
+      if (TopLayerFixSkippedNoClientHash != 0UL) {
+        output.WriteRawTag(176, 2);
+        output.WriteUInt64(TopLayerFixSkippedNoClientHash);
+      }
       if (_unknownFields != null) {
         _unknownFields.WriteTo(ref output);
       }
@@ -5482,6 +7246,81 @@ namespace SuMultiplayer.Protocol.Telemetry {
       }
       if (PendingClients != 0) {
         size += 1 + pb::CodedOutputStream.ComputeUInt32Size(PendingClients);
+      }
+      if (ResyncRuns != 0UL) {
+        size += 1 + pb::CodedOutputStream.ComputeUInt64Size(ResyncRuns);
+      }
+      if (ResyncExpandedCells != 0UL) {
+        size += 1 + pb::CodedOutputStream.ComputeUInt64Size(ResyncExpandedCells);
+      }
+      if (ResyncEncodeMs != 0F) {
+        size += 2 + 4;
+      }
+      if (ResyncShardBytes != 0UL) {
+        size += 2 + pb::CodedOutputStream.ComputeUInt64Size(ResyncShardBytes);
+      }
+      if (OwedSnapshotsQueued != 0UL) {
+        size += 2 + pb::CodedOutputStream.ComputeUInt64Size(OwedSnapshotsQueued);
+      }
+      if (OwedSnapshotsSkippedNoContent != 0UL) {
+        size += 2 + pb::CodedOutputStream.ComputeUInt64Size(OwedSnapshotsSkippedNoContent);
+      }
+      if (TopLayerChecks != 0UL) {
+        size += 2 + pb::CodedOutputStream.ComputeUInt64Size(TopLayerChecks);
+      }
+      if (TopLayerMatches != 0UL) {
+        size += 2 + pb::CodedOutputStream.ComputeUInt64Size(TopLayerMatches);
+      }
+      if (TopLayerReportsSent != 0UL) {
+        size += 2 + pb::CodedOutputStream.ComputeUInt64Size(TopLayerReportsSent);
+      }
+      if (TopLayerFixesReceived != 0UL) {
+        size += 2 + pb::CodedOutputStream.ComputeUInt64Size(TopLayerFixesReceived);
+      }
+      if (TopLayerFixCellsApplied != 0UL) {
+        size += 2 + pb::CodedOutputStream.ComputeUInt64Size(TopLayerFixCellsApplied);
+      }
+      if (TopLayerFixEscalations != 0UL) {
+        size += 2 + pb::CodedOutputStream.ComputeUInt64Size(TopLayerFixEscalations);
+      }
+      if (TopLayerUnavailable != 0UL) {
+        size += 2 + pb::CodedOutputStream.ComputeUInt64Size(TopLayerUnavailable);
+      }
+      if (DigestsDeferredNotStable != 0UL) {
+        size += 2 + pb::CodedOutputStream.ComputeUInt64Size(DigestsDeferredNotStable);
+      }
+      if (VerdictsStaleSkipped != 0UL) {
+        size += 2 + pb::CodedOutputStream.ComputeUInt64Size(VerdictsStaleSkipped);
+      }
+      if (TopLayerFixFromMismatch != 0UL) {
+        size += 2 + pb::CodedOutputStream.ComputeUInt64Size(TopLayerFixFromMismatch);
+      }
+      if (TopLayerFixesSent != 0UL) {
+        size += 2 + pb::CodedOutputStream.ComputeUInt64Size(TopLayerFixesSent);
+      }
+      if (TopLayerFixSendFailures != 0UL) {
+        size += 2 + pb::CodedOutputStream.ComputeUInt64Size(TopLayerFixSendFailures);
+      }
+      if (TopLayerConvergeUnreported != 0UL) {
+        size += 2 + pb::CodedOutputStream.ComputeUInt64Size(TopLayerConvergeUnreported);
+      }
+      if (StaleHealed != 0UL) {
+        size += 2 + pb::CodedOutputStream.ComputeUInt64Size(StaleHealed);
+      }
+      if (TopLayerFixSkippedNotTopLayer != 0UL) {
+        size += 2 + pb::CodedOutputStream.ComputeUInt64Size(TopLayerFixSkippedNotTopLayer);
+      }
+      if (ClientHashZeroVerdicts != 0UL) {
+        size += 2 + pb::CodedOutputStream.ComputeUInt64Size(ClientHashZeroVerdicts);
+      }
+      if (ClientHashZeroSkipped != 0UL) {
+        size += 2 + pb::CodedOutputStream.ComputeUInt64Size(ClientHashZeroSkipped);
+      }
+      if (ReportsDeferredNotStable != 0UL) {
+        size += 2 + pb::CodedOutputStream.ComputeUInt64Size(ReportsDeferredNotStable);
+      }
+      if (TopLayerFixSkippedNoClientHash != 0UL) {
+        size += 2 + pb::CodedOutputStream.ComputeUInt64Size(TopLayerFixSkippedNoClientHash);
       }
       if (_unknownFields != null) {
         size += _unknownFields.CalculateSize();
@@ -5533,6 +7372,81 @@ namespace SuMultiplayer.Protocol.Telemetry {
       }
       if (other.PendingClients != 0) {
         PendingClients = other.PendingClients;
+      }
+      if (other.ResyncRuns != 0UL) {
+        ResyncRuns = other.ResyncRuns;
+      }
+      if (other.ResyncExpandedCells != 0UL) {
+        ResyncExpandedCells = other.ResyncExpandedCells;
+      }
+      if (other.ResyncEncodeMs != 0F) {
+        ResyncEncodeMs = other.ResyncEncodeMs;
+      }
+      if (other.ResyncShardBytes != 0UL) {
+        ResyncShardBytes = other.ResyncShardBytes;
+      }
+      if (other.OwedSnapshotsQueued != 0UL) {
+        OwedSnapshotsQueued = other.OwedSnapshotsQueued;
+      }
+      if (other.OwedSnapshotsSkippedNoContent != 0UL) {
+        OwedSnapshotsSkippedNoContent = other.OwedSnapshotsSkippedNoContent;
+      }
+      if (other.TopLayerChecks != 0UL) {
+        TopLayerChecks = other.TopLayerChecks;
+      }
+      if (other.TopLayerMatches != 0UL) {
+        TopLayerMatches = other.TopLayerMatches;
+      }
+      if (other.TopLayerReportsSent != 0UL) {
+        TopLayerReportsSent = other.TopLayerReportsSent;
+      }
+      if (other.TopLayerFixesReceived != 0UL) {
+        TopLayerFixesReceived = other.TopLayerFixesReceived;
+      }
+      if (other.TopLayerFixCellsApplied != 0UL) {
+        TopLayerFixCellsApplied = other.TopLayerFixCellsApplied;
+      }
+      if (other.TopLayerFixEscalations != 0UL) {
+        TopLayerFixEscalations = other.TopLayerFixEscalations;
+      }
+      if (other.TopLayerUnavailable != 0UL) {
+        TopLayerUnavailable = other.TopLayerUnavailable;
+      }
+      if (other.DigestsDeferredNotStable != 0UL) {
+        DigestsDeferredNotStable = other.DigestsDeferredNotStable;
+      }
+      if (other.VerdictsStaleSkipped != 0UL) {
+        VerdictsStaleSkipped = other.VerdictsStaleSkipped;
+      }
+      if (other.TopLayerFixFromMismatch != 0UL) {
+        TopLayerFixFromMismatch = other.TopLayerFixFromMismatch;
+      }
+      if (other.TopLayerFixesSent != 0UL) {
+        TopLayerFixesSent = other.TopLayerFixesSent;
+      }
+      if (other.TopLayerFixSendFailures != 0UL) {
+        TopLayerFixSendFailures = other.TopLayerFixSendFailures;
+      }
+      if (other.TopLayerConvergeUnreported != 0UL) {
+        TopLayerConvergeUnreported = other.TopLayerConvergeUnreported;
+      }
+      if (other.StaleHealed != 0UL) {
+        StaleHealed = other.StaleHealed;
+      }
+      if (other.TopLayerFixSkippedNotTopLayer != 0UL) {
+        TopLayerFixSkippedNotTopLayer = other.TopLayerFixSkippedNotTopLayer;
+      }
+      if (other.ClientHashZeroVerdicts != 0UL) {
+        ClientHashZeroVerdicts = other.ClientHashZeroVerdicts;
+      }
+      if (other.ClientHashZeroSkipped != 0UL) {
+        ClientHashZeroSkipped = other.ClientHashZeroSkipped;
+      }
+      if (other.ReportsDeferredNotStable != 0UL) {
+        ReportsDeferredNotStable = other.ReportsDeferredNotStable;
+      }
+      if (other.TopLayerFixSkippedNoClientHash != 0UL) {
+        TopLayerFixSkippedNoClientHash = other.TopLayerFixSkippedNoClientHash;
       }
       _unknownFields = pb::UnknownFieldSet.MergeFrom(_unknownFields, other._unknownFields);
     }
@@ -5603,6 +7517,106 @@ namespace SuMultiplayer.Protocol.Telemetry {
           }
           case 104: {
             PendingClients = input.ReadUInt32();
+            break;
+          }
+          case 112: {
+            ResyncRuns = input.ReadUInt64();
+            break;
+          }
+          case 120: {
+            ResyncExpandedCells = input.ReadUInt64();
+            break;
+          }
+          case 133: {
+            ResyncEncodeMs = input.ReadFloat();
+            break;
+          }
+          case 136: {
+            ResyncShardBytes = input.ReadUInt64();
+            break;
+          }
+          case 144: {
+            OwedSnapshotsQueued = input.ReadUInt64();
+            break;
+          }
+          case 152: {
+            OwedSnapshotsSkippedNoContent = input.ReadUInt64();
+            break;
+          }
+          case 160: {
+            TopLayerChecks = input.ReadUInt64();
+            break;
+          }
+          case 168: {
+            TopLayerMatches = input.ReadUInt64();
+            break;
+          }
+          case 176: {
+            TopLayerReportsSent = input.ReadUInt64();
+            break;
+          }
+          case 184: {
+            TopLayerFixesReceived = input.ReadUInt64();
+            break;
+          }
+          case 192: {
+            TopLayerFixCellsApplied = input.ReadUInt64();
+            break;
+          }
+          case 200: {
+            TopLayerFixEscalations = input.ReadUInt64();
+            break;
+          }
+          case 208: {
+            TopLayerUnavailable = input.ReadUInt64();
+            break;
+          }
+          case 216: {
+            DigestsDeferredNotStable = input.ReadUInt64();
+            break;
+          }
+          case 224: {
+            VerdictsStaleSkipped = input.ReadUInt64();
+            break;
+          }
+          case 232: {
+            TopLayerFixFromMismatch = input.ReadUInt64();
+            break;
+          }
+          case 240: {
+            TopLayerFixesSent = input.ReadUInt64();
+            break;
+          }
+          case 248: {
+            TopLayerFixSendFailures = input.ReadUInt64();
+            break;
+          }
+          case 256: {
+            TopLayerConvergeUnreported = input.ReadUInt64();
+            break;
+          }
+          case 264: {
+            StaleHealed = input.ReadUInt64();
+            break;
+          }
+          case 272: {
+            TopLayerFixSkippedNotTopLayer = input.ReadUInt64();
+            break;
+          }
+          case 280: {
+            ClientHashZeroVerdicts = input.ReadUInt64();
+            break;
+          }
+          case 288: {
+            ClientHashZeroSkipped = input.ReadUInt64();
+            break;
+          }
+          case 296: {
+            ReportsDeferredNotStable = input.ReadUInt64();
+            break;
+          }
+          case 304: {
+            TopLayerFixSkippedNoClientHash = input.ReadUInt64();
             break;
           }
         }
@@ -5676,6 +7690,106 @@ namespace SuMultiplayer.Protocol.Telemetry {
             PendingClients = input.ReadUInt32();
             break;
           }
+          case 112: {
+            ResyncRuns = input.ReadUInt64();
+            break;
+          }
+          case 120: {
+            ResyncExpandedCells = input.ReadUInt64();
+            break;
+          }
+          case 133: {
+            ResyncEncodeMs = input.ReadFloat();
+            break;
+          }
+          case 136: {
+            ResyncShardBytes = input.ReadUInt64();
+            break;
+          }
+          case 144: {
+            OwedSnapshotsQueued = input.ReadUInt64();
+            break;
+          }
+          case 152: {
+            OwedSnapshotsSkippedNoContent = input.ReadUInt64();
+            break;
+          }
+          case 160: {
+            TopLayerChecks = input.ReadUInt64();
+            break;
+          }
+          case 168: {
+            TopLayerMatches = input.ReadUInt64();
+            break;
+          }
+          case 176: {
+            TopLayerReportsSent = input.ReadUInt64();
+            break;
+          }
+          case 184: {
+            TopLayerFixesReceived = input.ReadUInt64();
+            break;
+          }
+          case 192: {
+            TopLayerFixCellsApplied = input.ReadUInt64();
+            break;
+          }
+          case 200: {
+            TopLayerFixEscalations = input.ReadUInt64();
+            break;
+          }
+          case 208: {
+            TopLayerUnavailable = input.ReadUInt64();
+            break;
+          }
+          case 216: {
+            DigestsDeferredNotStable = input.ReadUInt64();
+            break;
+          }
+          case 224: {
+            VerdictsStaleSkipped = input.ReadUInt64();
+            break;
+          }
+          case 232: {
+            TopLayerFixFromMismatch = input.ReadUInt64();
+            break;
+          }
+          case 240: {
+            TopLayerFixesSent = input.ReadUInt64();
+            break;
+          }
+          case 248: {
+            TopLayerFixSendFailures = input.ReadUInt64();
+            break;
+          }
+          case 256: {
+            TopLayerConvergeUnreported = input.ReadUInt64();
+            break;
+          }
+          case 264: {
+            StaleHealed = input.ReadUInt64();
+            break;
+          }
+          case 272: {
+            TopLayerFixSkippedNotTopLayer = input.ReadUInt64();
+            break;
+          }
+          case 280: {
+            ClientHashZeroVerdicts = input.ReadUInt64();
+            break;
+          }
+          case 288: {
+            ClientHashZeroSkipped = input.ReadUInt64();
+            break;
+          }
+          case 296: {
+            ReportsDeferredNotStable = input.ReadUInt64();
+            break;
+          }
+          case 304: {
+            TopLayerFixSkippedNoClientHash = input.ReadUInt64();
+            break;
+          }
         }
       }
     }
@@ -5698,7 +7812,7 @@ namespace SuMultiplayer.Protocol.Telemetry {
     [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
     [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
     public static pbr::MessageDescriptor Descriptor {
-      get { return global::SuMultiplayer.Protocol.Telemetry.TelemetryReflection.Descriptor.MessageTypes[9]; }
+      get { return global::SuMultiplayer.Protocol.Telemetry.TelemetryReflection.Descriptor.MessageTypes[10]; }
     }
 
     [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
@@ -6368,7 +8482,7 @@ namespace SuMultiplayer.Protocol.Telemetry {
     [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
     [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
     public static pbr::MessageDescriptor Descriptor {
-      get { return global::SuMultiplayer.Protocol.Telemetry.TelemetryReflection.Descriptor.MessageTypes[10]; }
+      get { return global::SuMultiplayer.Protocol.Telemetry.TelemetryReflection.Descriptor.MessageTypes[11]; }
     }
 
     [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
@@ -6390,6 +8504,7 @@ namespace SuMultiplayer.Protocol.Telemetry {
     public ClientRuntimeTelemetry(ClientRuntimeTelemetry other) : this() {
       runtime_ = other.runtime_ != null ? other.runtime_.Clone() : null;
       circuit_ = other.circuit_ != null ? other.circuit_.Clone() : null;
+      terrain_ = other.terrain_ != null ? other.terrain_.Clone() : null;
       _unknownFields = pb::UnknownFieldSet.Clone(other._unknownFields);
     }
 
@@ -6423,6 +8538,25 @@ namespace SuMultiplayer.Protocol.Telemetry {
       }
     }
 
+    /// <summary>Field number for the "terrain" field.</summary>
+    public const int TerrainFieldNumber = 3;
+    private global::SuMultiplayer.Protocol.Telemetry.TerrainSyncSample terrain_;
+    /// <summary>
+    /// 客户端自己的地形同步计数（原来只在客户端本地，主机看不到）。
+    /// 顶层摘要校验的效果 + 第 6/8 步的拦截量都必须在这里才到得了 LiveMap：
+    /// 主机侧不做顶层校验（m_topLayerChecks 在 TerrainSyncClient 里），
+    /// 所以 TerrainSyncSample 里那 9 个字段对主机恒为 0。
+    /// 见 doc/chunk-digest-tiered-verify-plan.md。
+    /// </summary>
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public global::SuMultiplayer.Protocol.Telemetry.TerrainSyncSample Terrain {
+      get { return terrain_; }
+      set {
+        terrain_ = value;
+      }
+    }
+
     [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
     [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
     public override bool Equals(object other) {
@@ -6440,6 +8574,7 @@ namespace SuMultiplayer.Protocol.Telemetry {
       }
       if (!object.Equals(Runtime, other.Runtime)) return false;
       if (!object.Equals(Circuit, other.Circuit)) return false;
+      if (!object.Equals(Terrain, other.Terrain)) return false;
       return Equals(_unknownFields, other._unknownFields);
     }
 
@@ -6449,6 +8584,7 @@ namespace SuMultiplayer.Protocol.Telemetry {
       int hash = 1;
       if (runtime_ != null) hash ^= Runtime.GetHashCode();
       if (circuit_ != null) hash ^= Circuit.GetHashCode();
+      if (terrain_ != null) hash ^= Terrain.GetHashCode();
       if (_unknownFields != null) {
         hash ^= _unknownFields.GetHashCode();
       }
@@ -6475,6 +8611,10 @@ namespace SuMultiplayer.Protocol.Telemetry {
         output.WriteRawTag(18);
         output.WriteMessage(Circuit);
       }
+      if (terrain_ != null) {
+        output.WriteRawTag(26);
+        output.WriteMessage(Terrain);
+      }
       if (_unknownFields != null) {
         _unknownFields.WriteTo(output);
       }
@@ -6493,6 +8633,10 @@ namespace SuMultiplayer.Protocol.Telemetry {
         output.WriteRawTag(18);
         output.WriteMessage(Circuit);
       }
+      if (terrain_ != null) {
+        output.WriteRawTag(26);
+        output.WriteMessage(Terrain);
+      }
       if (_unknownFields != null) {
         _unknownFields.WriteTo(ref output);
       }
@@ -6508,6 +8652,9 @@ namespace SuMultiplayer.Protocol.Telemetry {
       }
       if (circuit_ != null) {
         size += 1 + pb::CodedOutputStream.ComputeMessageSize(Circuit);
+      }
+      if (terrain_ != null) {
+        size += 1 + pb::CodedOutputStream.ComputeMessageSize(Terrain);
       }
       if (_unknownFields != null) {
         size += _unknownFields.CalculateSize();
@@ -6532,6 +8679,12 @@ namespace SuMultiplayer.Protocol.Telemetry {
           Circuit = new global::SuMultiplayer.Protocol.Telemetry.ClientCircuitSample();
         }
         Circuit.MergeFrom(other.Circuit);
+      }
+      if (other.terrain_ != null) {
+        if (terrain_ == null) {
+          Terrain = new global::SuMultiplayer.Protocol.Telemetry.TerrainSyncSample();
+        }
+        Terrain.MergeFrom(other.Terrain);
       }
       _unknownFields = pb::UnknownFieldSet.MergeFrom(_unknownFields, other._unknownFields);
     }
@@ -6566,6 +8719,13 @@ namespace SuMultiplayer.Protocol.Telemetry {
             input.ReadMessage(Circuit);
             break;
           }
+          case 26: {
+            if (terrain_ == null) {
+              Terrain = new global::SuMultiplayer.Protocol.Telemetry.TerrainSyncSample();
+            }
+            input.ReadMessage(Terrain);
+            break;
+          }
         }
       }
     #endif
@@ -6597,6 +8757,461 @@ namespace SuMultiplayer.Protocol.Telemetry {
               Circuit = new global::SuMultiplayer.Protocol.Telemetry.ClientCircuitSample();
             }
             input.ReadMessage(Circuit);
+            break;
+          }
+          case 26: {
+            if (terrain_ == null) {
+              Terrain = new global::SuMultiplayer.Protocol.Telemetry.TerrainSyncSample();
+            }
+            input.ReadMessage(Terrain);
+            break;
+          }
+        }
+      }
+    }
+    #endif
+
+  }
+
+  /// <summary>
+  /// Host -> client: capture terrain resync diagnostics for a bounded window.
+  /// </summary>
+  [global::System.Diagnostics.DebuggerDisplayAttribute("{ToString(),nq}")]
+  public sealed partial class TerrainDiagnosticControl : pb::IMessage<TerrainDiagnosticControl>
+  #if !GOOGLE_PROTOBUF_REFSTRUCT_COMPATIBILITY_MODE
+      , pb::IBufferMessage
+  #endif
+  {
+    private static readonly pb::MessageParser<TerrainDiagnosticControl> _parser = new pb::MessageParser<TerrainDiagnosticControl>(() => new TerrainDiagnosticControl());
+    private pb::UnknownFieldSet _unknownFields;
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public static pb::MessageParser<TerrainDiagnosticControl> Parser { get { return _parser; } }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public static pbr::MessageDescriptor Descriptor {
+      get { return global::SuMultiplayer.Protocol.Telemetry.TelemetryReflection.Descriptor.MessageTypes[12]; }
+    }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    pbr::MessageDescriptor pb::IMessage.Descriptor {
+      get { return Descriptor; }
+    }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public TerrainDiagnosticControl() {
+      OnConstruction();
+    }
+
+    partial void OnConstruction();
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public TerrainDiagnosticControl(TerrainDiagnosticControl other) : this() {
+      requestId_ = other.requestId_;
+      windowMs_ = other.windowMs_;
+      _unknownFields = pb::UnknownFieldSet.Clone(other._unknownFields);
+    }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public TerrainDiagnosticControl Clone() {
+      return new TerrainDiagnosticControl(this);
+    }
+
+    /// <summary>Field number for the "request_id" field.</summary>
+    public const int RequestIdFieldNumber = 1;
+    private ulong requestId_;
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public ulong RequestId {
+      get { return requestId_; }
+      set {
+        requestId_ = value;
+      }
+    }
+
+    /// <summary>Field number for the "window_ms" field.</summary>
+    public const int WindowMsFieldNumber = 2;
+    private uint windowMs_;
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public uint WindowMs {
+      get { return windowMs_; }
+      set {
+        windowMs_ = value;
+      }
+    }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public override bool Equals(object other) {
+      return Equals(other as TerrainDiagnosticControl);
+    }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public bool Equals(TerrainDiagnosticControl other) {
+      if (ReferenceEquals(other, null)) {
+        return false;
+      }
+      if (ReferenceEquals(other, this)) {
+        return true;
+      }
+      if (RequestId != other.RequestId) return false;
+      if (WindowMs != other.WindowMs) return false;
+      return Equals(_unknownFields, other._unknownFields);
+    }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public override int GetHashCode() {
+      int hash = 1;
+      if (RequestId != 0UL) hash ^= RequestId.GetHashCode();
+      if (WindowMs != 0) hash ^= WindowMs.GetHashCode();
+      if (_unknownFields != null) {
+        hash ^= _unknownFields.GetHashCode();
+      }
+      return hash;
+    }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public override string ToString() {
+      return pb::JsonFormatter.ToDiagnosticString(this);
+    }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public void WriteTo(pb::CodedOutputStream output) {
+    #if !GOOGLE_PROTOBUF_REFSTRUCT_COMPATIBILITY_MODE
+      output.WriteRawMessage(this);
+    #else
+      if (RequestId != 0UL) {
+        output.WriteRawTag(8);
+        output.WriteUInt64(RequestId);
+      }
+      if (WindowMs != 0) {
+        output.WriteRawTag(16);
+        output.WriteUInt32(WindowMs);
+      }
+      if (_unknownFields != null) {
+        _unknownFields.WriteTo(output);
+      }
+    #endif
+    }
+
+    #if !GOOGLE_PROTOBUF_REFSTRUCT_COMPATIBILITY_MODE
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    void pb::IBufferMessage.InternalWriteTo(ref pb::WriteContext output) {
+      if (RequestId != 0UL) {
+        output.WriteRawTag(8);
+        output.WriteUInt64(RequestId);
+      }
+      if (WindowMs != 0) {
+        output.WriteRawTag(16);
+        output.WriteUInt32(WindowMs);
+      }
+      if (_unknownFields != null) {
+        _unknownFields.WriteTo(ref output);
+      }
+    }
+    #endif
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public int CalculateSize() {
+      int size = 0;
+      if (RequestId != 0UL) {
+        size += 1 + pb::CodedOutputStream.ComputeUInt64Size(RequestId);
+      }
+      if (WindowMs != 0) {
+        size += 1 + pb::CodedOutputStream.ComputeUInt32Size(WindowMs);
+      }
+      if (_unknownFields != null) {
+        size += _unknownFields.CalculateSize();
+      }
+      return size;
+    }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public void MergeFrom(TerrainDiagnosticControl other) {
+      if (other == null) {
+        return;
+      }
+      if (other.RequestId != 0UL) {
+        RequestId = other.RequestId;
+      }
+      if (other.WindowMs != 0) {
+        WindowMs = other.WindowMs;
+      }
+      _unknownFields = pb::UnknownFieldSet.MergeFrom(_unknownFields, other._unknownFields);
+    }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public void MergeFrom(pb::CodedInputStream input) {
+    #if !GOOGLE_PROTOBUF_REFSTRUCT_COMPATIBILITY_MODE
+      input.ReadRawMessage(this);
+    #else
+      uint tag;
+      while ((tag = input.ReadTag()) != 0) {
+      if ((tag & 7) == 4) {
+        // Abort on any end group tag.
+        return;
+      }
+      switch(tag) {
+          default:
+            _unknownFields = pb::UnknownFieldSet.MergeFieldFrom(_unknownFields, input);
+            break;
+          case 8: {
+            RequestId = input.ReadUInt64();
+            break;
+          }
+          case 16: {
+            WindowMs = input.ReadUInt32();
+            break;
+          }
+        }
+      }
+    #endif
+    }
+
+    #if !GOOGLE_PROTOBUF_REFSTRUCT_COMPATIBILITY_MODE
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    void pb::IBufferMessage.InternalMergeFrom(ref pb::ParseContext input) {
+      uint tag;
+      while ((tag = input.ReadTag()) != 0) {
+      if ((tag & 7) == 4) {
+        // Abort on any end group tag.
+        return;
+      }
+      switch(tag) {
+          default:
+            _unknownFields = pb::UnknownFieldSet.MergeFieldFrom(_unknownFields, ref input);
+            break;
+          case 8: {
+            RequestId = input.ReadUInt64();
+            break;
+          }
+          case 16: {
+            WindowMs = input.ReadUInt32();
+            break;
+          }
+        }
+      }
+    }
+    #endif
+
+  }
+
+  /// <summary>
+  /// Client -> host: one sample requested by TerrainDiagnosticControl.
+  /// </summary>
+  [global::System.Diagnostics.DebuggerDisplayAttribute("{ToString(),nq}")]
+  public sealed partial class TerrainDiagnosticReport : pb::IMessage<TerrainDiagnosticReport>
+  #if !GOOGLE_PROTOBUF_REFSTRUCT_COMPATIBILITY_MODE
+      , pb::IBufferMessage
+  #endif
+  {
+    private static readonly pb::MessageParser<TerrainDiagnosticReport> _parser = new pb::MessageParser<TerrainDiagnosticReport>(() => new TerrainDiagnosticReport());
+    private pb::UnknownFieldSet _unknownFields;
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public static pb::MessageParser<TerrainDiagnosticReport> Parser { get { return _parser; } }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public static pbr::MessageDescriptor Descriptor {
+      get { return global::SuMultiplayer.Protocol.Telemetry.TelemetryReflection.Descriptor.MessageTypes[13]; }
+    }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    pbr::MessageDescriptor pb::IMessage.Descriptor {
+      get { return Descriptor; }
+    }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public TerrainDiagnosticReport() {
+      OnConstruction();
+    }
+
+    partial void OnConstruction();
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public TerrainDiagnosticReport(TerrainDiagnosticReport other) : this() {
+      sample_ = other.sample_ != null ? other.sample_.Clone() : null;
+      _unknownFields = pb::UnknownFieldSet.Clone(other._unknownFields);
+    }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public TerrainDiagnosticReport Clone() {
+      return new TerrainDiagnosticReport(this);
+    }
+
+    /// <summary>Field number for the "sample" field.</summary>
+    public const int SampleFieldNumber = 1;
+    private global::SuMultiplayer.Protocol.Telemetry.TerrainResyncSample sample_;
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public global::SuMultiplayer.Protocol.Telemetry.TerrainResyncSample Sample {
+      get { return sample_; }
+      set {
+        sample_ = value;
+      }
+    }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public override bool Equals(object other) {
+      return Equals(other as TerrainDiagnosticReport);
+    }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public bool Equals(TerrainDiagnosticReport other) {
+      if (ReferenceEquals(other, null)) {
+        return false;
+      }
+      if (ReferenceEquals(other, this)) {
+        return true;
+      }
+      if (!object.Equals(Sample, other.Sample)) return false;
+      return Equals(_unknownFields, other._unknownFields);
+    }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public override int GetHashCode() {
+      int hash = 1;
+      if (sample_ != null) hash ^= Sample.GetHashCode();
+      if (_unknownFields != null) {
+        hash ^= _unknownFields.GetHashCode();
+      }
+      return hash;
+    }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public override string ToString() {
+      return pb::JsonFormatter.ToDiagnosticString(this);
+    }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public void WriteTo(pb::CodedOutputStream output) {
+    #if !GOOGLE_PROTOBUF_REFSTRUCT_COMPATIBILITY_MODE
+      output.WriteRawMessage(this);
+    #else
+      if (sample_ != null) {
+        output.WriteRawTag(10);
+        output.WriteMessage(Sample);
+      }
+      if (_unknownFields != null) {
+        _unknownFields.WriteTo(output);
+      }
+    #endif
+    }
+
+    #if !GOOGLE_PROTOBUF_REFSTRUCT_COMPATIBILITY_MODE
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    void pb::IBufferMessage.InternalWriteTo(ref pb::WriteContext output) {
+      if (sample_ != null) {
+        output.WriteRawTag(10);
+        output.WriteMessage(Sample);
+      }
+      if (_unknownFields != null) {
+        _unknownFields.WriteTo(ref output);
+      }
+    }
+    #endif
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public int CalculateSize() {
+      int size = 0;
+      if (sample_ != null) {
+        size += 1 + pb::CodedOutputStream.ComputeMessageSize(Sample);
+      }
+      if (_unknownFields != null) {
+        size += _unknownFields.CalculateSize();
+      }
+      return size;
+    }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public void MergeFrom(TerrainDiagnosticReport other) {
+      if (other == null) {
+        return;
+      }
+      if (other.sample_ != null) {
+        if (sample_ == null) {
+          Sample = new global::SuMultiplayer.Protocol.Telemetry.TerrainResyncSample();
+        }
+        Sample.MergeFrom(other.Sample);
+      }
+      _unknownFields = pb::UnknownFieldSet.MergeFrom(_unknownFields, other._unknownFields);
+    }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public void MergeFrom(pb::CodedInputStream input) {
+    #if !GOOGLE_PROTOBUF_REFSTRUCT_COMPATIBILITY_MODE
+      input.ReadRawMessage(this);
+    #else
+      uint tag;
+      while ((tag = input.ReadTag()) != 0) {
+      if ((tag & 7) == 4) {
+        // Abort on any end group tag.
+        return;
+      }
+      switch(tag) {
+          default:
+            _unknownFields = pb::UnknownFieldSet.MergeFieldFrom(_unknownFields, input);
+            break;
+          case 10: {
+            if (sample_ == null) {
+              Sample = new global::SuMultiplayer.Protocol.Telemetry.TerrainResyncSample();
+            }
+            input.ReadMessage(Sample);
+            break;
+          }
+        }
+      }
+    #endif
+    }
+
+    #if !GOOGLE_PROTOBUF_REFSTRUCT_COMPATIBILITY_MODE
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    void pb::IBufferMessage.InternalMergeFrom(ref pb::ParseContext input) {
+      uint tag;
+      while ((tag = input.ReadTag()) != 0) {
+      if ((tag & 7) == 4) {
+        // Abort on any end group tag.
+        return;
+      }
+      switch(tag) {
+          default:
+            _unknownFields = pb::UnknownFieldSet.MergeFieldFrom(_unknownFields, ref input);
+            break;
+          case 10: {
+            if (sample_ == null) {
+              Sample = new global::SuMultiplayer.Protocol.Telemetry.TerrainResyncSample();
+            }
+            input.ReadMessage(Sample);
             break;
           }
         }

@@ -7,6 +7,7 @@ using SuMultiplayer.Players;
 using SuMultiplayer.Protocol;
 
 using Google.Protobuf;
+using SuMultiplayer.Protocol.Telemetry;
 using PT = SuMultiplayer.Protocol.Terrain;
 namespace SuMultiplayer.Terrain
 {
@@ -79,6 +80,229 @@ namespace SuMultiplayer.Terrain
         IEnumerable<ChunkKey> LoadedChunks { get; }
     }
 
+    /// <summary>可选的引擎连续 Cells 摘要读取器；不改变测试世界接口。</summary>
+    public interface IPackedTerrainWorld
+    {
+        ChunkPackedValueSource GetPackedCellSource(ChunkKey key);
+    }
+
+    /// <summary>
+    /// 可选的**顶层摘要**读取器：直接给出引擎 <c>TerrainChunk.Cells</c> 与 <c>TerrainChunk.Shafts</c>
+    /// 的连续数组，供 <see cref="ChunkDigest.ComputeTopLayer"/> 做 512 次访问的快速校验。
+    ///
+    /// 与 <see cref="IPackedTerrainWorld"/> 分开是因为它们的**生命周期约束不同**：
+    /// <c>GetPackedCellSource</c> 返回的委托每次调用都从 chunk 现读（安全但慢）；
+    /// 这里返回的是**数组引用本身**，调用方必须**取到后立即用完、不跨帧持有** ——
+    /// <c>TerrainChunk.Dispose</c> 会把数组归还 <c>ArrayCache</c>，之后可能被别的 chunk 租用。
+    /// </summary>
+    public interface ITopLayerTerrainWorld
+    {
+        /// <summary>
+        /// 取该块的 Cells（布局 <c>index = y + x*256 + z*4096</c>）与 Shafts
+        /// （布局 <c>index = x + z*16</c>，topHeight 在 bit 0~7）。
+        /// 返回 false = 该块当前不可用（未加载 / 内容未定稿）。
+        /// </summary>
+        bool TryGetChunkArrays(ChunkKey key, out int[] cells, out int[] shafts);
+    }
+
+    /// <summary>
+    /// 可选的**稳定性判定**通道：算摘要前确认该块"内容已经定稿、且当前没有在变"。
+    ///
+    /// 为什么必须问引擎而不是"刚加载就当稳定"：<c>TerrainChunk.State</c> 会经历
+    /// NotLoaded → InvalidContents1..4 → InvalidLight → ... → Valid，
+    /// 内容在 InvalidContents4 之前读到的是**未定稿**的值。这类块算出的摘要必然与主机不同，
+    /// 属于"还没准备好"而不是"内容不一致"—— 必须回 NOT_READY，绝不能当 MISMATCH 触发整块回传。
+    ///
+    /// 见 doc/chunk-digest-tiered-verify-plan.md 第 5 章第 5 步。
+    /// </summary>
+    public interface IChunkStabilityWorld
+    {
+        /// <summary>
+        /// 该块现在是否可以安全地算摘要：
+        ///   · 内容已定稿（<c>State &gt; InvalidContents4</c>）；
+        ///   · 线程阶段也已定稿（<c>ThreadState &gt; InvalidContents4</c>）；
+        ///   · 引擎不再对它做后续内容填充（避免读到"填到一半"的数组）。
+        /// 返回 false 且 <paramref name="reason"/> 给出可直接写进日志的原因。
+        /// </summary>
+        bool IsStableForDigest(ChunkKey key, out string reason);
+
+        /// <summary>该块当前的引擎阶段（用于诊断；不可用时返回 0）。</summary>
+        int EngineStageOf(ChunkKey key);
+    }
+
+    public interface ITerrainResyncDiagnosticWorld
+    {
+        int ApplyResyncCells(ChunkKey key, IReadOnlyList<CellEdit> edits,
+            TerrainResyncDiagnosticWindow diagnostics);
+        void CompleteResyncChunk(ChunkKey key, bool changed,
+            TerrainResyncDiagnosticWindow diagnostics);
+    }
+
+    public struct TerrainResyncDiagnosticSample
+    {
+        public ulong RequestId;
+        public uint WindowMs;
+        public ulong ShardBytes;
+        public ulong RleRuns;
+        public ulong ExpandedCells;
+        public double DecodeMs;
+        public double ApplyMs;
+        public double CircuitCallbackMs;
+        public double FinalDigestMs;
+        public ulong AppliedParts;
+        public ulong NoPendingSixFaceRollbacks;
+        public double NoPendingSixFaceRollbackMs;
+        public ulong ChunkLoadEvents;
+        public ulong ChunkUnloadEvents;
+        public ulong HashChecks;
+        public ulong HashMatches;
+        public ulong HashMismatches;
+        public double HashMs;
+        public double HashMaxMs;
+        public ulong ResyncChangedCells;
+        public ulong ResyncUnchangedCells;
+        public ulong TerrainInvalidations;
+    }
+
+    /// <summary>Bounded, host-scheduled terrain resync measurement window.</summary>
+    public sealed class TerrainResyncDiagnosticWindow
+    {
+        private ulong m_requestId;
+        private uint m_windowMs;
+        private long m_untilMs;
+        private long m_shardBytes, m_rleRuns, m_expandedCells, m_appliedParts;
+        private long m_noPendingSixFaceRollbacks;
+        private long m_decodeTicks, m_applyTicks, m_circuitCallbackTicks;
+        private long m_finalDigestTicks, m_noPendingSixFaceRollbackTicks;
+        private long m_hashChecks, m_hashMatches, m_hashMismatches;
+        private long m_hashTicks, m_hashMaxTicks;
+        private long m_chunkLoadEvents, m_chunkUnloadEvents;
+        private long m_resyncChangedCells, m_resyncUnchangedCells, m_terrainInvalidations;
+
+        public bool IsActive => m_untilMs != 0 && Environment.TickCount64 < m_untilMs;
+
+        public void Begin(ulong requestId, uint windowMs, long nowMs)
+        {
+            if (requestId == 0) throw new ArgumentOutOfRangeException(nameof(requestId));
+            if (windowMs == 0 || windowMs > 10000)
+                throw new ArgumentOutOfRangeException(nameof(windowMs), "Diagnostic window must be 1..10000 ms.");
+            m_requestId = requestId;
+            m_windowMs = windowMs;
+            m_untilMs = checked(nowMs + windowMs);
+            m_shardBytes = m_rleRuns = m_expandedCells = m_appliedParts = 0;
+            m_noPendingSixFaceRollbacks = 0;
+            m_decodeTicks = m_applyTicks = m_circuitCallbackTicks = 0;
+            m_finalDigestTicks = m_noPendingSixFaceRollbackTicks = 0;
+            m_hashChecks = m_hashMatches = m_hashMismatches = 0;
+            m_hashTicks = m_hashMaxTicks = 0;
+            m_chunkLoadEvents = m_chunkUnloadEvents = 0;
+            m_resyncChangedCells = m_resyncUnchangedCells = m_terrainInvalidations = 0;
+        }
+
+        public void RecordChunkLoaded() { if (IsActive) m_chunkLoadEvents++; }
+        public void RecordChunkUnloaded() { if (IsActive) m_chunkUnloadEvents++; }
+
+        public void RecordHash(long elapsedTicks)
+        {
+            if (!IsActive) return;
+            elapsedTicks = Math.Max(0, elapsedTicks);
+            m_hashChecks++;
+            m_hashTicks += elapsedTicks;
+            if (elapsedTicks > m_hashMaxTicks) m_hashMaxTicks = elapsedTicks;
+        }
+
+        public void RecordHashVerdict(DigestVerdict verdict)
+        {
+            if (!IsActive) return;
+            if (verdict == DigestVerdict.Match) m_hashMatches++;
+            else if (verdict == DigestVerdict.Mismatch) m_hashMismatches++;
+        }
+
+        public void RecordResyncCell(bool changed)
+        {
+            if (!IsActive) return;
+            if (changed) m_resyncChangedCells++;
+            else m_resyncUnchangedCells++;
+        }
+
+        public void RecordTerrainInvalidation()
+        {
+            if (IsActive) m_terrainInvalidations++;
+        }
+
+        public void RecordDecode(int bytes, int runs, int cells, long elapsedTicks)
+        {
+            if (!IsActive) return;
+            m_shardBytes += Math.Max(0, bytes);
+            m_rleRuns += Math.Max(0, runs);
+            m_expandedCells += Math.Max(0, cells);
+            m_decodeTicks += Math.Max(0, elapsedTicks);
+        }
+
+        public void RecordAppliedPart()
+        {
+            if (IsActive) m_appliedParts++;
+        }
+
+        public void RecordApplyCell(long elapsedTicks)
+        {
+            if (IsActive) m_applyTicks += Math.Max(0, elapsedTicks);
+        }
+
+        public void RecordCircuitCallback(long elapsedTicks)
+        {
+            if (IsActive) m_circuitCallbackTicks += Math.Max(0, elapsedTicks);
+        }
+
+        public void RecordFinalDigest(long elapsedTicks)
+        {
+            if (IsActive) m_finalDigestTicks += Math.Max(0, elapsedTicks);
+        }
+
+        public void RecordNoPendingSixFaceRollback(long elapsedTicks)
+        {
+            if (!IsActive) return;
+            m_noPendingSixFaceRollbacks++;
+            m_noPendingSixFaceRollbackTicks += Math.Max(0, elapsedTicks);
+        }
+
+        public bool TryTake(long nowMs, out TerrainResyncDiagnosticSample sample)
+        {
+            sample = default;
+            if (m_untilMs == 0 || nowMs < m_untilMs) return false;
+            sample = new TerrainResyncDiagnosticSample
+            {
+                RequestId = m_requestId,
+                WindowMs = m_windowMs,
+                ShardBytes = (ulong)Math.Max(0, m_shardBytes),
+                RleRuns = (ulong)Math.Max(0, m_rleRuns),
+                ExpandedCells = (ulong)Math.Max(0, m_expandedCells),
+                DecodeMs = ToMilliseconds(m_decodeTicks),
+                ApplyMs = ToMilliseconds(m_applyTicks),
+                CircuitCallbackMs = ToMilliseconds(m_circuitCallbackTicks),
+                FinalDigestMs = ToMilliseconds(m_finalDigestTicks),
+                AppliedParts = (ulong)Math.Max(0, m_appliedParts),
+                NoPendingSixFaceRollbacks = (ulong)Math.Max(0, m_noPendingSixFaceRollbacks),
+                NoPendingSixFaceRollbackMs = ToMilliseconds(m_noPendingSixFaceRollbackTicks),
+                ChunkLoadEvents = (ulong)Math.Max(0, m_chunkLoadEvents),
+                ChunkUnloadEvents = (ulong)Math.Max(0, m_chunkUnloadEvents),
+                HashChecks = (ulong)Math.Max(0, m_hashChecks),
+                HashMatches = (ulong)Math.Max(0, m_hashMatches),
+                HashMismatches = (ulong)Math.Max(0, m_hashMismatches),
+                HashMs = ToMilliseconds(m_hashTicks),
+                HashMaxMs = ToMilliseconds(m_hashMaxTicks),
+                ResyncChangedCells = (ulong)Math.Max(0, m_resyncChangedCells),
+                ResyncUnchangedCells = (ulong)Math.Max(0, m_resyncUnchangedCells),
+                TerrainInvalidations = (ulong)Math.Max(0, m_terrainInvalidations)
+            };
+            m_untilMs = 0;
+            return true;
+        }
+
+        private static double ToMilliseconds(long ticks) =>
+            ticks * 1000.0 / System.Diagnostics.Stopwatch.Frequency;
+    }
+
     /// <summary>列式 RLE 载荷：每一列（x,z）按 256 高编码成若干游程。</summary>
     public static class ChunkPayloadCodec
     {
@@ -91,10 +315,33 @@ namespace SuMultiplayer.Terrain
 
         /// <summary>把一个 chunk 编码成若干帧载荷（超出单帧上限就分片）。</summary>
         public static List<List<byte[]>> Encode(ChunkKey key, ITerrainWorld world, out bool useRle,
-            long watermark = -1L)
+            out int runCount, out int expandedCells, long watermark = -1L)
+        {
+            return Encode(key, world, out useRle, out runCount, out expandedCells,
+                captureDiagnostics: true, watermark);
+        }
+
+        public static List<List<byte[]>> Encode(ChunkKey key, ITerrainWorld world,
+            out bool useRle, long watermark = -1L)
+        {
+            return Encode(key, world, out useRle, out _, out _,
+                captureDiagnostics: false, watermark: watermark);
+        }
+
+        public static List<List<byte[]>> Encode(ChunkKey key, ITerrainWorld world, out bool useRle,
+            out int runCount, out int expandedCells, bool captureDiagnostics, long watermark = -1L)
         {
             useRle = true;
-            var records = BuildColumnRuns(key, world);
+            List<byte> records;
+            if (captureDiagnostics)
+                records = BuildColumnRunsWithDiagnostics(key, world, out runCount,
+                    out expandedCells);
+            else
+            {
+                records = BuildColumnRuns(key, world);
+                runCount = 0;
+                expandedCells = 0;
+            }
             var parts = new List<byte[]>();
             int total = records.Count / RecordBytes;
             int partCount = Math.Max(1, (total + RecordsPerFrame - 1) / RecordsPerFrame);
@@ -155,16 +402,68 @@ namespace SuMultiplayer.Terrain
             return records;
         }
 
+        private static List<byte> BuildColumnRunsWithDiagnostics(ChunkKey key,
+            ITerrainWorld world, out int runCount, out int expandedCells)
+        {
+            runCount = 0;
+            expandedCells = 0;
+            var records = new List<byte>(2048);
+            if (!world.HasContents(key)) return records;
+            ChunkCellSource source = world.GetCellSource(key);
+            var column = new int[ChunkDigest.Height];
+            for (int x = 0; x < ChunkDigest.SizeXZ; x++)
+            {
+                for (int z = 0; z < ChunkDigest.SizeXZ; z++)
+                {
+                    for (int y = 0; y < ChunkDigest.Height; y++)
+                    {
+                        source(x, y, z, out int c, out int d);
+                        column[y] = ((c & 0xFFFF) << 16) | (d & 0xFFFF);
+                    }
+                    int runStart = 0;
+                    int prev = column[0];
+                    for (int y = 1; y <= ChunkDigest.Height; y++)
+                    {
+                        int cur = y < ChunkDigest.Height ? column[y] : int.MinValue;
+                        if (cur == prev) continue;
+                        records.Add((byte)x);
+                        records.Add((byte)z);
+                        records.Add((byte)runStart);
+                        records.Add((byte)(y - runStart - 1));
+                        records.Add((byte)prev);
+                        records.Add((byte)(prev >> 8));
+                        records.Add((byte)(prev >> 16));
+                        records.Add((byte)(prev >> 24));
+                        runCount++;
+                        expandedCells += y - runStart;
+                        runStart = y;
+                        prev = cur;
+                    }
+                }
+            }
+            return records;
+        }
+
         public readonly struct Part
         {
             public Part(ChunkKey key, int index, int count, List<CellEdit> edits)
             {
                 Key = key; Index = index; Count = count; Edits = edits;
+                RunCount = edits == null ? 0 : edits.Count;
+            }
+
+            public Part(ChunkKey key, int index, int count, List<CellEdit> edits,
+                int runCount, int expandedCellCount)
+            {
+                Key = key; Index = index; Count = count; Edits = edits;
+                RunCount = runCount; ExpandedCellCount = expandedCellCount;
             }
             public ChunkKey Key { get; }
             public int Index { get; }
             public int Count { get; }
             public List<CellEdit> Edits { get; }
+            public int RunCount { get; }
+            public int ExpandedCellCount { get; }
             public bool IsLast => Index == Count - 1;
         }
 
@@ -259,7 +558,7 @@ namespace SuMultiplayer.Terrain
                 for (int k = 0; k < len; k++)
                     edits.Add(CellEdit.FromPacked(x, startY + k, z, packed));
             }
-            return new Part(key, index, count, edits);
+            return new Part(key, index, count, edits, entries, edits.Count);
         }
     }
 
@@ -464,6 +763,17 @@ namespace SuMultiplayer.Terrain
         /// 只有块还没有内容时才按 <see cref="ClientMemoryVerifyRetryMs"/> 等。
         /// </summary>
         public int ClientMemoryVerificationsPerTick { get; set; } = 2;
+
+        /// <summary>
+        /// 一块卡在"不一致（Stale）"超过这么久（ms）就强制退回未核对、重新上报一次
+        /// （见 TerrainSyncClient.HealStuckStaleChunks）。
+        /// 为什么需要：Stale 的语义是"等主机回传整块"，但顶层补丁路径**不回传整块**，
+        /// 所以主机那条红被"陈旧红清除"洗成灰后两边都卡死（实机 41 块灰长期不变）。
+        /// </summary>
+        public int ClientStaleHealMs { get; set; } = 15000;
+
+        /// <summary>自愈扫描的间隔（ms）。遍历内存集合，不能在热路径每帧做。</summary>
+        public int ClientStaleHealScanMs { get; set; } = 3000;
 
         /// <summary>强制核对时块还没有内容 → 下一次重试的最小间隔（毫秒；不丢、也不每帧空转）。</summary>
         public int ClientMemoryVerifyRetryMs { get; set; } = 1000;
@@ -820,6 +1130,17 @@ namespace SuMultiplayer.Terrain
         public ChunkKey Key;
         /// <summary>客户端最近一次上报的摘要（客户端可重报，以最新一次为准）。</summary>
         public uint ClientHash;
+        /// <summary>
+        /// 客户端最近一次上报里带的**顶层摘要**（16×16 = 256 个顶格）。
+        /// 主机判 Mismatch 时靠它判断"差异是否只在顶层"：
+        ///   缺（= 0 未提供）→ 回 NotReady 让客户端重算（不补丁、不整块）；
+        ///   与主机相同      → 差异在深处 → 整块回传；
+        ///   不同            → 只补 256 格。
+        /// 早先没存这两个值 → 按需加载完成后的**重新裁决**拿不到顶层 hash，
+        /// 每次都判成"未提供"→ 白走 NotReady 往返（实机 noHash 计数持续增长）。
+        /// </summary>
+        public uint ClientTopHeightHash;
+        public uint ClientTopBlockHash;
         /// <summary>第一次登记的时刻（TickCount64 口径），用于"欠了多久"。</summary>
         public long FirstSeenMs;
         /// <summary>
@@ -861,8 +1182,24 @@ namespace SuMultiplayer.Terrain
         public List<ClientView> Clients = new List<ClientView>();
         public long DigestReports;
         public long ResyncBytes;
+        public long ResyncRuns;
+        public long ResyncExpandedCells;
+        public long ResyncDiagnosticBytes;
+        public double ResyncEncodeMs;
         /// <summary>同一块已有回传快照时合并（客户端重报 / 迟到裁决）的次数。</summary>
         public long ResyncCoalesced;
+        /// <summary>Mismatch 时先走顶层补丁（没有整块回传）的次数。</summary>
+        public long TopLayerFixFromMismatch;
+        /// <summary>主机发出的顶层补丁总数。</summary>
+        public long TopLayerFixesSent;
+        /// <summary>顶层补丁发送失败（背压）次数。</summary>
+        public long TopLayerFixSendFailures;
+        /// <summary>Mismatch 但顶层并不不同（差异在深处）→ 改走整块回传的次数。</summary>
+        public long TopLayerFixSkippedNotTopLayer;
+        /// <summary>收到 clientHash == 0 并改判 NotReady 的次数（未知 ≠ 不一致）。</summary>
+        public long ClientHashZeroVerdicts;
+        /// <summary>客户端没带顶层 hash → 保守走整块的次数（应为 0）。</summary>
+        public long TopLayerFixSkippedNoClientHash;
         /// <summary>裁决后主机丢了该块内容、改回 NotReady 的次数。</summary>
         public long ResyncEmptySkipped;
         public long CellChangesBroadcast;
@@ -1015,6 +1352,34 @@ namespace SuMultiplayer.Terrain
         public long ReReports;
         /// <summary>重报次数用尽仍没等到裁决的块数（ChunkLoadVerifier 明确计数，不静默硬撑）。</summary>
         public long Abandoned;
+
+        // ---- 顶层摘要（16×16 = 256 格；见 doc/chunk-digest-tiered-verify-plan.md）----
+        /// <summary>算过顶层摘要的块次数（chunk 加载时各一次）。</summary>
+        public long TopLayerChecks;
+        /// <summary>顶层补丁落地后复查通过的次数。</summary>
+        public long TopLayerMatches;
+        /// <summary>发出的顶层不一致报告数（TOP_LAYER_MISMATCH_REPORT）。</summary>
+        public long TopLayerReportsSent;
+        /// <summary>收到的顶层补丁数（TOP_LAYER_FIX）。</summary>
+        public long TopLayerFixesReceived;
+        /// <summary>顶层补丁实际落地的格子数（应远小于整块 65536）。</summary>
+        public long TopLayerFixCellsApplied;
+        /// <summary>顶层补不齐、升级为整块核对的次数（差异不只在顶层）。</summary>
+        public long TopLayerFixEscalations;
+        /// <summary>顶层摘要不可用的次数（世界不提供数组通道 / 块内容未定稿）。</summary>
+        public long TopLayerUnavailable;
+        /// <summary>顶层补丁已收敛、但块不在内存集合导致没能回摘要的次数。</summary>
+        public long TopLayerConvergeUnreported;
+        /// <summary>卡在 Stale 超时后被自愈（强制退回未核对 + 重新上报）的块次数。</summary>
+        public long StaleHealed;
+        /// <summary>发送时因内容未定稿而延后的上报条数（不发 0，下一帧重试）。</summary>
+        public long ReportsDeferredNotStable;
+        /// <summary>算出 / 缓存到 clientHash == 0 而未发送的次数（不发 0 → 不再被主机误判红框）。</summary>
+        public long ClientHashZero;
+        /// <summary>内容未定稿、延后算摘要的块次数（第 6 步；这些块不再被当成 Mismatch）。</summary>
+        public long DigestsDeferredNotStable;
+        /// <summary>迟到的 Mismatch 裁决数（已跳过回传，先重算本地摘要）。</summary>
+        public long VerdictsStaleSkipped;
         public long LastVerifyMs;
         public long MaxVerifyMs;
         public ChannelState State;
@@ -1461,9 +1826,30 @@ namespace SuMultiplayer.Terrain
         private long m_catchUpRounds;
         private long m_catchUpChangesSent;
 
-        private long m_digestReports, m_resyncBytes, m_cellChanges;
+        private long m_digestReports, m_resyncBytes, m_resyncRuns, m_resyncExpandedCells;
+        private long m_resyncEncodeTicks;
+        private long m_resyncDiagnosticBytes;
+        private bool m_resyncEncodeDiagnosticsEnabled;
+        private long m_cellChanges;
         /// <summary>同一块的 Mismatch 已有一份回传快照在队列里 → 合并（不再 1:1 放大回传队列/带宽）。</summary>
         private long m_resyncCoalesced;
+
+        // ---- 顶层补丁（主机侧）：整块回传之前的降级路径 ----
+        /// <summary>经由 Mismatch 走顶层补丁的次数（不是客户端主动请求的那条路）。</summary>
+        private long m_topLayerFixFromMismatch;
+        /// <summary>主机发出的顶层补丁数。</summary>
+        private long m_topLayerFixesSent;
+        /// <summary>顶层补丁发送失败（背压）次数 —— 不静默，客户端重报时会再触发。</summary>
+        private long m_topLayerFixSendFailures;
+        /// <summary>
+        /// 判了 Mismatch 但**顶层并不不同**（差异在深处）→ 放弃顶层补丁、改走整块回传的次数。
+        /// 这个数不为 0 是正常的（草/流体/树/火焰类差异）；若它暴涨说明客户端顶层 hash 有问题。
+        /// </summary>
+        private long m_topLayerFixSkippedNotTopLayer;
+        /// <summary>客户端没带顶层 hash（0 = 未提供）→ 无法判断差异位置、保守走整块的次数。应为 0。</summary>
+        private long m_topLayerFixSkippedNoClientHash;
+        /// <summary>收到 clientHash == 0 并改判 NotReady 的次数（未知 ≠ 不一致）。</summary>
+        private long m_clientHashZeroVerdicts;
         /// <summary>裁决后、编码前主机丢了该块内容 → 不发零格快照，改回 NotReady 的次数。</summary>
         private long m_resyncEmptySkipped;
         private long m_lastResyncEmptyLogMs;
@@ -1530,9 +1916,6 @@ namespace SuMultiplayer.Terrain
         private long m_clientChunkDeltaMessagesSinceLog;
         private long m_clientChunkDeltaAddsSinceLog;
         private long m_clientChunkDeltaRemovesSinceLog;
-        private long m_clientChunkDeltaMarkClearsSinceLog;
-        /// <summary>自上次增量汇总以来因"欠账清除"补发的整块快照数。</summary>
-        private long m_clientChunkDeltaSnapshotsSinceLog;
 
         /// <param name="attachToChannel">
         /// false = 不自挂网络回调，由主线程泵调用 <see cref="ProcessFrame"/>。
@@ -1598,6 +1981,9 @@ namespace SuMultiplayer.Terrain
                 new DelegateMessageHandler<InterestUpdate>(OnInterest), MessageOwner);
             registry.Register((int)MessageType.ChunkDigestReport, PT.ChunkDigestReport.Parser,
                 new DelegateMessageHandler<PT.ChunkDigestReport>(OnDigestReport), MessageOwner);
+            registry.Register((int)MessageType.TopLayerMismatchReport, PT.TopLayerMismatchReport.Parser,
+                new DelegateMessageHandler<PT.TopLayerMismatchReport>(OnTopLayerMismatchReport),
+                MessageOwner);
             registry.Register((int)MessageType.ClientChunks, PT.ClientChunks.Parser,
                 new DelegateMessageHandler<PT.ClientChunks>(OnClientChunks), MessageOwner);
             registry.Register((int)MessageType.CatchUp, PT.CatchUp.Parser,
@@ -1682,6 +2068,11 @@ namespace SuMultiplayer.Terrain
         private void OnInterest(MessageContext context, InterestUpdate message)
         {
             lock (m_gate) HandleInterest(GetOrCreateState(context.ClientId), message);
+        }
+
+        private void OnTopLayerMismatchReport(MessageContext context, PT.TopLayerMismatchReport message)
+        {
+            lock (m_gate) HandleTopLayerMismatchReport(GetOrCreateState(context.ClientId), message);
         }
 
         private void OnDigestReport(MessageContext context, PT.ChunkDigestReport message)
@@ -1999,7 +2390,16 @@ namespace SuMultiplayer.Terrain
             var snapshot = new TerrainHostSnapshot
             {
                 DigestReports = m_digestReports, ResyncBytes = m_resyncBytes,
+                ResyncRuns = m_resyncRuns, ResyncExpandedCells = m_resyncExpandedCells,
+                ResyncDiagnosticBytes = m_resyncDiagnosticBytes,
+                ResyncEncodeMs = m_resyncEncodeTicks * 1000.0 / System.Diagnostics.Stopwatch.Frequency,
                 ResyncCoalesced = m_resyncCoalesced, ResyncEmptySkipped = m_resyncEmptySkipped,
+                TopLayerFixFromMismatch = m_topLayerFixFromMismatch,
+                TopLayerFixesSent = m_topLayerFixesSent,
+                TopLayerFixSendFailures = m_topLayerFixSendFailures,
+                TopLayerFixSkippedNotTopLayer = m_topLayerFixSkippedNotTopLayer,
+                ClientHashZeroVerdicts = m_clientHashZeroVerdicts,
+                TopLayerFixSkippedNoClientHash = m_topLayerFixSkippedNoClientHash,
                 CellChangesBroadcast = m_cellChanges, CellChangesDeliveryFailed = m_cellChangeSendFailures,
                 CellChangesMemoryRecipients = m_cellChangeMemoryRecipients,
                 CellChangesMemoryOnly = m_cellChangeMemoryOnly,
@@ -2146,6 +2546,18 @@ namespace SuMultiplayer.Terrain
             return snapshot;
         }
 
+        public void BeginResyncEncodeDiagnostics()
+        {
+            m_resyncRuns = 0;
+            m_resyncExpandedCells = 0;
+            m_resyncDiagnosticBytes = 0;
+            m_resyncEncodeTicks = 0;
+            m_resyncEncodeDiagnosticsEnabled = true;
+        }
+
+        public void SetResyncEncodeDiagnosticsEnabled(bool enabled) =>
+            m_resyncEncodeDiagnosticsEnabled = enabled;
+
         /// <summary>
         /// 每 tick：重算窗口 + **补齐欠着的上报裁决** + 发送积压的重传分片（受背压限制，不丢）。
         ///
@@ -2225,8 +2637,19 @@ namespace SuMultiplayer.Terrain
                             // 在**发送这一刻**编码：快照包含此前已应用的全部改动（含刚发出的 CellChange）。
                             // 旧实现在裁决时就编码，之后的新改动会被旧快照盖回去（本轮修掉的窗口之一）。
                             job.EncodeSequence = m_changeSequence;
-                            job.Parts = ChunkPayloadCodec.Encode(job.Key, m_world, out _,
-                                job.EncodeSequence)[0];
+            long encodeStarted = m_resyncEncodeDiagnosticsEnabled
+                ? System.Diagnostics.Stopwatch.GetTimestamp() : 0;
+                            List<List<byte[]>> encoded = ChunkPayloadCodec.Encode(job.Key,
+                                m_world, out _, out int runCount, out int expandedCells,
+                                captureDiagnostics: m_resyncEncodeDiagnosticsEnabled,
+                                watermark: job.EncodeSequence);
+                            if (m_resyncEncodeDiagnosticsEnabled)
+                            {
+                                m_resyncEncodeTicks += System.Diagnostics.Stopwatch.GetTimestamp() - encodeStarted;
+                                m_resyncRuns += runCount;
+                                m_resyncExpandedCells += expandedCells;
+                            }
+                            job.Parts = encoded[0];
                         }
                         if (job.Parts.Count == 0)
                         {
@@ -2249,6 +2672,8 @@ namespace SuMultiplayer.Terrain
                         if (!m_server.TrySend(state.Id, MessageType.ChunkResync, job.Parts[job.Index])) break;
                         state.ResyncPartsSent++;
                         m_resyncBytes += job.Parts[job.Index].Length;
+                        if (m_resyncEncodeDiagnosticsEnabled)
+                            m_resyncDiagnosticBytes += job.Parts[job.Index].Length;
                         job.Index++;
                         if (job.Index >= job.Parts.Count)
                         {
@@ -2382,13 +2807,17 @@ namespace SuMultiplayer.Terrain
                 // 这条身份已经没有可达连接：**保留**待裁决（重连后按常规扫描继续用真实摘要作答），
                 // 这里不发（发也发不出去）。
                 if (state == null || !CanStillReachPeer(state)) continue;
+                // clientHash==0 的语义是"客户端未知"，CompareReport 会回 NotReady（不伪造裁决）。
                 DigestVerdict verdict = CompareReport(report.ClientHash, hostHash);
                 if (!SendVerdict(state, key, verdict, hostHash))
                 {
                     // 显式背压：没发出去就还欠着（条目留在待裁决里，下一拍按常规扫描补发真实摘要）。
                     continue;
                 }
-                ApplyVerdict(state, key, verdict);
+                // 顶层摘要从**待裁决记录**里取：它是客户端最近一次上报带的，
+                // 主机靠它判断"差异是否只在顶层"（缺了就会白走一次 NotReady 往返）。
+                ApplyVerdict(state, key, verdict,
+                    report.ClientTopHeightHash, report.ClientTopBlockHash);
                 sent++;
             }
             return sent;
@@ -3538,6 +3967,133 @@ namespace SuMultiplayer.Terrain
         /// Source: Mod/ScMultiplayer/Modules/World/ScMultiplayerWorldObjectHandlers.cs:499-518
         ///         （旧实现：目标块 State &lt; Valid 时**不 finalize**，把待校验项留着，等块再次可用再重问）
         /// </summary>
+        /// <summary>
+        /// 主机：收到客户端的顶层不一致报告 → 只算**顶层**差异格回发。
+        ///
+        /// 行为：
+        ///   · 主机按自己的 256 格与客户端上报的两个 hash 比对；
+        ///   · 一致 ⇒ 客户端本地值与主机一致（差在别处/只是上报时延）→ 回空 cells，
+        ///     但两个 host hash 照发，客户端可据此确认收敛；
+        ///   · 不一致 ⇒ 逐列取**主机顶格**，收集两端不同的格子（≤256）；
+        ///   · 主机侧顶层也不可用（块没加载）⇒ 不下发，客户端保持现状（下次加载再校验）。
+        ///
+        /// 与 ChunkResync 的区别：这里只发"顶层那一层"，不发整块 65536 格，
+        /// 因此单次开销 < 1ms（整块回传实测 250~634ms）。
+        /// 见 doc/chunk-digest-tiered-verify-plan.md 第 4.5 节。
+        /// </summary>
+        private void HandleTopLayerMismatchReport(State state, PT.TopLayerMismatchReport report)
+        {
+            if (report?.Key == null || state == null) return;
+            var key = new ChunkKey(report.Key.X, report.Key.Z);
+            if (!m_world.HasContents(key)) return;            // 主机没这块：不下发（客户端下次加载再来）
+            // 客户端主动报告的顶层 hash 就是"它自己算的"，直接用作闸门输入。
+            if (!TrySendTopLayerFix(state, key, report.ClientTopHeightHash,
+                    report.ClientTopBlockHash, out bool recalc) && recalc)
+            {
+                // 客户端主动报告里也没带顶层 hash（它自己都还没算出来）：
+                // 回 NotReady 让它重算，不整块回传。
+                long seq = m_chunkChangeSequence.TryGetValue(key, out long hs) ? hs : 0L;
+                SendVerdict(state, key, DigestVerdict.NotReady, 0u, seq);
+            }
+        }
+
+        /// <summary>
+        /// 主机：把该块**顶层那一层**（16×16 = 256 格）的权威内容下发给客户端。
+        ///
+        /// 两条路径共用：
+        ///   · 客户端发来 TOP_LAYER_MISMATCH_REPORT（它自己发现顶层对不上）；
+        ///   · 主机判了 Mismatch、准备整块回传之前（主机自己就知道差异只在顶层）。
+        ///
+        /// 返回 true = 已经发了顶层补丁（调用方**不要**再整块回传）；
+        /// 返回 false = 这块的顶层通道不可用（块没了 / 世界不支持数组通道 / 摘要没算出来），
+        /// 调用方应退回整块回传 —— **不静默当成已修复**。
+        /// </summary>
+        private bool TrySendTopLayerFix(State state, ChunkKey key,
+            uint clientTopHeightHash, uint clientTopBlockHash, out bool clientMustRecalcTopLayer)
+        {
+            clientMustRecalcTopLayer = false;
+            if (state == null) return false;
+            if (!m_world.HasContents(key)) return false;
+            if (!(m_world is ITopLayerTerrainWorld topLayer)) return false;
+            if (!topLayer.TryGetChunkArrays(key, out int[] cells, out int[] shafts)) return false;
+
+            var digest = new ChunkDigest();
+            digest.ComputeTopLayer(cells, shafts);
+            if (!digest.HasTopLayer) return false;
+            uint hostH = digest.TopHeightHash;
+            uint hostB = digest.TopBlockHash;
+
+            // ---- 关键闸门：**只有顶层真的不同**才发顶层补丁 ----
+            // 整块摘要不一致有两种可能：
+            //   ① 差异在顶层（天气/季节结冰积雪）→ 补 256 格就够；
+            //   ② 差异在深处（草/流体/树/火焰…）→ 补顶层**毫无作用**。
+            // 客户端上报里带了它自己算的顶层 hash，这里一比对就知道是哪种。
+            // 没有这道闸门（早先的实现）会对 ② 也盲发顶层补丁 →
+            // 客户端整块摘要仍然不同 → 重报 → 无限循环
+            // （实机实测：每秒 101 次上报、Match 0 Mismatch 101、回传 0 片）。
+            //
+            // 三种结果的处置（用户口径）：
+            //   · 客户端缺顶层 hash（0 = 未提供）→ 回 NOT_READY 让它重算再报（**不补丁、不整块**）；
+            //   · 两端顶层相同              → 差异在深处 → 整块回传（补顶层没用）；
+            //   · 两端顶层不同              → 发顶层补丁（256 格，< 1ms）。
+            bool clientProvidedTopLayer = clientTopHeightHash != 0u || clientTopBlockHash != 0u;
+            bool topLayerDiffers = clientTopHeightHash != hostH || clientTopBlockHash != hostB;
+            if (!clientProvidedTopLayer)
+            {
+                // 客户端没带顶层 hash（0 = 未提供）：主机**无从判断**差异在顶层还是深处。
+                // 用户口径：这种情况**不要**发顶层补丁、也**不要**整块回传 ——
+                // 回 NOT_READY 让客户端重算顶层 hash 再报，下一轮再判。
+                // 为什么不能整块回传：那正是"红框那一刻卡一下"的来源（65536 格落地 250~295ms）；
+                // 而缺顶层 hash 往往只是客户端没来得及算，重算一次是 512 次访问（< 1ms）。
+                m_topLayerFixSkippedNoClientHash++;
+                clientMustRecalcTopLayer = true;
+                return false;
+            }
+            if (!topLayerDiffers)
+            {
+                // 两端顶层一致 ⇒ 差异确实在深处（草/流体/树/火焰…）→ 必须整块回传，补顶层没用。
+                m_topLayerFixSkippedNotTopLayer++;
+                return false;
+            }
+
+            // 逐列取主机顶格。x/z 是 chunk-local，y 是绝对高度。
+            // cells 是引擎原始 int（含光照位）：拆成 contents/data 传，
+            // 客户端 ApplyCells 只认这两个，光照位不会被带过去。
+            var fix = new PT.TopLayerFix
+            {
+                Key = new PT.ChunkKey { X = key.X, Z = key.Z },
+                HostTopHeightHash = hostH,
+                HostTopBlockHash = hostB
+            };
+            for (int x = 0; x < ChunkDigest.SizeXZ; x++)
+            {
+                for (int z = 0; z < ChunkDigest.SizeXZ; z++)
+                {
+                    int top = shafts[x + z * ChunkDigest.SizeXZ] & 0xFF;
+                    int index = top + x * ChunkDigest.Height +
+                        z * ChunkDigest.Height * ChunkDigest.SizeXZ;
+                    int value = cells[index];
+                    fix.Cells.Add(new PT.CellEdit
+                    {
+                        X = x,
+                        Y = top,
+                        Z = z,
+                        Contents = Game.Terrain.ExtractContents(value),
+                        Data = Game.Terrain.ExtractData(value)
+                    });
+                }
+            }
+            // 发送失败（背压）= 没发出去：返回 true 但明确计数，
+            // 由客户端的摘要重报再触发一次（不在这里改成整块回传，那会放大成本）。
+            if (!m_server.TrySend(state.Id, MessageType.TopLayerFix, fix.ToByteArray()))
+            {
+                m_topLayerFixSendFailures++;
+                return true;
+            }
+            m_topLayerFixesSent++;
+            return true;
+        }
+
         private void HandleDigestReport(State state, PT.ChunkDigestReport report)
         {
             PlayerSessionRecord session = state.Session;
@@ -3594,11 +4150,13 @@ namespace SuMultiplayer.Terrain
                     }
                     // **Requested（黄）的唯一来源**：客户端确实上报了这一块、主机还没有内容可裁决。
                     session.Verdicts[key] = (byte)ChunkVerifyState.Requested;   // 等主机加载后才能核对
-                    RememberReport(session, key, clientHash, nowMs);           // 摘要留着，别丢
+                    RememberReport(session, key, clientHash, nowMs,
+                        entry.ClientTopHeightHash, entry.ClientTopBlockHash);      // 摘要留着，别丢
                     SendVerdict(state, key, DigestVerdict.NotReady, 0u);       // 明确的"还没好"
                     continue;
                 }
-                ResolveReport(state, key, clientHash, nowMs);
+                ResolveReport(state, key, clientHash, nowMs, entry.ClientChangeSequence,
+                    entry.ClientTopHeightHash, entry.ClientTopBlockHash);
             }
         }
 
@@ -3656,7 +4214,9 @@ namespace SuMultiplayer.Terrain
         }
 
         /// <summary>
-        /// 增量：loaded=1 → add（并清掉该身份在这块上可能欠的标记），loaded=0 → remove
+        /// 增量：loaded=1 → add，loaded=0 → remove。
+        /// 新增区块只改变客户端内存集合；欠更新标记要等摘要裁决后才清除，避免
+        /// ClientChunks 先到而摘要尚未计算时丢掉冰雪等主机演化改动的欠账。
         /// （同一块在一条消息里出现多次以最后一次为准，因为逐条按顺序应用）。
         /// 只有**真的**新增 / 移除才计入日志里的增删数（重复的 no-op 不算）。
         /// 调用方已持有 m_gate。
@@ -3666,8 +4226,6 @@ namespace SuMultiplayer.Terrain
         {
             int added = 0;
             int removed = 0;
-            int marksCleared = 0;
-            int snapshotsQueued = 0;
             for (int i = 0; i < message.Entries.Count; i++)
             {
                 ClientChunkEntry entry = message.Entries[i];
@@ -3677,15 +4235,7 @@ namespace SuMultiplayer.Terrain
                     if (session.MemoryChunks.Add(key))
                     {
                         added++;
-                        // 它的当前内存集合**新增**了这一块 → 它不再欠这块的更新（用户口径：走进该区域即清零）。
-                        if (ClearPendingOnChunkLoaded(session, key, out long owedSequence))
-                        {
-                            marksCleared++;
-                            // 关键补充：它"刚开始持有"这块，而主机在它没有这块时记过一笔改动 ——
-                            // 那次投递可能刚好错过（ClientChunks 还在路上）。直接补一份**当前快照**，
-                            // 比等"加载摘要 → 不一致 → 回传"少一个往返，也避免窗口里的静默旧内容。
-                            if (EnqueueChunkSnapshotLocked(state, key, owedSequence)) snapshotsQueued++;
-                        }
+                        QueueOwedSnapshotIfNeeded(state, session, key);
                     }
                 }
                 else if (session.MemoryChunks.Remove(key))
@@ -3698,8 +4248,6 @@ namespace SuMultiplayer.Terrain
             m_clientChunkDeltaMessagesSinceLog++;
             m_clientChunkDeltaAddsSinceLog += added;
             m_clientChunkDeltaRemovesSinceLog += removed;
-            m_clientChunkDeltaMarkClearsSinceLog += marksCleared;
-            m_clientChunkDeltaSnapshotsSinceLog += snapshotsQueued;
             long nowMs = Environment.TickCount64;
             if (m_lastClientChunkDeltaLogMs != 0 &&
                 nowMs - m_lastClientChunkDeltaLogMs < m_options.ClientChunkLogIntervalMs)
@@ -3710,19 +4258,14 @@ namespace SuMultiplayer.Terrain
             long messages = m_clientChunkDeltaMessagesSinceLog;
             long logAdded = m_clientChunkDeltaAddsSinceLog;
             long logRemoved = m_clientChunkDeltaRemovesSinceLog;
-            long logMarkClears = m_clientChunkDeltaMarkClearsSinceLog;
-            long logSnapshots = m_clientChunkDeltaSnapshotsSinceLog;
             m_clientChunkDeltaMessagesSinceLog = 0;
             m_clientChunkDeltaAddsSinceLog = 0;
             m_clientChunkDeltaRemovesSinceLog = 0;
-            m_clientChunkDeltaMarkClearsSinceLog = 0;
-            m_clientChunkDeltaSnapshotsSinceLog = 0;
             ClientChunkSetTrace?.Invoke("身份 " + PlayerSessionKeys.ShortIdentity(session.Identity) +
                 "（稳定键 " + session.StableKey + " · clientId=" + state.Id + "）内存区块增量：" +
                 "最近 " + m_options.ClientChunkLogIntervalMs + "ms 内应用 " + messages +
                 " 条消息 → 新增 " + logAdded + " 块 / 移除 " + logRemoved + " 块" +
-                (logMarkClears > 0 ? " / 清除欠更新标记 " + logMarkClears + " 个" : string.Empty) +
-                (logSnapshots > 0 ? " / 补发整块快照 " + logSnapshots + " 份" : string.Empty) +
+                "（新增块先做摘要核对；只有摘要不一致才回传整块）" +
                 "；当前内存区块（引擎已分配）" + session.MemoryChunks.Count + " 块（累计增量消息 " +
                 session.ClientChunkDeltaMessages + " 条）");
         }
@@ -3764,15 +4307,13 @@ namespace SuMultiplayer.Terrain
             }
             if (session.ClientChunkFullParts.Count < session.ClientChunkFullExpectedParts) return;
             // 收齐：整体替换（旧集合里不在新集合中的块 = 客户端已经卸载 / 本次会话不再持有的块）。
+            HashSet<ChunkKey> previousChunks = new HashSet<ChunkKey>(session.MemoryChunks);
             int previous = session.MemoryChunks.Count;
             session.MemoryChunks.Clear();
-            int marksCleared = 0;
             foreach (ChunkKey key in session.ClientChunkFullBuffer)
             {
                 session.MemoryChunks.Add(key);
-                // 新集合包含这一块 → 该身份不再欠这块的更新（整集替换也走同一条清除口径）。
-                // **不**在这里补整块快照：整集是握手/重连的基线，缺口由追帧或整图覆盖（否则一次重连会灌几百份快照）。
-                if (ClearPendingOnChunkLoaded(session, key, out _)) marksCleared++;
+                if (!previousChunks.Contains(key)) QueueOwedSnapshotIfNeeded(state, session, key);
             }
             session.ClientChunkFullSets++;
             m_clientChunkFullSets++;
@@ -3782,7 +4323,7 @@ namespace SuMultiplayer.Terrain
                 "（稳定键 " + session.StableKey + " · clientId=" + state.Id + "）整集已收齐：id=" +
                 message.FullSetId + " · " + message.PartCount + " 片 / " + count +
                 " 块 → 内存区块集合（引擎已分配）整体替换（原 " + previous + " 块；v8 实时地图客户端线框只画这一份）" +
-                (marksCleared > 0 ? "；新集合包含的块清掉 " + marksCleared + " 个欠更新标记" : string.Empty));
+                "；欠更新标记等待摘要裁决，不因整集到达而直接清除");
         }
 
         /// <summary>丢弃该身份正在拼的整集（新连接握手 / 离开时调用；已收齐的不受影响）。</summary>
@@ -3792,6 +4333,22 @@ namespace SuMultiplayer.Terrain
             session.ClientChunkFullExpectedParts = 0;
             session.ClientChunkFullParts.Clear();
             session.ClientChunkFullBuffer.Clear();
+        }
+
+        /// <summary>
+        /// 客户端重新持有区块时，如果它离开期间主机记录过权威改动，直接补当前快照。
+        /// 主机暂时没有内容时保留欠更新标记，等内容可用后由摘要裁决路径处理。
+        /// </summary>
+        private void QueueOwedSnapshotIfNeeded(State state, PlayerSessionRecord session, ChunkKey key)
+        {
+            if (state == null || session == null) return;
+            if (!m_pendingClients.TryGetValue(key, out Dictionary<string, long> pending) ||
+                !pending.TryGetValue(session.StableKey, out long owedSequence)) return;
+            if (!m_world.HasContents(key)) return;
+            if (!EnqueueChunkSnapshotLocked(state, key, owedSequence) &&
+                !HasQueuedResyncLocked(state, key)) return;
+            pending.Remove(session.StableKey);
+            if (pending.Count == 0) m_pendingClients.Remove(key);
         }
 
         /// <summary>
@@ -3828,17 +4385,22 @@ namespace SuMultiplayer.Terrain
         /// Source: Mod/ScMultiplayer/Modules/World/ScMultiplayerWorldObjectHandlers.cs:572-575
         ///         （旧实现按坐标去重：pending/queued 里已有的块不再排队）
         /// </summary>
-        private void RememberReport(PlayerSessionRecord session, ChunkKey key, uint clientHash, long nowMs)
+        private void RememberReport(PlayerSessionRecord session, ChunkKey key, uint clientHash,
+            long nowMs, uint clientTopHeightHash = 0u, uint clientTopBlockHash = 0u)
         {
             if (session.Pending.TryGetValue(key, out PendingReport existing))
             {
                 // 客户端重报（NotReady 后的重试）：以**最新一次**上报的摘要为裁决依据
                 existing.ClientHash = clientHash;
+                // 顶层摘要同样以最新一次为准（客户端重报时可能已经补算了它）
+                existing.ClientTopHeightHash = clientTopHeightHash;
+                existing.ClientTopBlockHash = clientTopBlockHash;
                 return;
             }
             session.Pending[key] = new PendingReport
             {
-                Key = key, ClientHash = clientHash, FirstSeenMs = nowMs
+                Key = key, ClientHash = clientHash, FirstSeenMs = nowMs,
+                ClientTopHeightHash = clientTopHeightHash, ClientTopBlockHash = clientTopBlockHash
             };
             session.PendingScan.Enqueue(key);
         }
@@ -3849,13 +4411,26 @@ namespace SuMultiplayer.Terrain
         /// Source: Mod/ScMultiplayer/Modules/World/ScMultiplayerWorldObjectHandlers.cs:691-709
         ///         （旧实现下发前一律改读当下的主机地形值，绝不发旧值/猜值）
         /// </summary>
-        private void ApplyVerdict(State state, ChunkKey key, DigestVerdict verdict)
+        private void ApplyVerdict(State state, ChunkKey key, DigestVerdict verdict,
+            uint clientTopHeightHash = 0u, uint clientTopBlockHash = 0u)
         {
             PlayerSessionRecord session = state.Session;
             if (session == null) return;
             session.Pending.Remove(key);
+
+            // NotReady 必须先分流：它不是"不一致"，不能落到下面 Mismatch 的分支里
+            // （那会记账成红框 + 入队整块回传）。语义：主机这边还没法裁决，
+            // 客户端按退避重报 —— 重报时若主机已有内容，会走顶层比对（顶层不同只补 256 格）。
+            if (verdict == DigestVerdict.NotReady)
+            {
+                state.NotReady++;
+                // 不动已有结论（绿/蓝是过去真的裁决过的结果；红要留着等重判收敛）。
+                return;
+            }
+
             if (verdict == DigestVerdict.Match)
             {
+                ClearPendingOnChunkLoaded(session, key, out _);
                 state.Match++;
                 // 之前失败过、回传后这次通过 = **二次验证成功**（蓝框），否则就是一次通过（绿框）
                 bool wasFailed = session.Verdicts.TryGetValue(key, out byte previous) &&
@@ -3898,6 +4473,32 @@ namespace SuMultiplayer.Terrain
                 m_resyncCoalesced++;
                 return;
             }
+
+            // ---- 顶层优先：整块回传之前先只补顶层那一层（16×16 = 256 格）----
+            //
+            // 为什么：主机按需加载出来的新块与客户端的差异**只应该在顶层**
+            // （SubsystemWeather.FreezeThawAndDepositSnow 在 ChunkInitialized 时只改顶层）。
+            // 整块回传 65536 格在客户端落地实测 250~295ms 单帧尖峰；只补顶层实测 < 1ms。
+            //
+            // 这里**不**需要客户端先发 TopLayerMismatchReport —— 主机手上就有权威内容，
+            // 自己算出顶层差异格直接下发即可，少一次往返。
+            // 若主机顶层也不可用（块又没了 / 世界不支持数组通道）→ 退回整块回传（下面的路径）。
+            if (TrySendTopLayerFix(state, key, clientTopHeightHash, clientTopBlockHash,
+                    out bool clientMustRecalcTopLayer))
+            {
+                m_topLayerFixFromMismatch++;
+                return;
+            }
+            if (clientMustRecalcTopLayer)
+            {
+                // 客户端上报里没带顶层 hash → 让它重算一次再报（用户口径：这时候不需要补丁、
+                // 也不需要整块回传；只有"顶层 hash 真的不同"才发补丁）。
+                // 客户端收到 NotReady 会退避重报，重报时会带（或尽力算出）顶层 hash。
+                long seq = m_chunkChangeSequence.TryGetValue(key, out long hs) ? hs : 0L;
+                SendVerdict(state, key, DigestVerdict.NotReady, 0u, seq);
+                return;
+            }
+
             // 只登记"要回传这一块"：真正编码在 Tick 的**发送时刻**做（见 PendingResyncJob），
             // 这样快照一定包含此前已应用的全部改动，不会用旧内容盖掉后到的改动。
             state.PendingResync.Enqueue(new PendingResyncJob { Key = key });
@@ -3907,31 +4508,61 @@ namespace SuMultiplayer.Terrain
         /// 主机已有内容 → 现算主机摘要、比对、发送裁决、记账。发送失败（显式背压）时登记成待裁决，
         /// 由下一拍补发 —— 绝不把"没发出去"当成"已裁决"。
         /// </summary>
-        private void ResolveReport(State state, ChunkKey key, uint clientHash, long nowMs)
+        private void ResolveReport(State state, ChunkKey key, uint clientHash, long nowMs,
+            long clientChangeSequence = 0L,
+            uint clientTopHeightHash = 0u, uint clientTopBlockHash = 0u)
         {
             PlayerSessionRecord session = state.Session;
             if (session == null) return;
+
+            // ---- 第 8 步：内容"还没到位" ≠ "内容不一致" ----
+            // 客户端算这块摘要时只应用到了 clientChangeSequence 号改动；主机这块已经推进到
+            // hostSequence。落后 ⇒ 客户端内容本来就旧 ⇒ 回 NOT_READY（客户端退避重报），
+            // **不判 Mismatch、不回传整块**。这是"每跨一个新区块就卡一次"的另一条根因。
+            // 只在两个号都 > 0 时判定：0 表示"未提供"（旧客户端 / 测试桩），不能当落后。
+            long hostSequence = m_chunkChangeSequence.TryGetValue(key, out long hs) ? hs : 0L;
+            if (clientChangeSequence > 0 && hostSequence > 0 && clientChangeSequence < hostSequence)
+            {
+                state.NotReady++;
+                SendVerdict(state, key, DigestVerdict.NotReady, 0u, hostSequence);
+                RememberReport(session, key, clientHash, nowMs,
+                    clientTopHeightHash, clientTopBlockHash);
+                return;
+            }
+
             uint hostHash = HostDigest(key);
+            if (clientHash == 0u) m_clientHashZeroVerdicts++;
             DigestVerdict verdict = CompareReport(clientHash, hostHash);
-            if (!SendVerdict(state, key, verdict, hostHash))
+            if (!SendVerdict(state, key, verdict, hostHash, hostSequence))
             {
                 // 发送队列满：这条上报还没被回答，留在待办里，下一拍补真实主机摘要。
                 // 它同样是"客户端确实上报过、还没裁决"→ 没有历史结论时记 Requested（黄），
                 // 这样"待裁决条数 = 黄框块数"在背压时也成立；已有结论（绿/红/蓝）不覆盖，
                 // 免得把二次验证（蓝）洗成黄。
                 if (!session.Verdicts.ContainsKey(key)) session.Verdicts[key] = (byte)ChunkVerifyState.Requested;
-                RememberReport(session, key, clientHash, nowMs);
+                RememberReport(session, key, clientHash, nowMs,
+                    clientTopHeightHash, clientTopBlockHash);
                 return;
             }
-            ApplyVerdict(state, key, verdict);
+            ApplyVerdict(state, key, verdict, clientTopHeightHash, clientTopBlockHash);
         }
 
         /// <summary>
         /// 主机侧比对：客户端摘要 0 是 <see cref="ChunkDigest.Value"/> 的"未计算/未知"保留值，
         /// **不能**当成"和主机一样"（那就是伪造匹配）—— 一律按不一致处理，把主机这份内容回传过去。
         /// </summary>
+        /// <summary>
+        /// 主机侧比对。
+        ///
+        /// **clientHash == 0 的语义是"客户端未知"，不是"不一致"**（<see cref="ChunkDigest.Value"/>
+        /// 把 0 保留给"未计算/未知"）。早先这里判 Mismatch ⇒ 客户端块刚加载、内容还在
+        /// InvalidContents1~4 阶段时报上来的 0 会被当成不一致：主机明明有内容、明明一致，
+        /// 却显示红框并触发整块回传（实机症状：飞行中该块一直是红的）。
+        /// 现在改判 **NotReady**：让客户端退避重报，等它内容定稿后带着真实摘要回来。
+        /// 这符合"绝不伪造裁决"的约束 —— 未知就是未知，不猜成不一致。
+        /// </summary>
         private static DigestVerdict CompareReport(uint clientHash, uint hostHash) =>
-            clientHash == 0u ? DigestVerdict.Mismatch : ChunkLoadVerifier.Compare(clientHash, hostHash, true);
+            clientHash == 0u ? DigestVerdict.NotReady : ChunkLoadVerifier.Compare(clientHash, hostHash, true);
 
         /// <summary>
         /// 每 tick 轮转核对"欠着裁决"的上报（有界；待办挂在**身份记录**上，跨重连保留）：
@@ -3988,7 +4619,9 @@ namespace SuMultiplayer.Terrain
                     session.PendingScan.Enqueue(key);
                     continue;
                 }
-                ApplyVerdict(state, key, verdict);
+                // 顶层摘要从待裁决记录里取（客户端最近一次上报带的）。
+                ApplyVerdict(state, key, verdict,
+                    report.ClientTopHeightHash, report.ClientTopBlockHash);
                 resolved++;
             }
             return resolved;
@@ -4044,14 +4677,16 @@ namespace SuMultiplayer.Terrain
         /// <summary>
         /// 发送一条裁决。返回 false = 发送队列满（**显式背压**，调用方必须保留这条上报，不能当已裁决）。
         /// </summary>
-        private bool SendVerdict(State state, ChunkKey key, DigestVerdict verdict, uint hostHash)
+        private bool SendVerdict(State state, ChunkKey key, DigestVerdict verdict, uint hostHash,
+            long hostChangeSequence = 0L)
         {
             var message = new PT.ChunkVerdict();
             message.Entries.Add(new PT.ChunkVerdict.Types.Entry
             {
                 Key = new PT.ChunkKey { X = key.X, Z = key.Z },
                 Verdict = (PT.ChunkDigestVerdict)(int)verdict,
-                HostHash = hostHash
+                HostHash = hostHash,
+                HostChangeSequence = hostChangeSequence
             });
             return m_server.TrySend(state.Id, MessageType.ChunkVerdict, message.ToByteArray());
         }
@@ -4072,8 +4707,11 @@ namespace SuMultiplayer.Terrain
         public uint HostDigest(ChunkKey key)
         {
             if (!m_world.HasContents(key)) return 0u;
+            if (!(m_world is IPackedTerrainWorld packed))
+                throw new InvalidOperationException(
+                    "Host digest requires IPackedTerrainWorld; the world adapter does not implement it.");
             var digest = new ChunkDigest();
-            digest.Compute(m_world.GetCellSource(key));
+            digest.ComputePacked(packed.GetPackedCellSource(key));
             return digest.HasValue ? digest.Value : 0u;
         }
 
@@ -4765,7 +5403,6 @@ namespace SuMultiplayer.Terrain
                 m_lastStaleVerdictProblemLogMs = 0L;
                 m_staleVerdictBatch.Clear();
                 m_lastOwedSnapshotLogMs = 0L;
-                m_clientChunkDeltaSnapshotsSinceLog = 0L;
                 m_cellChangeSendFailures = 0L;
                 m_lastCellChangeSendFailureLogMs = 0L;
                 m_catchUpChangesSent = 0L;
@@ -5028,11 +5665,28 @@ namespace SuMultiplayer.Terrain
         private readonly Dictionary<ChunkKey, long> m_reportSentMs = new Dictionary<ChunkKey, long>();
         private readonly Dictionary<ChunkKey, ChunkKey> m_unused = new Dictionary<ChunkKey, ChunkKey>();
         private readonly Dictionary<ChunkKey, int> m_pendingParts = new Dictionary<ChunkKey, int>();
+        private readonly Dictionary<ChunkKey, bool> m_resyncChangedChunks =
+            new Dictionary<ChunkKey, bool>();
         private readonly Queue<DigestEntry> m_reportQueue = new Queue<DigestEntry>();
         /// <summary>收到 NotReady 的块 → 下一次重报的时刻（退避）。本端的保险：不等主机那边的时序。
         /// 重报次数上限由 <see cref="ChunkLoadVerifier.MaxRetries"/> 明确兜住（超限计数，不静默硬撑）。</summary>
         private readonly Dictionary<ChunkKey, NotReadyRetry> m_notReadyRetries = new Dictionary<ChunkKey, NotReadyRetry>();
         private long m_reportsSent, m_match, m_mismatch, m_resyncApplied, m_resyncVerified, m_cellChanges, m_retries;
+        private TerrainResyncDiagnosticWindow m_resyncDiagnostics;
+
+        public TerrainResyncDiagnosticWindow ResyncDiagnostics => m_resyncDiagnostics;
+
+        public void BeginResyncDiagnostics(ulong requestId, uint windowMs, long nowMs) =>
+            (m_resyncDiagnostics ??= new TerrainResyncDiagnosticWindow()).Begin(
+                requestId, windowMs, nowMs);
+
+        public bool TryTakeResyncDiagnostics(long nowMs, out TerrainResyncDiagnosticSample sample)
+        {
+            if (m_resyncDiagnostics != null)
+                return m_resyncDiagnostics.TryTake(nowMs, out sample);
+            sample = default;
+            return false;
+        }
         private long m_reReports, m_abandoned;
         private long m_lastVerifyMs, m_maxVerifyMs;
 
@@ -5046,6 +5700,32 @@ namespace SuMultiplayer.Terrain
         /// <summary>加载后被改动、等重算摘要的块（按块去重：同一块改 100 格只重算一次）。</summary>
         private readonly Queue<ChunkKey> m_dirtyQueue = new Queue<ChunkKey>();
         private readonly HashSet<ChunkKey> m_dirtyQueued = new HashSet<ChunkKey>();
+
+        // ---- 顶层摘要（16×16 = 256 个顶格；见 doc/chunk-digest-tiered-verify-plan.md）----
+        // 客户端在 chunk 加载、算完摘要后上报；主机比对后只在顶层不同时回 TOP_LAYER_FIX。
+        // 顶层 hash 按块缓存，卸载时清掉（与 m_localHashes 同生命周期）。
+        private readonly Dictionary<ChunkKey, uint> m_topHeightHashes = new Dictionary<ChunkKey, uint>();
+        private readonly Dictionary<ChunkKey, uint> m_topBlockHashes = new Dictionary<ChunkKey, uint>();
+        /// <summary>已发过 TOP_LAYER_MISMATCH_REPORT、等主机回 TOP_LAYER_FIX 的块。</summary>
+        private readonly HashSet<ChunkKey> m_topLayerAwaitingFix = new HashSet<ChunkKey>();
+        private long m_topLayerChecks, m_topLayerMatches, m_topLayerMismatches;
+        private long m_topLayerReportsSent, m_topLayerFixesReceived, m_topLayerFixCellsApplied;
+        private long m_topLayerFixEscalations, m_topLayerUnavailable;
+        /// <summary>顶层补丁已收敛、但块不在内存集合导致没能回摘要的次数。</summary>
+        private long m_topLayerConvergeUnreported;
+        /// <summary>发送时因内容未定稿而**延后**的上报条数（不发 0；条目不丢，下一帧重试）。</summary>
+        private long m_reportsDeferredNotStable;
+        private string m_reportsDeferredNotStableLoggedReason = string.Empty;
+        /// <summary>统计到 clientHash == 0 的次数（客户端侧：算不出来 / 缓存里是 0）。</summary>
+        private long m_clientHashZero;
+
+        /// <summary>卡在 Stale 的块（值 = 首次观察到 Stale 的时刻 ms）；自愈扫描用。</summary>
+        private readonly Dictionary<ChunkKey, long> m_staleSinceMs = new Dictionary<ChunkKey, long>();
+        /// <summary>自愈扫描里强制退回未核对并重新上报的块次数。</summary>
+        private long m_staleHealed;
+        /// <summary>自愈扫描上一次运行的时刻（限频，避免每帧遍历）。</summary>
+        private long m_lastStaleHealMs;
+        private long m_lastStaleHealLogMs;
         /// <summary>待落地的回传分片（原始载荷 + 入队时该块的"代"）。</summary>
         private readonly Queue<ResyncJob> m_resyncQueue = new Queue<ResyncJob>();
         /// <summary>每块当前的"代"：卸载时 +1，让排队中的旧分片在落地时被明确丢弃（不落到另一份内容上）。</summary>
@@ -5055,6 +5735,12 @@ namespace SuMultiplayer.Terrain
         /// <summary>发送阶段复用的一批条目（避免每帧分配）。</summary>
         private readonly List<DigestEntry> m_reportBatch = new List<DigestEntry>();
         private long m_digestsComputed, m_digestsDroppedUnloaded, m_hashRefreshes;
+        /// <summary>内容未定稿、本轮不算摘要的块次数（第 6 步；不计 mismatch、不计丢弃）。</summary>
+        private long m_digestsDeferredNotStable;
+        /// <summary>迟到的 Mismatch 裁决数（本端序号已超过主机裁决时的序号 → 不回传，先重算）。</summary>
+        private long m_verdictsStaleSkipped;
+        private long m_lastNotStableLogMs;
+        private readonly HashSet<ChunkKey> m_notStableLogged = new HashSet<ChunkKey>();
         private long m_hashRefreshesDroppedUnloaded, m_resyncDroppedUnloaded, m_resyncDecodeFailures;
         private long m_reportEntriesSent, m_reportsDroppedUnloaded, m_reportSendDeferrals;
         /// <summary>上报条目到发送时内容还没定稿（内存里有这块）→ 退回未核对并排队强制核对（不丢、也不报旧状态）。</summary>
@@ -5323,11 +6009,13 @@ namespace SuMultiplayer.Terrain
         /// <param name="attachToChannel">false = 由主线程泵调用 <see cref="ProcessFrame"/>（引擎接入用）。</param>
         public TerrainSyncClient(ITerrainWorld world, TcpTerrainClient channel,
             TerrainSyncOptions options = null, bool attachToChannel = true,
-            MessageChannel messages = null)
+            MessageChannel messages = null,
+            TerrainResyncDiagnosticWindow resyncDiagnostics = null)
         {
             m_world = world ?? throw new ArgumentNullException(nameof(world));
             m_channel = channel ?? throw new ArgumentNullException(nameof(channel));
             m_options = options ?? new TerrainSyncOptions();
+            if (resyncDiagnostics != null) m_resyncDiagnostics = resyncDiagnostics;
             m_verifier.MaxRetries = m_options.MaxRetries;
             m_messages = messages ?? new MessageChannel(new MessageRegistry(),
                 (clientId, type, payload) => clientId == 0 && m_channel.TrySend(type, payload),
@@ -5356,6 +6044,8 @@ namespace SuMultiplayer.Terrain
                 MessageOwner);
             registry.Register((int)MessageType.ChunkVerdict, PT.ChunkVerdict.Parser,
                 new DelegateMessageHandler<PT.ChunkVerdict>(OnVerdict), MessageOwner);
+            registry.Register((int)MessageType.TopLayerFix, PT.TopLayerFix.Parser,
+                new DelegateMessageHandler<PT.TopLayerFix>(OnTopLayerFix), MessageOwner);
             registry.Register((int)MessageType.ChunkResync, PT.ChunkResync.Parser,
                 new DelegateMessageHandler<PT.ChunkResync>(OnResync), MessageOwner);
             registry.Register((int)MessageType.CellChange, PT.CellChange.Parser,
@@ -5366,6 +6056,19 @@ namespace SuMultiplayer.Terrain
                 new DelegateMessageHandler<PT.VerifyChunks>(OnVerifyRequest), MessageOwner);
             registry.Register((int)MessageType.Pong, Pong.Parser,
                 new DelegateMessageHandler<Pong>(OnPong), MessageOwner);
+            registry.Register((int)MessageType.TerrainDiagnosticControl,
+                TerrainDiagnosticControl.Parser,
+                new DelegateMessageHandler<TerrainDiagnosticControl>(OnTerrainDiagnosticControl),
+                MessageOwner);
+        }
+
+        private void OnTerrainDiagnosticControl(MessageContext context,
+            TerrainDiagnosticControl message)
+        {
+            if (message == null || message.RequestId == 0 || message.WindowMs == 0 ||
+                message.WindowMs > 10000) return;
+            BeginResyncDiagnostics(message.RequestId, message.WindowMs,
+                Environment.TickCount64);
         }
 
         private void OnHelloAck(MessageContext context, HelloAck message) => HandleHelloAck(message);
@@ -5392,6 +6095,9 @@ namespace SuMultiplayer.Terrain
         }
 
         private void OnVerdict(MessageContext context, PT.ChunkVerdict message) => HandleVerdict(message);
+
+        private void OnTopLayerFix(MessageContext context, PT.TopLayerFix message) =>
+            HandleTopLayerFix(message);
 
         private void OnResync(MessageContext context, PT.ChunkResync message) =>
             HandleResync(context, message);
@@ -5554,6 +6260,11 @@ namespace SuMultiplayer.Terrain
         public void SetAppliedChangeSequence(long sequence)
         {
             m_lastAppliedChangeSequence = Math.Max(0L, sequence);
+            // 世界清单的 baseSequence 对当前已加载区块同样成立；逐块序号随后只会被
+            // 实际 CellChange / 快照水位推进。尚未加载的区块在 OnChunkLoaded 时补同一基线。
+            foreach (ChunkKey key in m_world.LoadedChunks)
+                if (!m_chunkChangeSequence.ContainsKey(key))
+                    m_chunkChangeSequence[key] = m_lastAppliedChangeSequence;
             m_catchUpBeginReceived = false;
             m_catchUpBarrierReceived = false;
             m_catchUpCompleted = false;
@@ -5718,6 +6429,12 @@ namespace SuMultiplayer.Terrain
         /// </summary>
         public bool OnChunkLoaded(ChunkKey key)
         {
+            m_resyncDiagnostics?.RecordChunkLoaded();
+            // 世界导入的 baseSequence 已经覆盖了该区块在快照中的历史改动。
+            // 为新进入的区块建立基线，否则电路作用域会把本地序号 0 误判为落后，
+            // 永远停在 scope-not-ready。
+            if (!m_chunkChangeSequence.ContainsKey(key))
+                m_chunkChangeSequence[key] = m_lastAppliedChangeSequence;
             // 内存集合**不在这里**记账：它只认引擎的"分配"事件（见 OnMemoryChunkAllocated）。
             // 内容可用 ⇒ 必然早已分配（同一次扫描里先触发分配事件），所以这里只负责摘要 / 上报。
             if (!m_verifier.WouldBeginVerify(key)) return false;
@@ -5734,6 +6451,7 @@ namespace SuMultiplayer.Terrain
         /// </summary>
         public void OnChunkUnloaded(ChunkKey key)
         {
+            m_resyncDiagnostics?.RecordChunkUnloaded();
             // 内存集合**不在这里**记账：只有引擎真的释放了块（OnMemoryChunkFreed）才移除 ——
             // 内容掉回未定稿（但还占着内存）时，实时地图的方框必须继续保留。
             // 摘要还没算块就没了：那条工作作废（重载会重新入队一条新的）
@@ -5746,8 +6464,14 @@ namespace SuMultiplayer.Terrain
             }
             m_verifier.OnChunkUnloaded(key);
             m_localHashes.Remove(key);
+            // 顶层摘要与本地摘要同生命周期：块没了就丢（重载会重新算）。
+            m_topHeightHashes.Remove(key);
+            m_topBlockHashes.Remove(key);
+            m_topLayerAwaitingFix.Remove(key);
+            m_notStableLogged.Remove(key);
             m_reportSentMs.Remove(key);
             m_pendingParts.Remove(key);
+            m_resyncChangedChunks.Remove(key);
             m_chunkChangeSequence.Remove(key);
             if (m_memoryVerifyQueued.Remove(key)) m_memoryVerifyDueMs.Remove(key);
             m_notReadyRetries.Remove(key);      // 块没了：重报安排一并作废（重载时会重新上报一次）
@@ -6125,10 +6849,166 @@ namespace SuMultiplayer.Terrain
         private uint ComputeHash(ChunkKey key)
         {
             if (!m_world.HasContents(key)) return 0u;
+            long started = m_resyncDiagnostics?.IsActive == true
+                ? System.Diagnostics.Stopwatch.GetTimestamp() : 0L;
+            if (!(m_world is IPackedTerrainWorld packed))
+                throw new InvalidOperationException(
+                    "Chunk digest requires IPackedTerrainWorld; the world adapter does not implement it.");
             var digest = new ChunkDigest();
-            digest.Compute(m_world.GetCellSource(key));
-            return digest.HasValue ? digest.Value : 0u;
+            digest.ComputePacked(packed.GetPackedCellSource(key));
+            uint result = digest.HasValue ? digest.Value : 0u;
+            if (started != 0L)
+                m_resyncDiagnostics.RecordHash(System.Diagnostics.Stopwatch.GetTimestamp() - started);
+            return result;
         }
+
+        // ---------------------------------------------------------------- 稳定性判定（第 6 步）
+        //
+        // 算摘要前必须确认"内容已定稿、且填充线程已停写"。
+        // 否则会拿填到一半的数组算出一个必然与主机不同的值 → 被当成 MISMATCH → 整块回传 → 卡顿。
+        // 这是"每跨一个新区块就掉一次帧"的主要来源。
+        // 见 doc/chunk-digest-tiered-verify-plan.md 第 5 章第 5 步。
+
+        /// <summary>
+        /// 该块现在能否安全算摘要。除引擎阶段外还检查本端状态：
+        ///   · 没有进行中的 ChunkResync 分片（落地期间内容在变）；
+        ///   · 不在待落地队列里。
+        /// 返回 false 时 <paramref name="reason"/> 是可直接写进日志的原因。
+        /// </summary>
+        private bool IsStableForDigest(ChunkKey key, out string reason)
+        {
+            // ① 本端：有排队中的回传分片 ⇒ 内容马上要变，现在算没有意义。
+            if (m_resyncQueue.Count > 0)
+            {
+                foreach (ResyncJob job in m_resyncQueue)
+                {
+                    if (job.Key.Equals(key))
+                    {
+                        reason = "有进行中的回传分片（" + m_resyncQueue.Count + " 片待落地）";
+                        return false;
+                    }
+                }
+            }
+
+            // ② 引擎：内容与填充线程都必须定稿。
+            if (m_world is IChunkStabilityWorld stability)
+                return stability.IsStableForDigest(key, out reason);
+
+            // 没有稳定性通道的世界实现（测试桩）：退回只判内容可用，
+            // 但**明确记一次**，避免"以为检查了其实没检查"。
+            reason = string.Empty;
+            return m_world.HasContents(key);
+        }
+
+        /// <summary>引擎阶段序数（诊断用；世界不支持时返回 -1 表示未知）。</summary>
+        private int EngineStageOf(ChunkKey key) =>
+            m_world is IChunkStabilityWorld stability ? stability.EngineStageOf(key) : -1;
+
+        /// <summary>
+        /// 内容未定稿导致的延后：**限流**记录原因（同一块只记一次，另有累计计数），
+        /// 否则一个跨区块会瞬间刷出几十行。
+        /// </summary>
+        private void NoteDigestNotStable(ChunkKey key, string reason)
+        {
+            if (string.IsNullOrEmpty(reason)) return;
+            if (!m_notStableLogged.Add(key)) return;
+            long now = Environment.TickCount64;
+            if (m_lastNotStableLogMs != 0 &&
+                now - m_lastNotStableLogMs < m_options.ClientQueueSaturationLogMs) return;
+            m_lastNotStableLogMs = now;
+            CatchUpProblem?.Invoke("区块 " + key + " 内容未定稿 → 本轮不算摘要（" + reason +
+                "）；累计延后 " + m_digestsDeferredNotStable + " 次，这些块**不计入不一致**");
+        }
+
+        // ---------------------------------------------------------------- 顶层摘要（16×16 = 256 格）
+        //
+        // 目的：chunk 加载时用 512 次数组访问代替 65536 格的整块摘要，判断"这块和主机是否一致"。
+        // 只在加载时校验（与 OnChunkLoaded 同一入口）；已加载的块收到 CellChange 时不校验
+        // —— 内容已由主机权威下发，两端必然一致（与 m_dirtyQueued 路径同一口径）。
+        // 详见 doc/chunk-digest-tiered-verify-plan.md 第 4.1.1 节。
+
+        /// <summary>
+        /// 算并缓存该块的顶层 hash。返回 false = 该块当前不可用（未加载 / 内容未定稿 /
+        /// 世界不支持顶层数组通道）—— 调用方按"无法校验"处理，**不静默当成一致**。
+        /// </summary>
+        private bool TryCaptureTopLayer(ChunkKey key)
+        {
+            if (!m_world.HasContents(key)) return false;
+            if (!(m_world is ITopLayerTerrainWorld topLayer))
+            {
+                // 不是每个世界实现都有顶层通道（测试桩）；明确计数，不猜。
+                m_topLayerUnavailable++;
+                return false;
+            }
+            if (!topLayer.TryGetChunkArrays(key, out int[] cells, out int[] shafts))
+            {
+                m_topLayerUnavailable++;
+                return false;
+            }
+            var digest = new ChunkDigest();
+            try
+            {
+                // ⚠️ cells / shafts 是引擎内部数组的引用：只在这里用完，不存不传。
+                digest.ComputeTopLayer(cells, shafts);
+            }
+            finally
+            {
+                // 不缓存数组引用（TerrainChunk.Dispose 会把它们归还 ArrayCache）。
+            }
+            if (!digest.HasTopLayer) return false;
+            m_topHeightHashes[key] = digest.TopHeightHash;
+            m_topBlockHashes[key] = digest.TopBlockHash;
+            return true;
+        }
+
+        /// <summary>
+        /// 顶层 hash 是否与主机一致（客户端侧，落地 TOP_LAYER_FIX 后复查用）。
+        /// 返回 false 且 <paramref name="known"/> 为 false 表示本地还没算过。
+        /// </summary>
+        private bool TryCompareTopLayer(ChunkKey key, uint hostTopHeightHash, uint hostTopBlockHash,
+            out bool known, out bool matches)
+        {
+            if (!m_topHeightHashes.TryGetValue(key, out uint localH) ||
+                !m_topBlockHashes.TryGetValue(key, out uint localB))
+            {
+                known = false;
+                matches = false;
+                return false;
+            }
+            known = true;
+            matches = localH == hostTopHeightHash && localB == hostTopBlockHash;
+            return true;
+        }
+
+        /// <summary>
+        /// 客户端：发 TOP_LAYER_MISMATCH_REPORT（每块一次；等主机回 TOP_LAYER_FIX）。
+        /// 主机收到后按**自己的**顶层 hash 重新判断，不一致才回差异格。
+        /// </summary>
+        private void SendTopLayerMismatchReport(ChunkKey key)
+        {
+            if (!m_topHeightHashes.TryGetValue(key, out uint h) ||
+                !m_topBlockHashes.TryGetValue(key, out uint b)) return;
+            if (!m_topLayerAwaitingFix.Add(key)) return;      // 已发过，等回复
+            var message = new PT.TopLayerMismatchReport
+            {
+                Key = new PT.ChunkKey { X = key.X, Z = key.Z },
+                ClientTopHeightHash = h,
+                ClientTopBlockHash = b
+            };
+            if (m_channel.TrySend(MessageType.TopLayerMismatchReport, message.ToByteArray()))
+            {
+                m_topLayerReportsSent++;
+                m_topLayerMismatches++;
+            }
+            else
+            {
+                // 显式背压：撤销"已发"标记，下一帧重试（不静默丢弃）。
+                m_topLayerAwaitingFix.Remove(key);
+                    m_reportSendDeferrals++;
+            }
+        }
+
+
 
         /// <summary>
         /// 每渲染帧一次（<c>TerrainSyncModule.Tick</c> → 每帧）。顺序与理由：
@@ -6171,6 +7051,7 @@ namespace SuMultiplayer.Terrain
             // 过期快照被丢弃后的重新核对：**退避到点**才发，不在丢弃的同一拍当场重报（那正是 1:1 循环）。
             FlushDiscardRefreshes();
             ProcessMemoryVerifications();
+            HealStuckStaleChunks(Environment.TickCount64);
             FlushDueNotReadyRetries();
             UpdateCatchUpOnTick(Environment.TickCount64);
             SendQueuedReports();
@@ -6242,6 +7123,8 @@ namespace SuMultiplayer.Terrain
                     continue;
                 }
                 ChunkPayloadCodec.Part part;
+                bool diagnosticActive = m_resyncDiagnostics?.IsActive == true;
+                long decodeStarted = diagnosticActive ? System.Diagnostics.Stopwatch.GetTimestamp() : 0;
                 try
                 {
                     part = ChunkPayloadCodec.Decode(job.Payload);
@@ -6252,6 +7135,9 @@ namespace SuMultiplayer.Terrain
                     ReportDecodeFailure(job.Key, e);
                     continue;
                 }
+                if (diagnosticActive)
+                    m_resyncDiagnostics.RecordDecode(job.Payload.Length, part.RunCount,
+                        part.ExpandedCellCount, System.Diagnostics.Stopwatch.GetTimestamp() - decodeStarted);
                 if (part.Count == 1 && part.Edits.Count == 0)
                 {
                     // 主机裁决时还有内容、编码时已经没了 → 零格快照。绝不当成"已覆盖"：
@@ -6262,7 +7148,24 @@ namespace SuMultiplayer.Terrain
                     NoteResyncEmptySnapshot(job.Key);
                     continue;
                 }
-                if (part.Edits.Count > 0) m_world.ApplyCells(part.Key, part.Edits);
+                if (part.Edits.Count > 0)
+                {
+                    if (m_world is ITerrainResyncDiagnosticWorld diagnosticWorld)
+                    {
+                        int changed = diagnosticWorld.ApplyResyncCells(part.Key, part.Edits,
+                            diagnosticActive ? m_resyncDiagnostics : null);
+                        if (changed > 0) m_resyncChangedChunks[part.Key] = true;
+                        if (part.IsLast)
+                            diagnosticWorld.CompleteResyncChunk(part.Key,
+                                m_resyncChangedChunks.TryGetValue(part.Key, out bool chunkChanged) && chunkChanged,
+                                diagnosticActive ? m_resyncDiagnostics : null);
+                        if (part.IsLast) m_resyncChangedChunks.Remove(part.Key);
+                    }
+                    else
+                        m_world.ApplyCells(part.Key, part.Edits);
+                    if (diagnosticActive)
+                        m_resyncDiagnostics.RecordAppliedPart();
+                }
                 m_resyncApplied++;
                 m_resyncAppliedThisTick++;
                 m_resyncAppliedInSecond++;
@@ -6289,7 +7192,10 @@ namespace SuMultiplayer.Terrain
                     continue;
                 }
                 // 覆盖后重算并**再报一次**：确认内容真的对齐（不是先认后收）。这一次重算算在回传预算里。
+                long digestStarted = diagnosticActive ? System.Diagnostics.Stopwatch.GetTimestamp() : 0;
                 uint hash = ComputeHash(part.Key);
+                if (diagnosticActive)
+                    m_resyncDiagnostics.RecordFinalDigest(System.Diagnostics.Stopwatch.GetTimestamp() - digestStarted);
                 m_localHashes[part.Key] = hash;
                 m_digestsThisTick++;
                 m_digestsComputed++;
@@ -6341,11 +7247,27 @@ namespace SuMultiplayer.Terrain
                     m_digestsDroppedUnloaded++;
                     continue;
                 }
+                // 稳定性判定（第 6 步）：内容还没定稿就**不算摘要、不上报**。
+                // 否则会拿"填到一半"的数组算出一个必然与主机不同的值，被当成 MISMATCH 触发整块回传 ——
+                // 这正是"每跨一个新区块就卡一次"的主要来源。改回队列尾部等下一轮（明确计数，不丢）。
+                if (!IsStableForDigest(key, out string unstableReason))
+                {
+                    m_digestsDeferredNotStable++;
+                    if (m_digestQueued.Add(key)) m_digestQueue.Enqueue(key);   // 下一轮再试
+                    NoteDigestNotStable(key, unstableReason);
+                    continue;
+                }
                 m_digestsThisTick++;        // 真的算了一次 65536 格
                 m_dirtyQueued.Remove(key);      // 现算的摘要已包含最新内容 → 脏标记作废（队列项留到刷新阶段跳过）
                 uint hash = ComputeHash(key);
                 m_localHashes[key] = hash;
                 m_digestsComputed++;
+
+                // 顶层校验：算完整块摘要后同时算顶层（512 次访问，成本可忽略）。
+                // 顶层只用来"快速否证"整块不一致，不参与整块摘要的值 —— 所以放在整块之后，
+                // 保证"上报的 hash 一定是整块摘要"这一既有语义不变。
+                if (TryCaptureTopLayer(key)) m_topLayerChecks++;
+
                 if (!m_verifier.TryBeginVerify(key, hash, out DigestEntry entry))
                 {
                     // 这几帧里状态变了（已 Fresh / 重报次数用尽）：不重复上报。放弃计数由 verifier 记；
@@ -6438,9 +7360,47 @@ namespace SuMultiplayer.Terrain
                     {
                         // 这块在排队期间收到过 CellChange（脏标记还没轮到预算）：发送前**现算**，
                         // 保证"下一次核对"带的是落地后的内容，而不是排队时的旧摘要。
+                        //
+                        // ⚠️ 现算**必须先过稳定性闸门**：ComputeHash 在内容不可用时返回 0u
+                        // （见 ComputeHash 开头的 HasContents 检查），而 0 的语义是"未知"。
+                        // 早先这里没有闸门 → 块刚加载、内容还在 InvalidContents1~4 阶段时
+                        // 会把这个 0 发出去，主机的 CompareReport(0, host) 无条件判 Mismatch
+                        // ⇒ **主机明明有内容、明明一致，却显示红框并触发整块回传**。
+                        // 实机症状：飞行中主机已加载该块、客户端那块却一直是红的。
+                        // 处理：不通过就把这条上报**留在队列里**（不出队、不算预算），下一帧再试 ——
+                        // 内容定稿后自然会发出去；绝不发 0，也绝不静默丢弃。
+                        if (!IsStableForDigest(entry.Key, out string unstableReason))
+                        {
+                            m_reportsDeferredNotStable++;
+                            m_reportsDeferredNotStableLoggedReason = unstableReason;
+                            m_reportBatch.RemoveAt(i);
+                            // 退回未核对，保证内容定稿后还会重新入队上报。
+                            m_verifier.ForceUnverified(entry.Key);
+                            QueueMemoryVerification(entry.Key);
+                            i--;
+                            continue;
+                        }
                         m_dirtyQueued.Remove(entry.Key);
                         hash = ComputeHash(entry.Key);
+                        if (hash == 0u)
+                        {
+                            // 闸门都过了还拿到 0（世界适配器异常）：不发 0，明确计数并延后。
+                            m_clientHashZero++;
+                            m_reportBatch.RemoveAt(i);
+                            m_verifier.ForceUnverified(entry.Key);
+                            QueueMemoryVerification(entry.Key);
+                            i--;
+                            continue;
+                        }
                         m_localHashes[entry.Key] = hash;
+                        // ⚠️ 顶层 hash **必须与整块摘要同时刷新**。
+                        // 主机判 Mismatch 时靠上报里的 client_top_*_hash 决定"差异是否只在顶层"：
+                        //   · 客户端顶层 hash 与主机相同 → 差异在深处 → 整块回传（客户端落地 250~295ms 卡顿）；
+                        //   · 不同 → 只补 256 格（< 1ms）。
+                        // 早先这里只更新整块摘要、不刷新顶层 hash → 上报带的是旧值/0，
+                        // 主机会把"其实只在顶层"的差异误判成"深处差异"而整块回传
+                        // （实机症状：红框出现的那一刻恰好卡一下）。
+                        TryCaptureTopLayer(entry.Key);
                         m_hashRefreshes++;
                         m_digestsComputed++;
                         m_digestsThisTick++;
@@ -6448,13 +7408,44 @@ namespace SuMultiplayer.Terrain
                     }
                     else if (m_localHashes.TryGetValue(entry.Key, out uint latest) && latest != hash)
                     {
+                        // 缓存值也可能是 0（旧路径写进去的）：同样不能发。
+                        if (latest == 0u)
+                        {
+                            m_clientHashZero++;
+                            m_reportBatch.RemoveAt(i);
+                            m_verifier.ForceUnverified(entry.Key);
+                            QueueMemoryVerification(entry.Key);
+                            i--;
+                            continue;
+                        }
                         hash = latest;
                         m_reportHashesRefreshed++;
                     }
+                    // ---- 发送前保证顶层 hash 一定带上 ----
+                    // 主机的判定口径：**缺顶层 hash → 回 NotReady 让它重算**（不补丁、不整块回传）。
+                    // 所以这里必须尽力保证有值：缓存里没有就现算一次（512 次访问，成本可忽略）。
+                    // 缺了会多一次 NotReady 往返，虽然不致命，但会让"顶层真的不同"的场景
+                    // 退化成两次往返才发现（用户实测：红框那一刻恰好卡一下）。
+                    if (!m_topHeightHashes.ContainsKey(entry.Key) ||
+                        !m_topBlockHashes.ContainsKey(entry.Key))
+                    {
+                        TryCaptureTopLayer(entry.Key);
+                    }
+                    m_topHeightHashes.TryGetValue(entry.Key, out uint topH);
+                    m_topBlockHashes.TryGetValue(entry.Key, out uint topB);
+
                     report.Entries.Add(new PT.ChunkDigestReport.Types.Entry
                     {
                         Key = new PT.ChunkKey { X = entry.Key.X, Z = entry.Key.Z },
-                        Hash = hash
+                        Hash = hash,
+                        // 本端算这块摘要时已经应用到第几号改动。主机据此区分
+                        // "客户端内容本来就旧（回 NOT_READY）"和"内容真不一致（回 MISMATCH）"。
+                        ClientChangeSequence = m_lastAppliedChangeSequence,
+                        ClientEngineStage = (uint)Math.Max(0, EngineStageOf(entry.Key)),
+                        // 主机判定"差异是否只在顶层"必须靠这两个值（见 TrySendTopLayerFix）。
+                        // 没算过顶层时填 0 = 未提供 → 主机会保守地走整块回传。
+                        ClientTopHeightHash = topH,
+                        ClientTopBlockHash = topB
                     });
                 }
                 if (!m_channel.TrySend(MessageType.ChunkDigestReport, report.ToByteArray()))
@@ -6463,6 +7454,10 @@ namespace SuMultiplayer.Terrain
                     m_reportSendDeferrals++;
                     break;
                 }
+                // 出队 count 条（与扫描窗口一致）。被剔除的"内容未定稿 / 算出 0"条目
+                // 已经在剔除处 ForceUnverified + QueueMemoryVerification ——
+                // 走的是与上面 HasContents==false 分支**完全相同**的重试通道
+                // （内容定稿后由强制核对队列重新算摘要并重新入队），所以不会丢上报。
                 for (int i = 0; i < count; i++) m_reportQueue.Dequeue();
                 m_reportsDroppedUnloaded += dropped;
                 m_reportsSent++;                                  // 消息数（旧口径不变）
@@ -6978,6 +7973,97 @@ namespace SuMultiplayer.Terrain
             }
         }
 
+        /// <summary>
+        /// 客户端：落地主机的顶层差异格（<c>TOP_LAYER_FIX</c>）。
+        ///
+        /// 流程：
+        ///   ① 用与 CellChange 同一套 <see cref="TerrainBridge.ApplyCells"/> 落地这些格
+        ///      （cells 只含 contents/data，光照位不进摘要也不改写）；
+        ///   ② 重算本地顶层 hash；
+        ///   ③ 与主机回的 host hash 比对：
+        ///        · 一致   ⇒ 收敛，解除等待；
+        ///        · 不一致 ⇒ 差异**不只在顶层**（标记可能不准 / 有深度改动）→
+        ///                   明确计数并升级为整块 ChunkResync 请求（不静默留着不一致）。
+        /// </summary>
+        private void HandleTopLayerFix(PT.TopLayerFix message)
+        {
+            if (message?.Key == null) return;
+            var key = new ChunkKey(message.Key.X, message.Key.Z);
+            m_topLayerFixesReceived++;
+            m_topLayerAwaitingFix.Remove(key);
+
+            if (!m_world.HasContents(key))
+            {
+                // 块已卸载：这次修复作废（重载会重新校验）。
+                m_topLayerFixEscalations++;
+                return;
+            }
+
+            if (message.Cells.Count > 0)
+            {
+                var edits = new List<CellEdit>(message.Cells.Count);
+                for (int i = 0; i < message.Cells.Count; i++)
+                {
+                    PT.CellEdit cell = message.Cells[i];
+                    if (cell == null) continue;
+                    if (cell.X < 0 || cell.X >= ChunkDigest.SizeXZ ||
+                        cell.Z < 0 || cell.Z >= ChunkDigest.SizeXZ ||
+                        cell.Y < 0 || cell.Y >= ChunkDigest.Height)
+                    {
+                        m_topLayerFixEscalations++;
+                        return;                                   // 越界 = 协议异常，不落地
+                    }
+                    edits.Add(new CellEdit(cell.X, cell.Y, cell.Z, cell.Contents, cell.Data));
+                }
+                if (edits.Count > 0)
+                {
+                    m_world.ApplyCells(key, edits);
+                    m_topLayerFixCellsApplied += edits.Count;
+                }
+            }
+
+            // 重算本地顶层 hash，确认是否收敛。
+            if (!TryCaptureTopLayer(key))
+            {
+                m_topLayerUnavailable++;
+                return;
+            }
+            if (!TryCompareTopLayer(key, message.HostTopHeightHash, message.HostTopBlockHash,
+                    out bool known, out bool matches))
+            {
+                m_topLayerUnavailable++;
+                return;
+            }
+            if (matches)
+            {
+                m_topLayerMatches++;
+                // ---- 闭环：内容已收敛，但**两边都还停在"不一致"** ----
+                //   · 主机：ApplyVerdict 在整块回传之前就把它记成 Failed（红）；
+                //   · 本端：收到那条 Mismatch 时记进了"不一致（stale）"。
+                // 顶层补丁让内容对上了，可**没有任何一条消息把这个结论告诉主机**。
+                // 后果（实机实测）：主机那条红放久了被"陈旧红清除"洗成 s=0（灰），
+                // 而本端 stale 一直在 → 灰框永久残留、永远不会变绿/蓝
+                // （红米实测 41 块灰 == 客户端"不一致 41"，两边口径对不上）。
+                // 所以这里必须回一次新鲜摘要：主机比对通过 → Failed 升级为 ReVerified（蓝），
+                // 本端 OnVerdict(Match) 也会把 stale 清掉 → 两边收敛。
+                if (!RequestChunkReverification(key))
+                {
+                    // 块已不在内存集合：没有内容可回，等下次加载重新校验（明确计数，不静默）。
+                    m_topLayerConvergeUnreported++;
+                }
+                return;
+            }
+
+            // 顶层补完仍不一致：差异不只在顶层 → 升级为整块核对（明确计数，不静默）。
+            // RequestChunkReverification 会让本端按当前内容重算摘要上报，主机比对不一致就回传整块。
+            m_topLayerFixEscalations++;
+            if (!RequestChunkReverification(key))
+            {
+                CatchUpProblem?.Invoke("顶层修复后仍不一致，且该块不在内存集合（区块 " + key +
+                    "）→ 无法发起整块核对；等下次加载重新校验");
+            }
+        }
+
         private void HandleVerdict(PT.ChunkVerdict message)
         {
             for (int i = 0; i < message.Entries.Count; i++)
@@ -7010,8 +8096,16 @@ namespace SuMultiplayer.Terrain
                         // 退避后重报（不在这一拍直接连发）：两端不互相依赖对方的时序
                         m_reportSentMs.Remove(key);
                         ScheduleNotReadyRetry(key);
+                        // 主机回 NotReady 的一个重要原因：我们上报里**没带顶层 hash**
+                        // （主机的口径是"缺顶层 hash → 让你重算再报，不补丁也不整块回传"）。
+                        // 这里补一次顶层摘要，让下一次重报能带上它；算不出来就等退避重试。
+                        if (!m_topHeightHashes.ContainsKey(key) || !m_topBlockHashes.ContainsKey(key))
+                        {
+                            if (!TryCaptureTopLayer(key)) m_topLayerUnavailable++;
+                        }
                         break;
                     case DigestVerdict.Match:
+                        m_resyncDiagnostics?.RecordHashVerdict(verdict);
                         m_notReadyRetries.Remove(key);
                         bool wasRetrying = m_mismatchRetries.ContainsKey(key) || m_mismatchCounts.ContainsKey(key);
                         m_verifier.OnVerdict(key, new DigestEntry(key, localHash), hostHash);
@@ -7028,6 +8122,7 @@ namespace SuMultiplayer.Terrain
                         }
                         break;
                     case DigestVerdict.Mismatch:
+                        m_resyncDiagnostics?.RecordHashVerdict(verdict);
                         m_notReadyRetries.Remove(key);
                         m_verifier.OnVerdict(key, new DigestEntry(key, localHash), hostHash);
                         m_mismatch++;
@@ -7036,6 +8131,26 @@ namespace SuMultiplayer.Terrain
                         // 这条 Mismatch 只是"迟到的裁决"，不能再计入连续重试预算（否则正常路径也会被误封顶）。
                         if (localHash != hostHash) RecordMismatch(key);
                         else m_convergedChunks++;
+
+                        // 主机裁决时这块已推进到 entry.HostChangeSequence 号改动。
+                        // 本端当前序号若**已经超过**它，说明这条裁决是"对更早内容"的结论，
+                        // 现在的内容早已不同 —— 直接回传会把新值盖回旧值（1:1 循环的老根因）。
+                        // 这种情况明确计数，交给正常的脏刷新流程重算后再报，不立即回传。
+                        if (entry.HostChangeSequence > 0 &&
+                            localHash != hostHash &&
+                            m_lastAppliedChangeSequence > entry.HostChangeSequence)
+                        {
+                            m_verdictsStaleSkipped++;
+                            if (m_dirtyQueued.Add(key)) m_dirtyQueue.Enqueue(key);
+                            break;
+                        }
+
+                        // 顶层优先：整块不一致时**先**只请求顶层差异（≤256 格）。
+                        // 若顶层本来就一致、差异在深处，主机回的 TopLayerFix 会带 0 格 + host hash，
+                        // 客户端复查仍不一致 → 自动升级为整块核对（见 HandleTopLayerFix）。
+                        // 这样常规的"天气/季节只改了顶层"不会退化成整块回传。
+                        if (m_topHeightHashes.ContainsKey(key) && m_topBlockHashes.ContainsKey(key))
+                            SendTopLayerMismatchReport(key);
                         break;
                 }
             }
@@ -7414,10 +8529,87 @@ namespace SuMultiplayer.Terrain
             if (!m_memoryChunks.Contains(key)) return false;
             // 显式触发（编辑回滚 / 主机要求 / 重连核对）是新的证据：重置重试预算与抑制。
             ResetMismatchRetry(key);
+            // ---- 关键：Stale 会**挡住**这次核对，必须先退回未核对 ----
+            // TryBeginReverify 对 Verifying / Stale 直接返回 false（"不一致已确认、等主机回传整块"）。
+            // 但"顶层补丁已把内容补成一致"这条路径**不会再有任何整块回传**：
+            //   · 主机那条 Failed 放久后被"陈旧红清除"洗成 s=0（灰），
+            //   · 本端永远停在 Stale，永远不会再上报 —— 两边都卡死。
+            // 实机实测：红米 41 块灰 == 客户端"不一致 41"，且长时间不变。
+            // 显式触发是新的证据（内容已经变了），退回未核对并重新上报是正确的。
+            if (m_verifier.StateOf(key) == ChunkFreshness.Stale) m_verifier.ForceUnverified(key);
             m_memoryVerifyDueMs.Remove(key);
             if (m_memoryVerifyQueued.Contains(key)) return true;
             QueueMemoryVerification(key);
             return true;
+        }
+
+        /// <summary>
+        /// 自愈：把**长时间卡在 Stale** 的块强制换一条路核对一次。
+        ///
+        /// 为什么需要：<c>ChunkLoadVerifier</c> 的 Stale 语义是"不一致已确认、等主机回传整块"，
+        /// 而 <c>TryBeginReverify</c> 对 Stale **直接拒绝**（防 1:1 循环）。可是自从
+        /// "Mismatch 先走顶层补丁"之后，这条路径**可能再也不会有整块回传**：
+        ///   · 主机那条 Failed 放久后被"陈旧红清除"洗成 s=0（灰）；
+        ///   · 本端永远停在 Stale，永远不会再上报。
+        /// 实机实测：红米 41 块灰 == 客户端"不一致 41"，两边口径对不上、且长时间不变。
+        ///
+        /// 做法：Stale 持续超过 <c>ClientStaleHealMs</c> → ForceUnverified + 排进强制核对。
+        /// 这不是"兜底糊住"，而是**同一套核对流程的重新发起**（走 ProcessMemoryVerifications
+        /// → 算摘要 → 常规上报 → 主机比对），有明确计数与日志，且每块只在超时后触发一次。
+        /// </summary>
+        private void HealStuckStaleChunks(long nowMs)
+        {
+            if (m_verifier == null) return;
+            // 限频：每 ClientStaleHealScanMs 扫一次（遍历内存集合，不能在热路径每帧做）。
+            long interval = Math.Max(1000, m_options.ClientStaleHealScanMs);
+            if (m_lastStaleHealMs != 0 && nowMs - m_lastStaleHealMs < interval) return;
+            m_lastStaleHealMs = nowMs;
+
+            // 先收集当前所有 Stale（顺带清掉已不在内存 / 已不是 Stale 的记账）。
+            m_staleHealScratch.Clear();
+            foreach (ChunkKey key in m_memoryChunks)
+            {
+                if (m_verifier.StateOf(key) == ChunkFreshness.Stale) m_staleHealScratch.Add(key);
+            }
+            foreach (ChunkKey key in m_staleSinceMs.Keys)
+            {
+                if (!m_staleHealScratch.Contains(key)) m_staleHealSinceRemove.Add(key);
+            }
+            for (int i = 0; i < m_staleHealSinceRemove.Count; i++) m_staleSinceMs.Remove(m_staleHealSinceRemove[i]);
+            m_staleHealSinceRemove.Clear();
+
+            long healAfter = Math.Max(1000, m_options.ClientStaleHealMs);
+            foreach (ChunkKey key in m_staleHealScratch)
+            {
+                if (!m_staleSinceMs.TryGetValue(key, out long since))
+                {
+                    m_staleSinceMs[key] = nowMs;      // 第一次看到它 Stale：开始计时
+                    continue;
+                }
+                if (nowMs - since < healAfter) continue;
+
+                // 超时：退回未核对 + 排进强制核对（不跳过 Stale 判定就无法重发摘要）。
+                m_staleSinceMs.Remove(key);
+                m_verifier.ForceUnverified(key);
+                QueueMemoryVerification(key);
+                m_staleHealed++;
+                NoteStaleHealed(key, nowMs - since);
+            }
+        }
+
+        private readonly HashSet<ChunkKey> m_staleHealScratch = new HashSet<ChunkKey>();
+        private readonly List<ChunkKey> m_staleHealSinceRemove = new List<ChunkKey>();
+
+        /// <summary>自愈限流日志：同一块只写一次，另有累计计数。</summary>
+        private void NoteStaleHealed(ChunkKey key, long staleMs)
+        {
+            long now = Environment.TickCount64;
+            if (m_lastStaleHealLogMs != 0 && now - m_lastStaleHealLogMs < m_options.ClientQueueSaturationLogMs)
+                return;
+            m_lastStaleHealLogMs = now;
+            CatchUpProblem?.Invoke("区块 " + key + " 卡在“不一致” " + (staleMs / 1000) +
+                "s 且没有任何整块回传在途（顶层补丁路径不回传整块）→ 强制退回未核对并重新上报一次；" +
+                "累计自愈 " + m_staleHealed + " 块");
         }
 
         /// <summary>
@@ -7470,6 +8662,9 @@ namespace SuMultiplayer.Terrain
                 m_localHashes[key] = hash;
                 m_digestsThisTick++;
                 m_digestsComputed++;
+                // 顶层 hash 必须与整块摘要**同时刷新**：上报要带它给主机做"差异是否只在顶层"的闸门，
+                // 拿旧值会让主机误判（该走整块回传的被当成顶层差异 → 补了没用 → 重报循环）。
+                TryCaptureTopLayer(key);
                 if (!m_verifier.TryBeginReverify(key, hash, out DigestEntry entry))
                 {
                     // 已有一条上报在途 / 已确认不一致等主机回传：不重复发起（状态机会继续走）。
@@ -7686,6 +8881,18 @@ namespace SuMultiplayer.Terrain
                 CellChangesApplied = m_cellChanges, Retries = m_retries, LastVerifyMs = m_lastVerifyMs,
                 MaxVerifyMs = m_maxVerifyMs, State = m_channel.State, BytesReceived = m_channel.Stats.BytesReceived,
                 ReReports = m_reReports, Abandoned = m_abandoned,
+                TopLayerChecks = m_topLayerChecks, TopLayerMatches = m_topLayerMatches,
+                TopLayerReportsSent = m_topLayerReportsSent,
+                TopLayerFixesReceived = m_topLayerFixesReceived,
+                TopLayerFixCellsApplied = m_topLayerFixCellsApplied,
+                TopLayerFixEscalations = m_topLayerFixEscalations,
+                TopLayerUnavailable = m_topLayerUnavailable,
+                TopLayerConvergeUnreported = m_topLayerConvergeUnreported,
+                StaleHealed = m_staleHealed,
+                ReportsDeferredNotStable = m_reportsDeferredNotStable,
+                ClientHashZero = m_clientHashZero,
+                DigestsDeferredNotStable = m_digestsDeferredNotStable,
+                VerdictsStaleSkipped = m_verdictsStaleSkipped,
                 QueuedDigests = m_digestQueued.Count, QueuedResyncParts = m_resyncQueue.Count,
                 QueuedHashRefreshes = m_dirtyQueued.Count,
                 DigestsThisTick = m_digestsThisTick, ReportsThisTick = m_reportsThisTick,

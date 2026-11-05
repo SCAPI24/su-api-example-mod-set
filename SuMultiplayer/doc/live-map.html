@@ -166,6 +166,10 @@ footer{margin-top:20px;padding-top:12px;border-top:1px solid var(--line);font-si
         <div class="telemetry-table-wrap"><table class="compact"><thead><tr><th>客户端</th><th>CPU</th><th>更新率</th><th>帧均 / 峰值</th><th>Age</th></tr></thead><tbody id="telemetryClientBody"><tr><td colspan="5" class="mono telemetry-unavailable">客户端运行样本不可用</td></tr></tbody></table></div>
       </section>
       <section class="telemetry-block" style="grid-column:1/-1">
+        <h4>区块重同步诊断</h4>
+        <div class="telemetry-table-wrap"><table class="compact"><thead><tr><th>端 / 阶段</th><th>分片字节</th><th>RLE 游程</th><th>展开格数</th><th>编码 ms</th><th>解码 ms</th><th>逐格应用 ms</th><th>电路回调 ms</th><th>最终摘要 ms</th><th>六面回滚 次 / ms</th><th>加载 / 卸载</th><th>Hash 检查 / Match / Mismatch</th><th>不变格 / 失效</th></tr></thead><tbody id="telemetryTerrainResyncBody"><tr><td colspan="13" class="mono telemetry-unavailable">等待主机调度诊断采样</td></tr></tbody></table></div>
+      </section>
+      <section class="telemetry-block" style="grid-column:1/-1">
         <h4>客户端电路修复</h4>
         <div class="telemetry-table-wrap"><table class="compact"><thead><tr><th>客户端</th><th>计数</th><th>累计</th><th>每秒</th></tr></thead><tbody id="telemetryClientCircuitBody"><tr><td colspan="4" class="mono telemetry-unavailable">客户端电路遥测不可用</td></tr></tbody></table></div>
       </section>
@@ -1662,6 +1666,13 @@ footer{margin-top:20px;padding-top:12px;border-top:1px solid var(--line);font-si
     cpuTotalPercent: true, processorCount: true, gameUpdateHz: true,
     frameTimeAvgMs: true, frameTimeMaxMs: true, moduleSampleEvery: true,
     lastMs: true, runtimeAgeMs: true,
+    terrainResync: true, terrainResyncAgeMs: true,
+    requestId: true, windowMs: true, shardBytes: true, rleRuns: true,
+    expandedCells: true, decodeMs: true, applyMs: true,
+    circuitCallbackMs: true, finalDigestMs: true, encodeMs: true,
+    appliedParts: true, noPendingSixFaceRollbacks: true,
+    noPendingSixFaceRollbackMs: true, resyncEncodeMs: true,
+    resyncShardBytes: true, resyncRuns: true, resyncExpandedCells: true,
     attachedPeers: true, clientSimulationEnabled: true, pendingReports: true,
     pendingMarks: true, pendingClients: true, reportsPerSecond: true,
     mismatchPerSecond: true, resyncReceivedPerSecond: true,
@@ -1798,6 +1809,7 @@ footer{margin-top:20px;padding-top:12px;border-top:1px solid var(--line);font-si
     var chip = $("telemetryChip"), hostTiles = $("telemetryHostTiles");
     var workBody = $("telemetryWorkBody"), clientBody = $("telemetryClientBody");
     var clientCircuitBody = $("telemetryClientCircuitBody");
+    var terrainResyncBody = $("telemetryTerrainResyncBody");
     var peerBody = $("telemetryPeerBody"), moduleBody = $("telemetryModuleBody");
     var circuitStagesBody = $("telemetryCircuitStagesBody");
     if (!chip || !hostTiles || !workBody || !clientBody || !peerBody || !moduleBody) return;
@@ -1941,6 +1953,7 @@ footer{margin-top:20px;padding-top:12px;border-top:1px solid var(--line);font-si
     } else {
       rows.push(unavailableRow(3, "Circuit 计数不可用"));
     }
+    var peers = Array.isArray(telemetry.peers) ? telemetry.peers : null;
     var terrain = telemetry.terrain;
     if (terrain && typeof terrain === "object") {
       var tr = telemetryCounterRates("terrain", telemetry, {
@@ -1985,9 +1998,126 @@ footer{margin-top:20px;padding-top:12px;border-top:1px solid var(--line);font-si
           (finiteMetric(metric[1]) ? esc(metricValue(metric[1], 1) + "/s") : "不可用") +
           "</td><td class='telemetry-unavailable'>主机报告的当前速率</td></tr>");
       });
+      // ---- 顶层摘要校验（16×16 = 256 格）----
+      // 这两组字段是"是否还在整块回传"的直接证据：
+      //   · fixesReceived > 0 且 fixCellsApplied 远小于 65536 ⇒ 只在补顶层，没有整块回传；
+      //   · escalations 应该接近 0（非 0 = 差异不只在顶层，标记不准）；
+      //   · deferredNotStable > 0 ⇒ 第 6 步生效，内容未定稿的块被拦下、没被误判 Mismatch。
+      // 这 9 个都是**累计计数器**（与 digestReports 同类），所以显示"累计值 + 与基线的增量速率"。
+      var tl = telemetryCounterRates("terrain", telemetry, {
+        topLayerChecks: terrain.topLayerChecks,
+        topLayerMatches: terrain.topLayerMatches,
+        topLayerReportsSent: terrain.topLayerReportsSent,
+        topLayerFixesReceived: terrain.topLayerFixesReceived,
+        topLayerFixCellsApplied: terrain.topLayerFixCellsApplied,
+        topLayerFixEscalations: terrain.topLayerFixEscalations,
+        topLayerUnavailable: terrain.topLayerUnavailable,
+        digestsDeferredNotStable: terrain.digestsDeferredNotStable,
+        verdictsStaleSkipped: terrain.verdictsStaleSkipped
+      });
+      [
+        ["topLayerChecks", terrain.topLayerChecks, "算过顶层的块次数"],
+        ["topLayerMatches", terrain.topLayerMatches, "顶层补丁后复查通过"],
+        ["topLayerReportsSent", terrain.topLayerReportsSent, "发出的顶层不一致报告"],
+        ["topLayerFixesReceived", terrain.topLayerFixesReceived, "收到的顶层补丁"],
+        ["topLayerFixCellsApplied", terrain.topLayerFixCellsApplied, "补丁实际落地的格子数"],
+        ["topLayerFixEscalations", terrain.topLayerFixEscalations, "补不齐→升级整块核对"],
+        ["topLayerUnavailable", terrain.topLayerUnavailable, "顶层不可用（未定稿）"],
+        ["digestsDeferredNotStable", terrain.digestsDeferredNotStable, "内容未定稿→延后算摘要"],
+        ["verdictsStaleSkipped", terrain.verdictsStaleSkipped, "迟到裁决→跳过回传"],
+        // 主机侧：Mismatch 走顶层补丁而非整块回传（"缺块→NotReady→加载→只补顶层"的直接证据）
+        ["topLayerFixFromMismatch", terrain.topLayerFixFromMismatch, "Mismatch→顶层补丁（省整块回传）"],
+        ["topLayerFixesSent", terrain.topLayerFixesSent, "主机发出的顶层补丁"],
+        ["topLayerFixSendFailures", terrain.topLayerFixSendFailures, "顶层补丁发送失败"],
+        ["topLayerFixSkippedNotTopLayer", terrain.topLayerFixSkippedNotTopLayer, "差异在深处→走整块"],
+        // clientHash == 0 的语义是"客户端未知"，不是"不一致"。
+        // 改判前这里会被当成红框 + 触发整块回传（主机有内容却显示红的根因）。
+        ["clientHashZeroVerdicts", terrain.clientHashZeroVerdicts, "收到 0 → 改判 NotReady"],
+        // 应为 0。不为 0 = 客户端有路径没刷新顶层 hash → 该走顶层补丁的走了整块 → 卡一下。
+        ["topLayerFixSkippedNoClientHash", terrain.topLayerFixSkippedNoClientHash, "缺客户端顶层hash→整块"]
+      ].forEach(function (metric) {
+        var rate = formatCounterRate(telemetry, metric[1], tl, metric[0], function (v) {
+          return metricValue(v, 1) + " /s";
+        });
+        rows.push("<tr><td class='mono'>Terrain · " + esc(metric[0]) + "</td><td class='num'>" +
+          (finiteMetric(metric[1]) ? esc(String(metric[1])) : "不可用") +
+          "</td><td class='num telemetry-rate'>" + esc(rate) + "</td></tr>");
+      });
     } else {
       rows.push(unavailableRow(3, "Terrain 计数不可用"));
     }
+
+    var resyncRows = [];
+    function appendResyncRow(label, sample, hostRow) {
+      if (!sample || typeof sample !== "object") return;
+      function value(name) {
+        return finiteMetric(sample[name]) ? esc(metricValue(sample[name], 2)) : "不可用";
+      }
+      resyncRows.push("<tr><td>" + esc(label) + " · " +
+        esc(sample.windowMs === undefined ? "窗口未知" : String(sample.windowMs) + " ms") +
+        "</td><td class='num'>" + esc(formatBytes(sample.shardBytes)) +
+        "</td><td class='num'>" + (finiteMetric(sample.rleRuns) ? esc(String(sample.rleRuns)) : "不可用") +
+        "</td><td class='num'>" + (finiteMetric(sample.expandedCells) ? esc(String(sample.expandedCells)) : "不可用") +
+        "</td><td class='num'>" + (hostRow ? value("encodeMs") : "—") +
+        "</td><td class='num'>" + (hostRow ? "—" : value("decodeMs")) +
+        "</td><td class='num'>" + (hostRow ? "—" : value("applyMs")) +
+        "</td><td class='num'>" + (hostRow ? "—" : value("circuitCallbackMs")) +
+        "</td><td class='num'>" + (hostRow ? "—" : value("finalDigestMs")) +
+        "</td><td class='num'>" + (hostRow ? "—" :
+          ((finiteMetric(sample.noPendingSixFaceRollbacks) ? String(sample.noPendingSixFaceRollbacks) : "不可用") +
+            " / " + value("noPendingSixFaceRollbackMs"))) +
+        "</td><td class='num'>" + (hostRow ? "—" : value("chunkLoadEvents") + " / " + value("chunkUnloadEvents")) +
+        "</td><td class='num'>" + (hostRow ? "—" : value("hashChecks") + " / " + value("hashMatches") + " / " + value("hashMismatches")) +
+        "</td><td class='num'>" + (hostRow ? "—" : value("resyncUnchangedCells") + " / " + value("terrainInvalidations")) +
+        "</td></tr>");
+    }
+    if (terrain && typeof terrain === "object")
+      appendResyncRow("主机编码", {
+        windowMs: 1000, shardBytes: terrain.resyncShardBytes,
+        rleRuns: terrain.resyncRuns, expandedCells: terrain.resyncExpandedCells,
+        encodeMs: terrain.resyncEncodeMs
+      }, true);
+    if (Array.isArray(peers)) peers.forEach(function (peer) {
+      var age = finiteMetric(peer.terrainResyncAgeMs)
+        ? " · age " + String(peer.terrainResyncAgeMs) + " ms" : "";
+      appendResyncRow(peerLabel(peer) + age, peer.terrainResync, false);
+    });
+
+    // ---- 各玩家端自报的顶层摘要校验计数 ----
+    // 主机那份 Terrain · topLayer* 恒为 0（主机不做顶层校验），
+    // 真正有数据的是玩家端自报的 peer.terrain。这里逐玩家端列出。
+    //   · fixesReceived > 0 且 fixCellsApplied ≪ 65536 ⇒ 只在补顶层，没有整块回传；
+    //   · fixEscalations 应接近 0（非 0 = 差异不只在顶层）；
+    //   · digestsDeferredNotStable > 0 ⇒ 内容未定稿的块被拦下，没被误判 Mismatch。
+    if (Array.isArray(peers)) peers.forEach(function (peer) {
+      var pt = peer && peer.terrain;
+      if (!pt || typeof pt !== "object") return;
+      var label = peerLabel(peer);
+      [
+        ["topLayerChecks", pt.topLayerChecks, "算过顶层的块次数"],
+        ["topLayerMatches", pt.topLayerMatches, "顶层补丁后复查通过"],
+        ["topLayerReportsSent", pt.topLayerReportsSent, "发出的顶层不一致报告"],
+        ["topLayerFixesReceived", pt.topLayerFixesReceived, "收到的顶层补丁"],
+        ["topLayerFixCellsApplied", pt.topLayerFixCellsApplied, "补丁落地的格子数"],
+        ["topLayerFixEscalations", pt.topLayerFixEscalations, "补不齐→升级整块"],
+        ["topLayerUnavailable", pt.topLayerUnavailable, "顶层不可用（未定稿）"],
+        ["digestsDeferredNotStable", pt.digestsDeferredNotStable, "未定稿→延后算摘要"],
+        ["verdictsStaleSkipped", pt.verdictsStaleSkipped, "迟到裁决→跳过回传"],
+        // clientHash==0 的两条：算不出来 / 缓存是 0 → **不发**，改走退避重试。
+        ["clientHashZeroSkipped", pt.clientHashZeroSkipped, "算出0→不发（防误判红框）"],
+        ["reportsDeferredNotStable", pt.reportsDeferredNotStable, "内容未定稿→延后上报"],
+        ["staleHealed", pt.staleHealed, "卡死Stale→强制重报"]
+      ].forEach(function (metric) {
+        rows.push("<tr><td class='mono'>" + esc(label) + " · " + esc(metric[0]) +
+          "</td><td class='num'>" +
+          (finiteMetric(metric[1]) ? esc(String(metric[1])) : "不可用") +
+          "</td><td class='telemetry-unavailable'>" + esc(metric[2]) + "</td></tr>");
+      });
+    });
+    if (terrainResyncBody)
+      terrainResyncBody.innerHTML = resyncRows.length ? resyncRows.join("") :
+        unavailableRow(10, "当前没有重同步采样；LiveMap 请求会触发主机调度");
+
     var monitor = telemetry.monitorTransport;
     if (monitor && typeof monitor === "object") {
       var mr = telemetryCounterRates("monitorTransport", telemetry, {
@@ -2034,7 +2164,6 @@ footer{margin-top:20px;padding-top:12px;border-top:1px solid var(--line);font-si
     }
     workBody.innerHTML = rows.join("");
 
-    var peers = Array.isArray(telemetry.peers) ? telemetry.peers : null;
     function peerLabel(peer) {
       var label = peer.clientId === undefined ? "clientId 不可用" : "clientId=" + peer.clientId;
       if (peer.name) label += " · " + peer.name;

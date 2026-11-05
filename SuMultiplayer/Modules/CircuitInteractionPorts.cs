@@ -144,6 +144,7 @@ namespace SuMultiplayer.Modules
 
     public interface ICircuitPresentationPort : ICircuitInteractionHostPort
     {
+        bool HasPendingOperationAt(int x, int y, int z);
         void SetCircuitRequestSink(Func<CircuitInteractionRequestData, bool> sink);
         void ResolvePresentation(long requestId, int authoritativeCellValue);
         void RejectPresentation(long requestId, int? authoritativeCellValue);

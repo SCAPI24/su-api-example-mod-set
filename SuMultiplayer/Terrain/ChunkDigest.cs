@@ -3,6 +3,9 @@ using System.Collections.Generic;
 
 namespace SuMultiplayer.Terrain
 {
+    /// <summary>按引擎 TerrainChunk.Cells 连续布局读取一个格子的原始值。</summary>
+    public delegate int ChunkPackedValueSource(int index);
+
     /// <summary>chunk 坐标（16×16×256 的一块）。</summary>
     public readonly struct ChunkKey : IEquatable<ChunkKey>
     {
@@ -26,14 +29,18 @@ namespace SuMultiplayer.Terrain
     ///
     /// **只在加载时计算一次**（用户定）：块卸载时只是把摘要丢掉，不做任何维护；
     /// 加载之后的改动不碰摘要 —— 那些差异走数据消息，由传输层保证送达。
-    /// 主机侧需要自己的摘要时**按需现算**（一次 0.20 ms），不维护常驻表。
+    /// 主机侧需要自己的摘要时**按需现算**，不维护常驻表。
     ///
-    /// 结构：
-    ///   sliceHash[s] = XOR over 该切片 4096 格 of CellHash(x,y,z,contents,data)
+    /// 算法（HSH03，每格混入一次）：
+    ///   sliceHash[s] = FNV-1a over 该切片 4096 格 of (cellValue &amp; 0xFFFFC3FF)
     ///   chunkHash    = XOR over 16 个 sliceHash
     /// 为什么要切片：不一致时只回传**不同的切片**（4096 格），而不是整块 65536 格。
     ///
-    /// 演示页标记：HSH02。
+    /// ⚠️ **算法变更历史（两端必须同版本，否则永久失配）**：
+    ///   · HSH02：contents 与 data **分开**混入（每格 2 次乘），位置经 CellHash 参与
+    ///   · HSH03：整个 cellValue 剥掉光照位后**一次**混入（每格 1 次乘），约快 2 倍
+    /// 版本一致性由 <c>MultiplayerModCompatibility.BuildFingerprint</c>（程序集 MVID）保证：
+    /// 不同构建之间 <c>IsCompatible</c> 直接拒绝连接，不会静默失配。
     /// </summary>
     public sealed class ChunkDigest
     {
@@ -46,17 +53,29 @@ namespace SuMultiplayer.Terrain
         private readonly uint[] m_slices = new uint[SliceCount];
         private uint m_shaftHash;
         private bool m_computed;
+        private uint m_topHeightHash;
+        private uint m_topBlockHash;
+        private bool m_topLayerComputed;
 
         /// <summary>未计算时为 false。界面/协议里 <see cref="Value"/> == 0 也代表「未知」。</summary>
         public bool HasValue => m_computed;
 
+        /// <summary>顶层摘要是否已算（见 <see cref="ComputeTopLayer"/>）。</summary>
+        public bool HasTopLayer => m_topLayerComputed;
+
+        /// <summary>256 列 topHeight 的摘要。未算时为 0（= 未知）。</summary>
+        public uint TopHeightHash => m_topLayerComputed ? m_topHeightHash : 0u;
+
+        /// <summary>256 列顶格 (contents,data) 的摘要。未算时为 0（= 未知）。</summary>
+        public uint TopBlockHash => m_topLayerComputed ? m_topBlockHash : 0u;
+
         /// <summary>
-        /// data 的规范化钩子：(contents, data) → canonical data。
-        /// 家具必须挂这个 —— 家具把**本机 m_furnitureDesigns[1024] 的槽位号**写进 data
-        /// （FurnitureBlock.SetDesignIndex/GetDesignIndex），两边槽位号不同会导致永久误判。
-        /// 默认恒等。
+        /// 顶层是否一致（<b>必须两个 hash 都比</b>）。
+        /// 0 = 未知（任一未算）；true/false = 比对结果。
         /// </summary>
-        public Func<int, int, int> DataCanonicalizer { get; set; }
+        public bool TopLayerMatches(in ChunkDigest other) =>
+            m_topLayerComputed && other != null && other.m_topLayerComputed &&
+            m_topHeightHash == other.m_topHeightHash && m_topBlockHash == other.m_topBlockHash;
 
         /// <summary>是否把 shafts 计入摘要。**两端必须一致**，否则永远不匹配。默认关闭。</summary>
         public bool IncludeShafts { get; set; }
@@ -81,23 +100,6 @@ namespace SuMultiplayer.Terrain
 
         public static int SliceOf(int y) => y >> 4;
 
-        /// <summary>单格摘要：位置 + 内容 + 数据。同内容在任何机器上得到同一值。</summary>
-        public static uint CellHash(int x, int y, int z, int contents, int data)
-        {
-            ulong h = 0x9E3779B97F4A7C15UL;
-            h ^= (ulong)(uint)x * 0xBF58476D1CE4E5B9UL;
-            h ^= (ulong)(uint)y * 0x94D049BB133111EBUL;
-            h ^= (ulong)(uint)z * 0xD6E8FEB86659FD93UL;
-            h ^= (ulong)(uint)contents * 0xA0761D6478BD642FUL;
-            h ^= (ulong)(uint)data * 0xE7037ED1A0B428DBUL;
-            h ^= h >> 30; h *= 0xBF58476D1CE4E5B9UL;
-            h ^= h >> 27; h *= 0x94D049BB133111EBUL;
-            h ^= h >> 31;
-            uint mixed = (uint)(h ^ (h >> 32));
-            // 全空气格也要贡献非零值：位置必须参与，否则"哪里空"分不出来
-            return mixed == 0 ? 0x9E3779B9u : mixed;
-        }
-
         public static uint ShaftHash(int x, int z, int shaft)
         {
             ulong h = 0xC2B2AE3D27D4EB4FUL;
@@ -110,26 +112,101 @@ namespace SuMultiplayer.Terrain
         }
 
         /// <summary>
-        /// 加载时计算一次（65536 格 ≈ 0.20 ms，跑在加载线程）。之后不再改动摘要。
+        /// **唯一的内容摘要入口**：按 <c>TerrainChunk.Cells</c> 的连续布局读取整块并计算。
+        ///
+        /// 数组布局（<c>TerrainChunk.CalculateCellIndex</c>）：<c>index = y + x * 256 + z * 4096</c>。
+        /// 摘要只取 <c>contents</c>（bit 0~9）与 <c>data</c>（bit 14~31），**剥掉光照位（bit 10~13）** ——
+        /// 引擎自己判定"格是否改变"时同样先 <c>ReplaceLight(value, 0)</c>
+        /// （Source: Survivalcraft/Game/SubsystemTerrain.cs:SubsystemTerrain.ChangeCell）。
+        ///
+        /// 与旧的 <c>Compute(ChunkCellSource)</c> 相比（该方法已删除，避免两套算法并存导致两端
+        /// 永久失配）：省掉每格一次委托调用，并把 contents/data 两次混入合并成一次，约快 2 倍。
+        ///
+        /// 切片：<c>slice = y >> 4</c>，每片 4096 格。16 片 × 4096 = 65536。
         /// </summary>
-        public void Compute(ChunkCellSource source)
+        public void ComputePacked(ChunkPackedValueSource source)
         {
             if (source == null) throw new ArgumentNullException(nameof(source));
-            for (int i = 0; i < SliceCount; i++) m_slices[i] = 0u;
+            for (int i = 0; i < SliceCount; i++) m_slices[i] = 2166136261u;
             m_shaftHash = 0u;
+
+            // 外层 = 256 个 (x,z) 列（每列在数组里连续 256 格），内层 = 16 个 y 切片 × 16 格。
+            // 这样 hash 常驻寄存器，不需要每格读写 m_slices。
+            for (int column = 0; column < SizeXZ * SizeXZ; column++)
+            {
+                int columnBase = column * Height;
+                for (int slice = 0; slice < SliceCount; slice++)
+                {
+                    uint hash = m_slices[slice];
+                    int start = columnBase + (slice << 4);
+                    int end = start + SliceHeight;
+                    for (int i = start; i < end; i++)
+                    {
+                        // 剥掉光照位：保留 contents(0~9) 与 data(14~31)
+                        uint value = unchecked((uint)source(i)) & 0xFFFFC3FFu;
+                        hash ^= value;
+                        hash *= 16777619u;
+                    }
+                    m_slices[slice] = hash;
+                }
+            }
+            m_computed = true;
+        }
+
+        /// <summary>
+        /// **顶层摘要**：16×16 = 256 个"顶格"的内容摘要，用于 chunk 加载时的快速校验。
+        ///
+        /// 读 <c>TerrainChunk.Shafts</c>（256 个 topHeight）+ <c>TerrainChunk.Cells</c>（256 个顶格）
+        /// = <b>512 次</b>数组访问，比全量 <see cref="ComputePacked"/>（65536 格）快 128 倍。
+        ///
+        /// 为什么"只比顶层"是安全的（用户口径）：地形种子两端一致，人为/环境改动都会经
+        /// <c>CellChange</c> 权威下发；两端唯一的自然差异是**天气/季节对最顶格的影响**
+        /// （<c>SubsystemWeather.FreezeThawAndDepositSnow</c> 用 <c>GetTopHeightFast</c> 取顶层）。
+        /// 因此加载时只要比顶层一致，就可以认为整块一致。
+        ///
+        /// 但顶层 hash 只能"快速否证"，不能"确认整块一致" —— 见计划文档第 8.1 节。
+        ///
+        /// 输出两部分**都必须比**（只比一个会漏判）：
+        ///   · <c>TopHeightHash</c>：256 列的 topHeight。topHeight 不同 ⇒ 地形高度变了。
+        ///   · <c>TopBlockHash</c> ：256 列顶格的 (contents,data)。同高度但顶格换成了别的方块。
+        /// </summary>
+        /// <param name="cells">TerrainChunk.Cells（布局 index = y + x*256 + z*4096）。</param>
+        /// <param name="shafts">TerrainChunk.Shafts（布局 index = x + z*16，topHeight 在 bit 0~7）。</param>
+        public void ComputeTopLayer(int[] cells, int[] shafts)
+        {
+            if (cells == null) throw new ArgumentNullException(nameof(cells));
+            if (shafts == null) throw new ArgumentNullException(nameof(shafts));
+            if (cells.Length < SizeXZ * SizeXZ * Height)
+                throw new ArgumentException("Cell array is smaller than one chunk.", nameof(cells));
+            if (shafts.Length < SizeXZ * SizeXZ)
+                throw new ArgumentException("Shaft array is smaller than one chunk.", nameof(shafts));
+
+            uint topHeightHash = 2166136261u;
+            uint topBlockHash = 2166136261u;
+
             for (int x = 0; x < SizeXZ; x++)
             {
                 for (int z = 0; z < SizeXZ; z++)
                 {
-                    for (int y = 0; y < Height; y++)
-                    {
-                        source(x, y, z, out int contents, out int data);
-                        int canonical = DataCanonicalizer == null ? data : DataCanonicalizer(contents, data);
-                        m_slices[SliceOf(y)] ^= CellHash(x, y, z, contents, canonical);
-                    }
+                    // topHeight 在 Shafts[x + z*16] 的 bit 0~7（Terrain.TopHeightMask）
+                    int top = shafts[x + z * SizeXZ] & 0xFF;
+
+                    topHeightHash ^= unchecked((uint)top);
+                    topHeightHash *= 16777619u;
+
+                    // 顶格在 Cells 里的下标（TerrainChunk.CalculateCellIndex）
+                    int index = top + x * Height + z * Height * SizeXZ;
+                    // 剥光照位：保留 contents(0~9) 与 data(14~31)。与 ComputePacked 同一掩码。
+                    uint value = unchecked((uint)cells[index]) & 0xFFFFC3FFu;
+
+                    topBlockHash ^= value;
+                    topBlockHash *= 16777619u;
                 }
             }
-            m_computed = true;
+
+            m_topHeightHash = topHeightHash;
+            m_topBlockHash = topBlockHash;
+            m_topLayerComputed = true;
         }
 
         /// <summary>需要把 shafts 计入时，加载时一并算（<see cref="IncludeShafts"/> 为 true 才有效）。</summary>
@@ -149,6 +226,9 @@ namespace SuMultiplayer.Terrain
             for (int i = 0; i < SliceCount; i++) m_slices[i] = 0u;
             m_shaftHash = 0u;
             m_computed = false;
+            m_topHeightHash = 0u;
+            m_topBlockHash = 0u;
+            m_topLayerComputed = false;
         }
 
         /// <summary>哪些切片与对端不同 —— 决定回传哪几片（不一致才用得上）。</summary>

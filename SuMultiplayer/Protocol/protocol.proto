@@ -506,6 +506,16 @@ enum MessageType {
   // 方块破坏表现（碎屑 / 落叶粒子）。只同步表现，不改格；append-only。
   BLOCK_DESTROY_EFFECT = 119;
 
+  // On-demand terrain resync diagnostic control/sample.
+  TERRAIN_DIAGNOSTIC_CONTROL = 151;
+  TERRAIN_DIAGNOSTIC_REPORT = 152;
+
+  // 顶层摘要校验：客户端加载 chunk 时发现顶层 hash 与主机不一致，
+  // 只请求"顶层那一层"的差异格（≤256 格），而不是整块回传。
+  // 见 doc/chunk-digest-tiered-verify-plan.md 第 4.5 节与第 5 章第 7 步。
+  TOP_LAYER_MISMATCH_REPORT = 153;
+  TOP_LAYER_FIX = 154;
+
   // Low-rate performance reporting and LiveMap telemetry. Diagnostic only.
   CLIENT_RUNTIME_TELEMETRY = 145;
   LIVE_MAP_TELEMETRY = 146;
@@ -516,9 +526,9 @@ enum MessageType {
 // 客户端用 old_value 按引擎同口径重建 BlockDebrisParticleSystem / LeavesParticleSystem。
 message BlockDestroyEffect {
   uint32 event_id = 1;
-  int32 x = 2;
+  sint32 x = 2;
   int32 y = 3;
-  int32 z = 4;
+  sint32 z = 4;
   uint32 old_value = 5;
   uint32 new_value = 6;
   // bit 0 = debris，bit 1 = leaf particles。
@@ -753,8 +763,8 @@ message AvatarRoster {
 
 // Client -> host: interest window centre (chunk coordinates) and radius.
 message InterestUpdate {
-  int32 center_x = 1;
-  int32 center_z = 2;
+  sint32 center_x = 1;
+  sint32 center_z = 2;
   int32 radius = 3;
 
   bytes ext = 100;

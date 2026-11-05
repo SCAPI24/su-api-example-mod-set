@@ -65,6 +65,11 @@ message PeerSample {
   ChannelSample primary = 6;
   ChannelSample circuit = 7;
   ClientCircuitSample client_circuit = 8;
+  TerrainResyncSample terrain_resync = 9;
+  uint64 terrain_resync_age_ms = 10;
+  // 该玩家端自报的地形同步计数（含顶层摘要校验效果 / 第 6/8 步拦截量）。
+  // 客户端侧没有 host 的 resyncBytes 等字段，那些留 0（不伪造）。
+  TerrainSyncSample terrain = 11;
 }
 
 message CircuitSyncSample {
@@ -127,6 +132,32 @@ message ClientCircuitSample {
   repeated CircuitStageSample stages = 13;
 }
 
+// Host-scheduled, short-lived client diagnostic window for terrain resync.
+message TerrainResyncSample {
+  uint64 request_id = 1;
+  uint32 window_ms = 2;
+  uint64 shard_bytes = 3;
+  uint64 rle_runs = 4;
+  uint64 expanded_cells = 5;
+  float decode_ms = 6;
+  float apply_ms = 7;
+  float circuit_callback_ms = 8;
+  float final_digest_ms = 9;
+  uint64 applied_parts = 10;
+  uint64 no_pending_six_face_rollbacks = 11;
+  float no_pending_six_face_rollback_ms = 12;
+  uint64 chunk_load_events = 13;
+  uint64 chunk_unload_events = 14;
+  uint64 hash_checks = 15;
+  uint64 hash_matches = 16;
+  uint64 hash_mismatches = 17;
+  float hash_ms = 18;
+  float hash_max_ms = 19;
+  uint64 resync_changed_cells = 20;
+  uint64 resync_unchanged_cells = 21;
+  uint64 terrain_invalidations = 22;
+}
+
 message TerrainSyncSample {
   uint64 digest_reports = 1;
   uint64 cell_changes_broadcast = 2;
@@ -141,6 +172,52 @@ message TerrainSyncSample {
   uint32 pending_reports = 11;
   uint32 pending_marks = 12;
   uint32 pending_clients = 13;
+  uint64 resync_runs = 14;
+  uint64 resync_expanded_cells = 15;
+  float resync_encode_ms = 16;
+  uint64 resync_shard_bytes = 17;
+  uint64 owed_snapshots_queued = 18;
+  uint64 owed_snapshots_skipped_no_content = 19;
+
+  // ---- 顶层摘要校验（16×16 = 256 格；见 doc/chunk-digest-tiered-verify-plan.md）----
+  // 客户端把"整块回传"降级为"只补顶层差异格"的效果，全部可观测。
+  uint64 top_layer_checks = 20;
+  uint64 top_layer_matches = 21;
+  uint64 top_layer_reports_sent = 22;
+  uint64 top_layer_fixes_received = 23;
+  uint64 top_layer_fix_cells_applied = 24;
+  uint64 top_layer_fix_escalations = 25;
+  uint64 top_layer_unavailable = 26;
+
+  // ---- 第 6/8 步：内容未定稿 / 迟到的裁决（都不再触发整块回传）----
+  uint64 digests_deferred_not_stable = 27;
+  uint64 verdicts_stale_skipped = 28;
+
+  // ---- 主机侧：Mismatch 走顶层补丁（而不是整块回传）----
+  // 这是"缺块 → NotReady → 按需加载 → 顶层比对 → 只补顶层"这条链路的直接证据。
+  uint64 top_layer_fix_from_mismatch = 29;
+  uint64 top_layer_fixes_sent = 30;
+  uint64 top_layer_fix_send_failures = 31;
+
+  // ---- 收敛闭环（修"灰框永久残留"）----
+  // 顶层补丁已收敛、但块不在内存集合导致没能回摘要的次数。
+  uint64 top_layer_converge_unreported = 32;
+  // 卡在"不一致"超时后被自愈（强制退回未核对 + 重新上报）的块次数。
+  uint64 stale_healed = 33;
+  // Mismatch 但顶层并不不同（差异在深处）→ 改走整块回传的次数。
+  // 不为 0 是正常的（草/流体/树/火焰类差异）；暴涨说明客户端顶层 hash 有问题。
+  uint64 top_layer_fix_skipped_not_top_layer = 34;
+
+  // ---- clientHash == 0（语义是"客户端未知"，不是"不一致"）----
+  // 主机：收到 0 并改判 NotReady 的次数（改判前是误判成红框 + 整块回传）。
+  uint64 client_hash_zero_verdicts = 35;
+  // 客户端：算出 / 缓存到 0 因而**没发出去**的次数（不发 0 → 不再被主机误判）。
+  uint64 client_hash_zero_skipped = 36;
+  // 客户端：发送时因内容未定稿而延后的上报条数（不发 0，下一帧重试）。
+  uint64 reports_deferred_not_stable = 37;
+  // 客户端没带顶层 hash → 主机无法判断差异位置、保守走整块的次数。**应为 0**；
+  // 不为 0 说明客户端有路径没刷新顶层 hash（就是"红框那一刻卡一下"的根因）。
+  uint64 top_layer_fix_skipped_no_client_hash = 38;
 }
 
 message LiveTelemetry {
@@ -163,4 +240,21 @@ message LiveTelemetry {
 message ClientRuntimeTelemetry {
   RuntimeSample runtime = 1;
   ClientCircuitSample circuit = 2;
+  // 客户端自己的地形同步计数（原来只在客户端本地，主机看不到）。
+  // 顶层摘要校验的效果 + 第 6/8 步的拦截量都必须在这里才到得了 LiveMap：
+  // 主机侧不做顶层校验（m_topLayerChecks 在 TerrainSyncClient 里），
+  // 所以 TerrainSyncSample 里那 9 个字段对主机恒为 0。
+  // 见 doc/chunk-digest-tiered-verify-plan.md。
+  TerrainSyncSample terrain = 3;
+}
+
+// Host -> client: capture terrain resync diagnostics for a bounded window.
+message TerrainDiagnosticControl {
+  uint64 request_id = 1;
+  uint32 window_ms = 2;
+}
+
+// Client -> host: one sample requested by TerrainDiagnosticControl.
+message TerrainDiagnosticReport {
+  TerrainResyncSample sample = 1;
 }

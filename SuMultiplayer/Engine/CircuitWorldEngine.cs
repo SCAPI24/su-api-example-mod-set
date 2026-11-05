@@ -7,6 +7,7 @@ using SuMultiplayer.Protocol.Circuit;
 using SuMultiplayer.Terrain;
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.Linq;
 using System.Threading;
 
@@ -738,9 +739,14 @@ namespace SuMultiplayer.Engine
             if (!TryGetCellValue(x, y, z, out int value))
                 throw new InvalidOperationException("Applied replica cell is unavailable at (" +
                     x + "," + y + "," + z + ").");
+            TerrainResyncDiagnosticWindow diagnostics = m_terrainBridge.ResyncDiagnostics;
+            bool measureRollback = diagnostics != null && diagnostics.IsActive &&
+                !m_interactionPresentation.HasPendingOperationAt(x, y, z);
+            long rollbackStarted = measureRollback ? Stopwatch.GetTimestamp() : 0;
             for (int face = 0; face < 6; face++)
-                m_interactionPresentation.ApplyAuthoritativeCell(x, y, z, face,
-                    value);
+                m_interactionPresentation.ApplyAuthoritativeCell(x, y, z, face, value);
+            if (measureRollback)
+                diagnostics.RecordNoPendingSixFaceRollback(Stopwatch.GetTimestamp() - rollbackStarted);
             m_replicaCellApplied?.Invoke(key, edit);
         }
 

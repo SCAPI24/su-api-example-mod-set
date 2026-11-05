@@ -186,6 +186,16 @@ namespace SuMultiplayer.Engine
             }
         }
 
+        public bool HasPendingOperationAt(int x, int y, int z)
+        {
+            Point3 point = new Point3(x, y, z);
+            for (int face = 0; face < 6; face++)
+                if (m_pending.TryGetValue(new CircuitCellKey(point, face),
+                        out List<PendingOperation> operations) && operations.Count > 0)
+                    return true;
+            return false;
+        }
+
         // Source: Survivalcraft/Game/ComponentMiner.cs:ComponentMiner.Raycast
         // Source: Survivalcraft/Game/SubsystemElectricity.cs:SubsystemElectricity.GetElectricElement
         public bool TryAcceptInteract(ComponentInput input, ComponentPlayer player)

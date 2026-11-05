@@ -26,7 +26,7 @@ namespace SuMultiplayer.Protocol {
           string.Concat(
             "Cg5wcm90b2NvbC5wcm90bxINc3VtcC5wcm90b2NvbBoZZ29vZ2xlL3Byb3Rv",
             "YnVmL2FueS5wcm90byJ8ChJCbG9ja0Rlc3Ryb3lFZmZlY3QSEAoIZXZlbnRf",
-            "aWQYASABKA0SCQoBeBgCIAEoBRIJCgF5GAMgASgFEgkKAXoYBCABKAUSEQoJ",
+            "aWQYASABKA0SCQoBeBgCIAEoERIJCgF5GAMgASgFEgkKAXoYBCABKBESEQoJ",
             "b2xkX3ZhbHVlGAUgASgNEhEKCW5ld192YWx1ZRgGIAEoDRINCgVmbGFncxgH",
             "IAEoDSIVCgRQaW5nEg0KBW5vbmNlGAEgASgEIhUKBFBvbmcSDQoFbm9uY2UY",
             "ASABKAQiogEKCEVudmVsb3BlEhgKEHByb3RvY29sX3ZlcnNpb24YASABKA0S",
@@ -81,7 +81,7 @@ namespace SuMultiplayer.Protocol {
             "dBhkIAEoDBIkCgZjdXN0b20YZSABKAsyFC5nb29nbGUucHJvdG9idWYuQW55",
             "Ij0KDEF2YXRhclJvc3RlchItCgdhdmF0YXJzGAEgAygLMhwuc3VtcC5wcm90",
             "b2NvbC5QbGF5ZXJQcm9maWxlIncKDkludGVyZXN0VXBkYXRlEhAKCGNlbnRl",
-            "cl94GAEgASgFEhAKCGNlbnRlcl96GAIgASgFEg4KBnJhZGl1cxgDIAEoBRIL",
+            "cl94GAEgASgREhAKCGNlbnRlcl96GAIgASgREg4KBnJhZGl1cxgDIAEoBRIL",
             "CgNleHQYZCABKAwSJAoGY3VzdG9tGGUgASgLMhQuZ29vZ2xlLnByb3RvYnVm",
             "LkFueSJICgNCeWUSDgoGcmVhc29uGAEgASgJEgsKA2V4dBhkIAEoDBIkCgZj",
             "dXN0b20YZSABKAsyFC5nb29nbGUucHJvdG9idWYuQW55InYKEFBsYXllclNw",
@@ -90,7 +90,7 @@ namespace SuMultiplayer.Protocol {
             "EhAKCGlkZW50aXR5GAcgASgJIpcBChBQbGF5ZXJTcGF3blN0YXRlEgwKBGZ1",
             "bGwYASABKAgSEAoIcmV2aXNpb24YAiABKA0SMAoHZW50cmllcxgDIAMoCzIf",
             "LnN1bXAucHJvdG9jb2wuUGxheWVyU3Bhd25FbnRyeRILCgNleHQYZCABKAwS",
-            "JAoGY3VzdG9tGGUgASgLMhQuZ29vZ2xlLnByb3RvYnVmLkFueSqtGQoLTWVz",
+            "JAoGY3VzdG9tGGUgASgLMhQuZ29vZ2xlLnByb3RvYnVmLkFueSqiGgoLTWVz",
             "c2FnZVR5cGUSHAoYTUVTU0FHRV9UWVBFX1VOU1BFQ0lGSUVEEAASCQoFSEVM",
             "TE8QARINCglIRUxMT19BQ0sQAhITCg9JTlRFUkVTVF9VUERBVEUQAxIXChND",
             "SFVOS19ESUdFU1RfUkVQT1JUEAQSEQoNQ0hVTktfVkVSRElDVBAFEhAKDENI",
@@ -161,9 +161,12 @@ namespace SuMultiplayer.Protocol {
             "TlQQbxIZChVXT1JMRF9DT05UUk9MX1JFUVVFU1QQcBIYChRXT1JMRF9DT05U",
             "Uk9MX1JFU1VMVBBxEhEKDU1PVU5UX1JFUVVFU1QQchIPCgtNT1VOVF9TVEFU",
             "RRBzEhAKDFBMQVlFUl9TUEFXThB0EggKBFBJTkcQdRIICgRQT05HEHYSGAoU",
-            "QkxPQ0tfREVTVFJPWV9FRkZFQ1QQdxIdChhDTElFTlRfUlVOVElNRV9URUxF",
-            "TUVUUlkQkQESFwoSTElWRV9NQVBfVEVMRU1FVFJZEJIBIgQIZBBkIgQIbhBu",
-            "QhtIAaoCFlN1TXVsdGlwbGF5ZXIuUHJvdG9jb2xiBnByb3RvMw=="));
+            "QkxPQ0tfREVTVFJPWV9FRkZFQ1QQdxIfChpURVJSQUlOX0RJQUdOT1NUSUNf",
+            "Q09OVFJPTBCXARIeChlURVJSQUlOX0RJQUdOT1NUSUNfUkVQT1JUEJgBEh4K",
+            "GVRPUF9MQVlFUl9NSVNNQVRDSF9SRVBPUlQQmQESEgoNVE9QX0xBWUVSX0ZJ",
+            "WBCaARIdChhDTElFTlRfUlVOVElNRV9URUxFTUVUUlkQkQESFwoSTElWRV9N",
+            "QVBfVEVMRU1FVFJZEJIBIgQIZBBkIgQIbhBuQhtIAaoCFlN1TXVsdGlwbGF5",
+            "ZXIuUHJvdG9jb2xiBnByb3RvMw=="));
       descriptor = pbr::FileDescriptor.FromGeneratedCode(descriptorData,
           new pbr::FileDescriptor[] { global::Google.Protobuf.WellKnownTypes.AnyReflection.Descriptor, },
           new pbr::GeneratedClrTypeInfo(new[] {typeof(global::SuMultiplayer.Protocol.MessageType), }, null, new pbr::GeneratedClrTypeInfo[] {
@@ -736,6 +739,18 @@ namespace SuMultiplayer.Protocol {
     /// </summary>
     [pbr::OriginalName("BLOCK_DESTROY_EFFECT")] BlockDestroyEffect = 119,
     /// <summary>
+    /// On-demand terrain resync diagnostic control/sample.
+    /// </summary>
+    [pbr::OriginalName("TERRAIN_DIAGNOSTIC_CONTROL")] TerrainDiagnosticControl = 151,
+    [pbr::OriginalName("TERRAIN_DIAGNOSTIC_REPORT")] TerrainDiagnosticReport = 152,
+    /// <summary>
+    /// 顶层摘要校验：客户端加载 chunk 时发现顶层 hash 与主机不一致，
+    /// 只请求"顶层那一层"的差异格（≤256 格），而不是整块回传。
+    /// 见 doc/chunk-digest-tiered-verify-plan.md 第 4.5 节与第 5 章第 7 步。
+    /// </summary>
+    [pbr::OriginalName("TOP_LAYER_MISMATCH_REPORT")] TopLayerMismatchReport = 153,
+    [pbr::OriginalName("TOP_LAYER_FIX")] TopLayerFix = 154,
+    /// <summary>
     /// Low-rate performance reporting and LiveMap telemetry. Diagnostic only.
     /// </summary>
     [pbr::OriginalName("CLIENT_RUNTIME_TELEMETRY")] ClientRuntimeTelemetry = 145,
@@ -948,7 +963,7 @@ namespace SuMultiplayer.Protocol {
       }
       if (X != 0) {
         output.WriteRawTag(16);
-        output.WriteInt32(X);
+        output.WriteSInt32(X);
       }
       if (Y != 0) {
         output.WriteRawTag(24);
@@ -956,7 +971,7 @@ namespace SuMultiplayer.Protocol {
       }
       if (Z != 0) {
         output.WriteRawTag(32);
-        output.WriteInt32(Z);
+        output.WriteSInt32(Z);
       }
       if (OldValue != 0) {
         output.WriteRawTag(40);
@@ -986,7 +1001,7 @@ namespace SuMultiplayer.Protocol {
       }
       if (X != 0) {
         output.WriteRawTag(16);
-        output.WriteInt32(X);
+        output.WriteSInt32(X);
       }
       if (Y != 0) {
         output.WriteRawTag(24);
@@ -994,7 +1009,7 @@ namespace SuMultiplayer.Protocol {
       }
       if (Z != 0) {
         output.WriteRawTag(32);
-        output.WriteInt32(Z);
+        output.WriteSInt32(Z);
       }
       if (OldValue != 0) {
         output.WriteRawTag(40);
@@ -1022,13 +1037,13 @@ namespace SuMultiplayer.Protocol {
         size += 1 + pb::CodedOutputStream.ComputeUInt32Size(EventId);
       }
       if (X != 0) {
-        size += 1 + pb::CodedOutputStream.ComputeInt32Size(X);
+        size += 1 + pb::CodedOutputStream.ComputeSInt32Size(X);
       }
       if (Y != 0) {
         size += 1 + pb::CodedOutputStream.ComputeInt32Size(Y);
       }
       if (Z != 0) {
-        size += 1 + pb::CodedOutputStream.ComputeInt32Size(Z);
+        size += 1 + pb::CodedOutputStream.ComputeSInt32Size(Z);
       }
       if (OldValue != 0) {
         size += 1 + pb::CodedOutputStream.ComputeUInt32Size(OldValue);
@@ -1096,7 +1111,7 @@ namespace SuMultiplayer.Protocol {
             break;
           }
           case 16: {
-            X = input.ReadInt32();
+            X = input.ReadSInt32();
             break;
           }
           case 24: {
@@ -1104,7 +1119,7 @@ namespace SuMultiplayer.Protocol {
             break;
           }
           case 32: {
-            Z = input.ReadInt32();
+            Z = input.ReadSInt32();
             break;
           }
           case 40: {
@@ -1143,7 +1158,7 @@ namespace SuMultiplayer.Protocol {
             break;
           }
           case 16: {
-            X = input.ReadInt32();
+            X = input.ReadSInt32();
             break;
           }
           case 24: {
@@ -1151,7 +1166,7 @@ namespace SuMultiplayer.Protocol {
             break;
           }
           case 32: {
-            Z = input.ReadInt32();
+            Z = input.ReadSInt32();
             break;
           }
           case 40: {
@@ -6847,11 +6862,11 @@ namespace SuMultiplayer.Protocol {
     #else
       if (CenterX != 0) {
         output.WriteRawTag(8);
-        output.WriteInt32(CenterX);
+        output.WriteSInt32(CenterX);
       }
       if (CenterZ != 0) {
         output.WriteRawTag(16);
-        output.WriteInt32(CenterZ);
+        output.WriteSInt32(CenterZ);
       }
       if (Radius != 0) {
         output.WriteRawTag(24);
@@ -6877,11 +6892,11 @@ namespace SuMultiplayer.Protocol {
     void pb::IBufferMessage.InternalWriteTo(ref pb::WriteContext output) {
       if (CenterX != 0) {
         output.WriteRawTag(8);
-        output.WriteInt32(CenterX);
+        output.WriteSInt32(CenterX);
       }
       if (CenterZ != 0) {
         output.WriteRawTag(16);
-        output.WriteInt32(CenterZ);
+        output.WriteSInt32(CenterZ);
       }
       if (Radius != 0) {
         output.WriteRawTag(24);
@@ -6906,10 +6921,10 @@ namespace SuMultiplayer.Protocol {
     public int CalculateSize() {
       int size = 0;
       if (CenterX != 0) {
-        size += 1 + pb::CodedOutputStream.ComputeInt32Size(CenterX);
+        size += 1 + pb::CodedOutputStream.ComputeSInt32Size(CenterX);
       }
       if (CenterZ != 0) {
-        size += 1 + pb::CodedOutputStream.ComputeInt32Size(CenterZ);
+        size += 1 + pb::CodedOutputStream.ComputeSInt32Size(CenterZ);
       }
       if (Radius != 0) {
         size += 1 + pb::CodedOutputStream.ComputeInt32Size(Radius);
@@ -6970,11 +6985,11 @@ namespace SuMultiplayer.Protocol {
             _unknownFields = pb::UnknownFieldSet.MergeFieldFrom(_unknownFields, input);
             break;
           case 8: {
-            CenterX = input.ReadInt32();
+            CenterX = input.ReadSInt32();
             break;
           }
           case 16: {
-            CenterZ = input.ReadInt32();
+            CenterZ = input.ReadSInt32();
             break;
           }
           case 24: {
@@ -7012,11 +7027,11 @@ namespace SuMultiplayer.Protocol {
             _unknownFields = pb::UnknownFieldSet.MergeFieldFrom(_unknownFields, ref input);
             break;
           case 8: {
-            CenterX = input.ReadInt32();
+            CenterX = input.ReadSInt32();
             break;
           }
           case 16: {
-            CenterZ = input.ReadInt32();
+            CenterZ = input.ReadSInt32();
             break;
           }
           case 24: {

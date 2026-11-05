@@ -17,7 +17,7 @@ message ChunkKey {
 // world coordinates for CellEditRequest/CellEditResult (authority.proto).
 message CellEdit {
   sint32 x = 1;
-  sint32 y = 2;
+  int32 y = 2;
   sint32 z = 3;
   int32 contents = 4;
   int32 data = 5;
@@ -35,6 +35,22 @@ message ChunkDigestReport {
   message Entry {
     ChunkKey key = 1;
     uint32 hash = 2;
+    // 客户端算这块摘要时的地形改动序号（TerrainSyncClient 的 m_lastAppliedChangeSequence）。
+    // 主机据此判断"客户端是否已经收到这块到某水位为止的全部改动"：
+    // 客户端序号 < 主机该块序号 ⇒ 客户端内容**本来就旧**，应回 NOT_READY 而不是 MISMATCH。
+    // 见 doc/chunk-digest-tiered-verify-plan.md 第 5 章第 6 步。
+    int64 client_change_sequence = 3;
+    // 客户端算摘要时的引擎阶段（ChunkContentStages 序数）：让主机区分
+    // "内容没定稿"与"内容不一致"。0 = 未提供（旧客户端 / 测试桩）。
+    uint32 client_engine_stage = 4;
+    // 客户端算出的**顶层摘要**（16×16 = 256 个顶格；见 ChunkDigest.ComputeTopLayer）。
+    // 主机判 Mismatch 时**必须**靠它判断"差异是否只在顶层"：
+    //   · 客户端顶层 hash != 主机顶层 hash ⇒ 差异确实在顶层 → 发 TOP_LAYER_FIX（256 格，< 1ms）；
+    //   · 相同 ⇒ 差异在深处（草/流体/树…）→ **直接整块回传**，绝不能发顶层补丁。
+    // 没有这两个字段时主机会盲发顶层补丁，而补顶层对深处差异毫无作用 →
+    // 客户端整块摘要仍不同 → 重报 → 无限循环（实机实测：每秒 101 次上报、Match 0、回传 0 片）。
+    uint32 client_top_height_hash = 5;
+    uint32 client_top_block_hash = 6;
   }
   repeated Entry entries = 1;
   // Third-party extension points: see doc/message-protocol.md.
@@ -48,8 +64,47 @@ message ChunkVerdict {
     ChunkKey key = 1;
     ChunkDigestVerdict verdict = 2;
     uint32 host_hash = 3;
+    // 主机裁决时该块的地形改动序号。客户端可据此确认"主机看到的是最新内容"，
+    // 以及诊断"这条 Mismatch 是不是迟到的裁决"。0 = 未提供。
+    int64 host_change_sequence = 4;
   }
   repeated Entry entries = 1;
+  // Third-party extension points: see doc/message-protocol.md.
+  bytes ext = 100;
+  google.protobuf.Any custom = 101;
+}
+
+// Client -> host: 顶层摘要（16×16 = 256 个顶格）与主机不一致，请求差异格。
+//
+// 只在 chunk 加载时发送（与 ChunkDigestReport 同一时机）。主机按这两个 hash
+// 判断是否真的不一致，然后只回 TOP_LAYER_FIX 的差异格 —— 不发整块快照。
+//
+// 见 doc/chunk-digest-tiered-verify-plan.md 第 4.5 节。
+message TopLayerMismatchReport {
+  ChunkKey key = 1;
+  // 256 列 topHeight 的 FNV-1a 摘要（ChunkDigest.TopHeightHash）。
+  uint32 client_top_height_hash = 2;
+  // 256 列顶格 (contents,data) 的 FNV-1a 摘要（ChunkDigest.TopBlockHash）。
+  uint32 client_top_block_hash = 3;
+  // Third-party extension points: see doc/message-protocol.md.
+  bytes ext = 100;
+  google.protobuf.Any custom = 101;
+}
+
+// Host -> client: 只下发**顶层那一层**里两端不同的格子。
+//
+// cells 用 chunk-local 坐标（x/z 0..15，y 是绝对高度），复用 CellEdit。
+// 客户端用与 CellChange 同一套落地逻辑（TerrainBridge.ApplyCells）。
+//
+// 主机同时回自己的两个顶层 hash，客户端落地后可直接确认是否收敛 ——
+// 不收敛说明"差异不只在顶层"，由客户端升级为整块 ChunkResync 请求。
+//
+// 见 doc/chunk-digest-tiered-verify-plan.md 第 4.5 节。
+message TopLayerFix {
+  ChunkKey key = 1;
+  repeated CellEdit cells = 2;
+  uint32 host_top_height_hash = 3;
+  uint32 host_top_block_hash = 4;
   // Third-party extension points: see doc/message-protocol.md.
   bytes ext = 100;
   google.protobuf.Any custom = 101;

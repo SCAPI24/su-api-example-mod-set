@@ -61,12 +61,20 @@ namespace SuMultiplayer.Modules
         private Func<CircuitSyncSample> m_circuitTelemetryProvider;
         private Func<ClientCircuitSample> m_clientCircuitTelemetryProvider;
         private long m_liveTelemetrySampleId;
+        private long m_nextTerrainDiagnosticRequestMs;
+        private long m_terrainDiagnosticRequestId;
+        private long m_terrainDiagnosticWindowUntilMs;
+        private long m_terrainDiagnosticWindowRequestId;
 
         private sealed class PeerRuntimeRecord
         {
             public RuntimeSample Sample;
             public ClientCircuitSample Circuit;
             public long ReceivedAtMs;
+            public TerrainResyncSample TerrainResync;
+            public long TerrainResyncReceivedAtMs;
+            /// <summary>客户端自报的地形同步计数（含顶层摘要校验效果）。</summary>
+            public TerrainSyncSample Terrain;
         }
 
         private readonly Dictionary<int, PeerRuntimeRecord> m_peerRuntimeSamples =
@@ -501,6 +509,10 @@ namespace SuMultiplayer.Modules
                 ClientRuntimeTelemetry.Parser,
                 new DelegateMessageHandler<ClientRuntimeTelemetry>(OnClientRuntimeTelemetry),
                 ModuleMessageOwner);
+            registry.Register((int)MessageType.TerrainDiagnosticReport,
+                TerrainDiagnosticReport.Parser,
+                new DelegateMessageHandler<TerrainDiagnosticReport>(OnTerrainDiagnosticReport),
+                ModuleMessageOwner);
             // live-map 请求是冻结的原始格式（网页 feed 不能变），走原始处理器。
             registry.RegisterRaw(MessageType.MapRequest, OnMapRequest, ModuleMessageOwner);
             m_messages.Problem += HandleMessageProblem;
@@ -553,13 +565,64 @@ namespace SuMultiplayer.Modules
         {
             if (message == null || m_server == null ||
                 m_server.KindOf(context.ClientId) != ClientKind.Player) return;
-            if (message.Runtime == null && message.Circuit == null) return;
-            m_peerRuntimeSamples[context.ClientId] = new PeerRuntimeRecord
+            if (message.Runtime == null && message.Circuit == null && message.Terrain == null)
+                return;
+            if (!m_peerRuntimeSamples.TryGetValue(context.ClientId,
+                    out PeerRuntimeRecord record))
             {
-                Sample = message.Runtime?.Clone(),
-                Circuit = message.Circuit?.Clone(),
-                ReceivedAtMs = Environment.TickCount64
-            };
+                record = new PeerRuntimeRecord();
+                m_peerRuntimeSamples.Add(context.ClientId, record);
+            }
+            record.Sample = message.Runtime?.Clone();
+            record.Circuit = message.Circuit?.Clone();
+            // 客户端自己的地形计数：LiveMap 用它显示顶层摘要校验效果
+            // （主机那份 TerrainSyncSample 的 topLayer* 恒为 0，因为主机不做顶层校验）。
+            record.Terrain = message.Terrain?.Clone();
+            record.ReceivedAtMs = Environment.TickCount64;
+        }
+
+        private static TerrainResyncSample ToProtocolSample(
+            TerrainResyncDiagnosticSample sample) => new TerrainResyncSample
+        {
+            RequestId = sample.RequestId,
+            WindowMs = sample.WindowMs,
+            ShardBytes = sample.ShardBytes,
+            RleRuns = sample.RleRuns,
+            ExpandedCells = sample.ExpandedCells,
+            DecodeMs = (float)sample.DecodeMs,
+            ApplyMs = (float)sample.ApplyMs,
+            CircuitCallbackMs = (float)sample.CircuitCallbackMs,
+            FinalDigestMs = (float)sample.FinalDigestMs,
+            AppliedParts = sample.AppliedParts,
+            NoPendingSixFaceRollbacks = sample.NoPendingSixFaceRollbacks,
+            NoPendingSixFaceRollbackMs = (float)sample.NoPendingSixFaceRollbackMs,
+            ChunkLoadEvents = sample.ChunkLoadEvents,
+            ChunkUnloadEvents = sample.ChunkUnloadEvents,
+            HashChecks = sample.HashChecks,
+            HashMatches = sample.HashMatches,
+            HashMismatches = sample.HashMismatches,
+            HashMs = (float)sample.HashMs,
+            HashMaxMs = (float)sample.HashMaxMs,
+            ResyncChangedCells = sample.ResyncChangedCells,
+            ResyncUnchangedCells = sample.ResyncUnchangedCells,
+            TerrainInvalidations = sample.TerrainInvalidations
+        };
+
+        private void OnTerrainDiagnosticReport(MessageContext context,
+            TerrainDiagnosticReport report)
+        {
+            if (report?.Sample == null || m_server == null ||
+                m_server.KindOf(context.ClientId) != ClientKind.Player ||
+                report.Sample.RequestId == 0 ||
+                (long)report.Sample.RequestId != m_terrainDiagnosticWindowRequestId) return;
+            if (!m_peerRuntimeSamples.TryGetValue(context.ClientId,
+                    out PeerRuntimeRecord record))
+            {
+                record = new PeerRuntimeRecord();
+                m_peerRuntimeSamples.Add(context.ClientId, record);
+            }
+            record.TerrainResync = report.Sample.Clone();
+            record.TerrainResyncReceivedAtMs = Environment.TickCount64;
         }
 
         private void UpdateRuntimeTelemetry(in ModuleTickContext tick)
@@ -579,9 +642,45 @@ namespace SuMultiplayer.Modules
             var report = new ClientRuntimeTelemetry { Runtime = sample };
             if (m_clientCircuitTelemetryProvider != null)
                 report.Circuit = m_clientCircuitTelemetryProvider();
+            // 客户端自己的地形同步计数（含顶层摘要校验效果与第 6/8 步拦截量）。
+            // 主机侧不做顶层校验，这些字段只有从客户端上报才能在 LiveMap 上看到。
+            if (m_clientSync != null) report.Terrain = BuildTerrainClientSample();
             if (!m_client.TrySend(MessageType.ClientRuntimeTelemetry, report.ToByteArray()))
                 LogRateLimited("runtime-telemetry-send-failed",
                     "本机运行时遥测发送失败（主连接背压或失效）", 5000);
+        }
+
+        /// <summary>
+        /// 客户端自己的地形同步计数快照 → 协议样本。
+        /// 只填客户端侧有意义的字段；主机侧字段（resyncBytes 等）留 0，
+        /// 因为客户端没有那些统计 —— 不伪造。
+        /// </summary>
+        private TerrainSyncSample BuildTerrainClientSample()
+        {
+            TerrainClientSnapshot snapshot = m_clientSync.GetSnapshot();
+            return new TerrainSyncSample
+            {
+                ReportsPerSecond = (ulong)Math.Max(0, snapshot.ReportsPerSecond),
+                MismatchPerSecond = (ulong)Math.Max(0, snapshot.MismatchPerSecond),
+                ResyncReceivedPerSecond = (ulong)Math.Max(0, snapshot.ResyncReceivedPerSecond),
+                ResyncAppliedPerSecond = (ulong)Math.Max(0, snapshot.ResyncAppliedPerSecond),
+                // ---- 顶层摘要校验（16×16 = 256 格）----
+                TopLayerChecks = (ulong)Math.Max(0, snapshot.TopLayerChecks),
+                TopLayerMatches = (ulong)Math.Max(0, snapshot.TopLayerMatches),
+                TopLayerReportsSent = (ulong)Math.Max(0, snapshot.TopLayerReportsSent),
+                TopLayerFixesReceived = (ulong)Math.Max(0, snapshot.TopLayerFixesReceived),
+                TopLayerFixCellsApplied = (ulong)Math.Max(0, snapshot.TopLayerFixCellsApplied),
+                TopLayerFixEscalations = (ulong)Math.Max(0, snapshot.TopLayerFixEscalations),
+                TopLayerUnavailable = (ulong)Math.Max(0, snapshot.TopLayerUnavailable),
+                // ---- 第 6/8 步：这两类块不再被当成不一致（因此不再触发整块回传）----
+                DigestsDeferredNotStable = (ulong)Math.Max(0, snapshot.DigestsDeferredNotStable),
+                VerdictsStaleSkipped = (ulong)Math.Max(0, snapshot.VerdictsStaleSkipped),
+                // 收敛闭环（修"灰框永久残留"）
+                TopLayerConvergeUnreported = (ulong)Math.Max(0, snapshot.TopLayerConvergeUnreported),
+                StaleHealed = (ulong)Math.Max(0, snapshot.StaleHealed),
+                ClientHashZeroSkipped = (ulong)Math.Max(0, snapshot.ClientHashZero),
+                ReportsDeferredNotStable = (ulong)Math.Max(0, snapshot.ReportsDeferredNotStable)
+            };
         }
 
         private LiveTelemetry BuildLiveTelemetry(int monitorClientId)
@@ -613,7 +712,23 @@ namespace SuMultiplayer.Modules
                     PendingClients = (uint)Math.Max(0, hostSnapshot.PendingClients),
                     VerifyRequestsSent = (ulong)Math.Max(0, hostSnapshot.VerifyRequestsSent),
                     VerifyRequestSendFailures = (ulong)Math.Max(0,
-                        hostSnapshot.VerifyRequestSendFailures)
+                        hostSnapshot.VerifyRequestSendFailures),
+                    ResyncRuns = (ulong)Math.Max(0, hostSnapshot.ResyncRuns),
+                    ResyncExpandedCells = (ulong)Math.Max(0, hostSnapshot.ResyncExpandedCells),
+                    ResyncShardBytes = (ulong)Math.Max(0, hostSnapshot.ResyncDiagnosticBytes),
+                    ResyncEncodeMs = (float)hostSnapshot.ResyncEncodeMs,
+                    OwedSnapshotsQueued = (ulong)Math.Max(0, hostSnapshot.OwedSnapshotsQueued),
+                    OwedSnapshotsSkippedNoContent = (ulong)Math.Max(0,
+                        hostSnapshot.OwedSnapshotsSkippedNoContent),
+                    // 主机侧：Mismatch 走顶层补丁而不是整块回传的次数
+                    TopLayerFixFromMismatch = (ulong)Math.Max(0, hostSnapshot.TopLayerFixFromMismatch),
+                    TopLayerFixesSent = (ulong)Math.Max(0, hostSnapshot.TopLayerFixesSent),
+                    TopLayerFixSendFailures = (ulong)Math.Max(0, hostSnapshot.TopLayerFixSendFailures),
+                    TopLayerFixSkippedNotTopLayer = (ulong)Math.Max(0,
+                        hostSnapshot.TopLayerFixSkippedNotTopLayer),
+                    ClientHashZeroVerdicts = (ulong)Math.Max(0, hostSnapshot.ClientHashZeroVerdicts),
+                    TopLayerFixSkippedNoClientHash = (ulong)Math.Max(0,
+                        hostSnapshot.TopLayerFixSkippedNoClientHash)
                 };
             }
             if (m_clientSync != null)
@@ -626,7 +741,18 @@ namespace SuMultiplayer.Modules
                     ResyncReceivedPerSecond = (ulong)Math.Max(0,
                         snapshot.ResyncReceivedPerSecond),
                     ResyncAppliedPerSecond = (ulong)Math.Max(0,
-                        snapshot.ResyncAppliedPerSecond)
+                        snapshot.ResyncAppliedPerSecond),
+                    // 顶层摘要校验效果（实时地图直接显示"整块回传是否真的被降级了"）
+                    TopLayerChecks = (ulong)Math.Max(0, snapshot.TopLayerChecks),
+                    TopLayerMatches = (ulong)Math.Max(0, snapshot.TopLayerMatches),
+                    TopLayerReportsSent = (ulong)Math.Max(0, snapshot.TopLayerReportsSent),
+                    TopLayerFixesReceived = (ulong)Math.Max(0, snapshot.TopLayerFixesReceived),
+                    TopLayerFixCellsApplied = (ulong)Math.Max(0, snapshot.TopLayerFixCellsApplied),
+                    TopLayerFixEscalations = (ulong)Math.Max(0, snapshot.TopLayerFixEscalations),
+                    TopLayerUnavailable = (ulong)Math.Max(0, snapshot.TopLayerUnavailable),
+                    // 第 6/8 步：这两类块**不再**被当成不一致（因此不再触发整块回传）
+                    DigestsDeferredNotStable = (ulong)Math.Max(0, snapshot.DigestsDeferredNotStable),
+                    VerdictsStaleSkipped = (ulong)Math.Max(0, snapshot.VerdictsStaleSkipped)
                 };
             }
 
@@ -654,6 +780,14 @@ namespace SuMultiplayer.Modules
                             peer.ClientRuntime = runtime.Sample.Clone();
                         if (runtime.Circuit != null)
                             peer.ClientCircuit = runtime.Circuit.Clone();
+                        if (runtime.TerrainResync != null)
+                        {
+                            peer.TerrainResync = runtime.TerrainResync.Clone();
+                            peer.TerrainResyncAgeMs = (ulong)Math.Max(0,
+                                Environment.TickCount64 - runtime.TerrainResyncReceivedAtMs);
+                        }
+                        if (runtime.Terrain != null)
+                            peer.Terrain = runtime.Terrain.Clone();
                         peer.RuntimeAgeMs = (ulong)Math.Max(0,
                             Environment.TickCount64 - runtime.ReceivedAtMs);
                     }
@@ -729,11 +863,40 @@ namespace SuMultiplayer.Modules
         private void OnMapRequest(MessageContext context, byte[] payload)
         {
             if (m_server?.KindOf(context.ClientId) == ClientKind.Debug)
+            {
                 m_liveMapRequests++;
+                ScheduleTerrainDiagnostics(Environment.TickCount64);
+            }
             LiveMapCodec.DecodeRequest(payload, out int mapRadius, out bool mapAll,
                 out bool hasRequestedCenter, out int requestedChunkX, out int requestedChunkZ);
             SendLiveMap(context.ClientId, mapRadius, mapAll, hasRequestedCenter, requestedChunkX,
                 requestedChunkZ);
+        }
+
+        private void ScheduleTerrainDiagnostics(long nowMs)
+        {
+            if (m_server == null || nowMs < m_nextTerrainDiagnosticRequestMs) return;
+            const uint windowMs = 1000;
+            m_nextTerrainDiagnosticRequestMs = nowMs + 5000;
+            m_terrainDiagnosticWindowUntilMs = nowMs + windowMs;
+            m_terrainDiagnosticRequestId++;
+            if (m_terrainDiagnosticRequestId <= 0) m_terrainDiagnosticRequestId = 1;
+            m_terrainDiagnosticWindowRequestId = m_terrainDiagnosticRequestId;
+            m_host?.BeginResyncEncodeDiagnostics();
+            var control = new TerrainDiagnosticControl
+            {
+                RequestId = (ulong)m_terrainDiagnosticRequestId,
+                WindowMs = windowMs
+            };
+            byte[] payload = control.ToByteArray();
+            foreach (PeerInfo peer in m_server.ListPeers())
+            {
+                if (peer.Kind != ClientKind.Player ||
+                    m_server.TrySend(peer.Id, MessageType.TerrainDiagnosticControl, payload)) continue;
+                LogRateLimited("terrain-diagnostic-control-send:" + peer.Id,
+                    "区块重同步诊断调度信号发送失败（clientId=" + peer.Id + "，主连接背压或已失效）",
+                    5000);
+            }
         }
 
         /// <summary>
@@ -1439,6 +1602,12 @@ namespace SuMultiplayer.Modules
         public void Tick(in ModuleTickContext tick)
         {
             if (!m_attached) return;
+            if (m_terrainDiagnosticWindowUntilMs != 0 &&
+                Environment.TickCount64 >= m_terrainDiagnosticWindowUntilMs)
+            {
+                m_host?.SetResyncEncodeDiagnosticsEnabled(false);
+                m_terrainDiagnosticWindowUntilMs = 0;
+            }
             UpdateRuntimeTelemetry(tick);
             FlushChunkLogSuppression();
             WireShell();
@@ -1532,6 +1701,18 @@ namespace SuMultiplayer.Modules
             if (m_clientSync != null)
             {
                 m_clientSync.Tick();
+                if (m_clientSync.TryTakeResyncDiagnostics(Environment.TickCount64,
+                        out TerrainResyncDiagnosticSample diagnosticSample) &&
+                    m_client != null && m_client.IsAlive)
+                {
+                    var report = new TerrainDiagnosticReport
+                    {
+                        Sample = ToProtocolSample(diagnosticSample)
+                    };
+                    if (!m_client.TrySend(MessageType.TerrainDiagnosticReport, report.ToByteArray()))
+                        LogRateLimited("terrain-diagnostic-report-send-failed",
+                            "区块重同步诊断采样回传失败（主连接背压或已失效）", 5000);
+                }
                 // 跨连接保存"上次应用序号 + 最近主机会话"：通道断掉时新客户端不会从 0 重来。
                 m_clientChangeSequence = m_clientSync.LastAppliedChangeSequence;
                 if (!string.IsNullOrEmpty(m_clientSync.HostSessionId))
