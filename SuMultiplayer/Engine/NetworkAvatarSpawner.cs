@@ -114,6 +114,20 @@ namespace SuMultiplayer.Engine
         private const long UpdateLocationDriftWarningMs = 2000;
         /// <summary>同一条限流告警 / 移动日志的最小间隔（毫秒）。</summary>
         private const long UpdateLocationLogIntervalMs = 5000;
+        /// <summary>
+        /// 主机侧飞行化身的跟随速度上限（兜底用，优先取 <c>ComponentLocomotion.CreativeFlySpeed</c>）。
+        /// 参照 <c>Pak/Database.xml</c> 的 ComponentTemplate Locomotion 默认值 16（m/s）：
+        /// 远端快照可能一次跨越很远（重生/传送/客户端卡顿），不设上限会把化身弹射出去。
+        /// </summary>
+        private const float MaxFlyFollowingSpeed = 16f;
+        /// <summary>
+        /// 飞行化身位置跟随的**逐秒残差比例**：<c>positionBlend = 1 - Pow(FlyFollowReference, dt)</c>。
+        /// 取 0.001f 是原实现（旧 :1117-1124）的既有取值，等效一阶系数
+        /// <c>k = -ln(0.001) = 6.91 s^-1</c>（时间常数 0.145s）。
+        /// **不要改这个值**：它同时决定"跟手程度"与"稳态落后距离"（<c>u/k</c>）——
+        /// 调大 → 跟随更紧但位置更贴客户端快照；调小 → 更平滑但落后更多。
+        /// </summary>
+        private const float FlyFollowReference = 0.001f;
         /// <summary>持续性问题 / 一次性事实只记一条（原因照实写，绝不静默）。</summary>
         private readonly HashSet<string> m_reportedOnce = new HashSet<string>(StringComparer.Ordinal);
         /// <summary>
@@ -1594,6 +1608,12 @@ namespace SuMultiplayer.Engine
         /// </summary>
         public long MoveVelocityApplied { get; private set; }
 
+        /// <summary>
+        /// 主机：飞行化身走"速度平稳驱动"（而非直接 Lerp 位置）的帧数。
+        /// 用于验证 MotionDetectorElectricElement 等只读 <c>body.Velocity</c> 的系统在飞行时恢复感知。
+        /// </summary>
+        public long FlyVelocityDriven { get; private set; }
+
         /// <summary>客户端：站在船/可骑实体上时跳过"移动速度"上交的次数（船漂移修复验证用）。</summary>
         public long StandingBodySnapshots { get; private set; }
 
@@ -2253,16 +2273,55 @@ namespace SuMultiplayer.Engine
                     state.PresentationInitialized = true;
                     continue;
                 }
+                float delayFactor = MathUtils.Saturate(state.EstimatedDelay / 0.2f);
                 if (state.IsFlying)
                 {
-                    // 旧 :1117-1124：飞行时用与帧率无关的指数混合直接跟位置，速度清零。
-                    float positionBlend = 1f - MathUtils.Pow(0.001f, MathUtils.Min(dt, 0.1f));
-                    body.Position = Vector3.Lerp(body.Position, state.Position, positionBlend);
-                    body.Velocity = Vector3.Zero;
-                    body.Rotation = Quaternion.Slerp(body.Rotation, state.Rotation, positionBlend);
+                    // 参照引擎本地角色创造飞行的"平稳驱动"（**不再直接 Lerp 位置**）。
+                    // Source: Survivalcraft/Game/ComponentLocomotion.cs:NormalMovement:410-416
+                    //   Vector3 vector4 = CreativeFlySpeed * (inputVector);          // 目标速度
+                    //   float num = ((inputVector == Vector3.Zero) ? 5f : 3f);       // 停止时收敛更快
+                    //   velocity += MathUtils.Saturate(num * dt) * (vector4 - velocity);
+                    //
+                    // 原实现（旧 :1117-1124）用指数混合直接写 body.Position 并把 Velocity 清零，
+                    // 代价是**所有只读 Velocity 的系统都失效**：
+                    //   · 运动感应（MotionDetectorElectricElement:CalculateMotionVoltage 要求
+                    //     body.Velocity.LengthSquared() >= 0.0625f）→ 飞过探测器不触发；
+                    //   · 化身腿动画（ComponentHumanModel:107 用 Velocity.XZ 驱动）不受影响
+                    //     （飞行分支本身被 IsCreativeFlyEnabled 排除），走动路径不变。
+                    //
+                    // ★ 必须用**速度表达原实现的一阶语义**，否则会退化成欠阻尼二阶系统：
+                    //   原式每帧位移 = positionBlend * error，其中
+                    //     positionBlend = 1 - Pow(FlyFollowReference, dt)，
+                    //     等效一阶系数 k = -ln(FlyFollowReference) = 6.91 s^-1。
+                    //   速度驱动下每帧位移 = body.Velocity * dt，令两者相等得
+                    //     body.Velocity = error / dt * positionBlend  ≈  k * error。
+                    //   这样逐帧位移与原 Lerp **完全一致**（收敛速度不变、不会变慢），
+                    //   而 body.Velocity 非零（探测器、腿动画等读速度的系统恢复）。
+                    //   绝不能用"P 控制 + 速度一阶滤波"的写法：那是二阶系统，取小增益时
+                    //   阻尼比 ζ=0.35 → 欠阻尼，实测表现为"飞行中突然向前闪现、又摆回来"，
+                    //   且整体速度比原实现慢 2.3 倍（k 从 6.91 降到 3）。
+                    float flyPositionBlend = 1f - MathUtils.Pow(FlyFollowReference, dt);
+                    Vector3 flyError = state.Position - body.Position;
+                    // IsGravityEnabled=false（ApplyRemotePlayerPose）→ ComponentBody.Update 不会动
+                    // 竖直速度，所以 Y 也必须由这里给，否则化身不会跟客户端升降。
+                    Vector3 flyVelocity = flyError / dt * flyPositionBlend;
+                    // 限幅必须限**速度**：原 Lerp 天然不会超过"剩余误差"，速度驱动则不然 ——
+                    // 客户端瞬移 / 长时间丢包时 error 很大，会按 k*error 把化身弹射出去。
+                    // ★ 曾经写错过一次：把 error 截到 flyMaxSpeed*dt（会当成"最大误差"用），
+                    //   导致实际上限只有 flyMaxSpeed*blend ≈ 1.74 m/s（16 m/s 的 10.9%），
+                    //   化身追不上客户端 → error 单调积累 → 撞上下面 errorSquared>9f 的
+                    //   直接对齐分支，表现为"飞行时一格一格地瞬移前进"（实测 1-2→4-5→8-9）。
+                    // Source: Pak/Database.xml:4190（ComponentTemplate Locomotion: CreativeFlySpeed）
+                    float flyMaxSpeed = locomotion != null && locomotion.CreativeFlySpeed > 0f
+                        ? locomotion.CreativeFlySpeed
+                        : MaxFlyFollowingSpeed;
+                    float flySpeed = flyVelocity.Length();
+                    if (flySpeed > flyMaxSpeed) flyVelocity *= flyMaxSpeed / flySpeed;
+                    body.Velocity = flyVelocity;
+                    body.Rotation = Quaternion.Slerp(body.Rotation, state.Rotation, 0.4f);
+                    FlyVelocityDriven++;
                     continue;
                 }
-                float delayFactor = MathUtils.Saturate(state.EstimatedDelay / 0.2f);
                 Vector3 error = targetPosition - body.Position;
                 float deadZone = state.IsGrounded ? 0.2f : 0.1f;
                 Vector3 targetVelocity = presentationVelocity;

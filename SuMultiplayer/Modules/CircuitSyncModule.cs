@@ -29,6 +29,27 @@ namespace SuMultiplayer.Modules
         private const int SnapshotTimeoutMs = 10000;
         private const int ClientScopeRefreshIntervalMs = 250;
         private const int ClientScopeRequestTimeoutMs = 2000;
+        /// <summary>
+        /// 客户端"本地电路元件缺失"的重试间隔与上限。
+        ///
+        /// 场景（实测）：全新客户端首次进入地形时，<c>SubsystemElectricity</c> 的元件表还没为
+        /// 该区块建出元件（地形**内容**已有效，但 <c>GetElectricElement</c> 返回 null），
+        /// 于是 <c>AreElementsReady</c> 失败、整个 scope 卡在
+        /// <c>waiting-full-scope-snapshot:missing-element ...</c>。
+        /// 旧实现只允许重建一次（<c>m_clientElementRecoveryAttempted</c> 布尔），重建后仍缺失就
+        /// **永久停在等待**（实测卡死 5 分钟以上，localStep 停滞不推进）。
+        /// 改为按区块计数 + 间隔退避重试：地形/元件表就绪是异步的，重试是**正确实现**
+        /// （不是兜底掩盖 bug）；超出上限后明确报错，不再静默等待。
+        /// </summary>
+        private const int ClientElementRecoveryIntervalMs = 1000;
+        private const int ClientElementRecoveryMaxAttempts = 5;
+
+        /// <summary>单个区块的元件缺失重试状态（见 <see cref="ClientElementRecoveryIntervalMs"/>）。</summary>
+        private sealed class ElementRecoveryState
+        {
+            public int Attempts;
+            public long NextAttemptMs;
+        }
 
         private sealed class SnapshotAssembly
         {
@@ -319,7 +340,13 @@ namespace SuMultiplayer.Modules
         private bool m_clientClockAccelerated;
         private bool m_clientResumePending;
         private bool m_clientFullScopeSnapshotPending;
-        private bool m_clientElementRecoveryAttempted;
+        /// <summary>
+        /// 按区块的"本地电路元件缺失"重试状态（见 <see cref="ClientElementRecoveryIntervalMs"/>）。
+        /// 取代旧的一次性布尔 <c>m_clientElementRecoveryAttempted</c>：新客户端首次进入地形时
+        /// 元件表建立与地形加载不同步，只重试一次会永久卡死。
+        /// </summary>
+        private readonly Dictionary<ChunkKey, ElementRecoveryState> m_clientElementRecovery =
+            new Dictionary<ChunkKey, ElementRecoveryState>();
         private string m_lastWarnedElementNotReady = "none";
         private int m_clientFullScopeSnapshotStep = int.MinValue;
         private int m_clientFullScopeSnapshotMinimumStep;
@@ -393,6 +420,10 @@ namespace SuMultiplayer.Modules
         private string m_lastTopologyMismatch = "none";
         private string m_lastCheckpointMismatch = "none";
         private string m_lastElementNotReady = "none";
+        /// <summary>累计执行"元件缺失重建"的次数（验证首次进入地形时是否靠重试救回）。</summary>
+        private long m_clientElementRecoveryCount;
+        /// <summary>累计达到重试上限（明确报错）的区块次数。</summary>
+        private long m_clientElementRecoveryExhausted;
         private long m_hostTopologyBumps;
         private long m_hostUnknownTopologyBumps;
         private long m_clientTopologyBumps;
@@ -433,6 +464,8 @@ namespace SuMultiplayer.Modules
             " lastClientTopologyBump=" + m_lastClientTopologyBump +
             " lastCheckpointMismatch=" + m_lastCheckpointMismatch +
             " lastElementNotReady=" + m_lastElementNotReady +
+            " elementRecovery=" + m_clientElementRecoveryCount +
+            " elementRecoveryExhausted=" + m_clientElementRecoveryExhausted +
             " accelerated=" + CircuitSimulationPauseSignal.ClientAccelerated + ")" +
             " debugPaused=" + m_debugPauseRequested +
             " " + m_world.DescribeDiagnostics();
@@ -667,7 +700,7 @@ namespace SuMultiplayer.Modules
                 m_clientPrevalidatedSnapshots.Clear();
                 m_clientFullScopeSnapshotApplied.Clear();
                 m_clientFullScopeSnapshotPending = false;
-                m_clientElementRecoveryAttempted = false;
+                m_clientElementRecovery.Clear();
                 m_clientChunkBoundaries.Clear();
                 m_clientRequestedScope.Clear();
                 m_clientInitializedScope.Clear();
@@ -2282,6 +2315,55 @@ namespace SuMultiplayer.Modules
         private static bool IsSnapshotExpired(SnapshotAssembly assembly, long nowMs) =>
             nowMs - assembly.CreatedMs >= SnapshotTimeoutMs;
 
+        /// <summary>
+        /// 客户端"本地电路元件缺失"的**按区块退避重试**。
+        ///
+        /// 背景（实测，2026-11-05）：全新客户端首次进入地形时，
+        /// <c>AreElementsReady</c> → <c>SubsystemElectricity.GetElectricElement</c> 返回 null，
+        /// 而 <c>DescribeMissingElement</c> 能报出真实 <c>blockContents</c>/<c>blockType</c>
+        /// （说明**地形内容已有效**，只是元件表还没为该区块建出元件）。
+        /// 这是"地形加载 与 元件表建立"不同步引起的**瞬态**状态，重试是正确实现。
+        ///
+        /// 旧实现只允许重建一次（布尔 <c>m_clientElementRecoveryAttempted</c>），
+        /// 重建后仍缺就永久停在 <c>waiting-full-scope-snapshot</c>，实测卡死 5 分钟以上、
+        /// <c>localStep</c> 停滞不推进（整个客户端电路不动）。
+        ///
+        /// 现在：每个区块独立计数 + <see cref="ClientElementRecoveryIntervalMs"/> 间隔退避，
+        /// 达到 <see cref="ClientElementRecoveryMaxAttempts"/> 后**明确报错**（不再静默等待）。
+        /// </summary>
+        private void TryClientElementRecovery(ChunkKey chunk, string waitReason, long nowMs)
+        {
+            if (!m_clientElementRecovery.TryGetValue(chunk, out ElementRecoveryState state))
+            {
+                state = new ElementRecoveryState();
+                m_clientElementRecovery.Add(chunk, state);
+            }
+            if (nowMs < state.NextAttemptMs) return;
+            state.NextAttemptMs = nowMs + ClientElementRecoveryIntervalMs;
+            if (state.Attempts >= ClientElementRecoveryMaxAttempts)
+            {
+                // 上限已到：明确报错（每个 chunk 只报一次，避免刷屏）。
+                if (!string.Equals(m_lastWarnedElementNotReady, waitReason,
+                        StringComparison.Ordinal))
+                {
+                    m_lastWarnedElementNotReady = waitReason;
+                    m_clientElementRecoveryExhausted++;
+                    Warn("Client circuit element is still absent after " +
+                        state.Attempts + " recovery rebuilds: " + waitReason +
+                        ". Local terrain contents are valid, but the electric element table " +
+                        "has still not created this element.");
+                }
+                return;
+            }
+            state.Attempts++;
+            m_clientElementRecoveryCount++;
+            m_world.ResetClientCircuitState();
+            m_lastWarnedElementNotReady = waitReason;
+            Warn("Client circuit element is absent (attempt " + state.Attempts + "/" +
+                ClientElementRecoveryMaxAttempts + "): " + waitReason +
+                "; rebuilt client circuit state and re-requested authoritative snapshots.");
+        }
+
         private void RequestSnapshotRecovery(ChunkKey chunk, SnapshotAssembly assembly,
             string reason)
         {
@@ -3476,7 +3558,7 @@ namespace SuMultiplayer.Modules
                     circuitScopeChanged && nextCircuitScope.Count > 0;
                 m_clientFullScopeSnapshotStep = int.MinValue;
                 m_clientFullScopeSnapshotMinimumStep = 0;
-                m_clientElementRecoveryAttempted = false;
+                m_clientElementRecovery.Clear();
                 m_nextClientFullScopeCheckMs = (long)(m_clock() * 1000.0);
             }
             foreach (ChunkKey key in nextTerrainScope)
@@ -3490,6 +3572,7 @@ namespace SuMultiplayer.Modules
                 if (!nextTerrainScope.Contains(removed))
                     m_world.ClearAuthoritativeStatesForChunk(removed);
                 m_clientInitializedScope.Remove(removed);
+                m_clientElementRecovery.Remove(removed);
                 m_clientChunkBoundaries.Remove(removed);
                 m_clientChunkCommittedEventSequences.Remove(removed);
                 m_clientRepairRequests.Remove(removed);
@@ -3849,20 +3932,9 @@ namespace SuMultiplayer.Modules
                         {
                             m_lastElementNotReady = chunk + " " + missingElement;
                             waitReason = m_lastElementNotReady;
-                            if (!m_clientElementRecoveryAttempted)
-                            {
-                                m_world.ResetClientCircuitState();
-                                m_clientElementRecoveryAttempted = true;
-                                Warn("Client circuit element is absent after topology rebuild: " +
-                                    waitReason + "; requested latest full-scope state after one rebuild.");
-                                m_lastWarnedElementNotReady = waitReason;
-                            }
-                            if (!string.Equals(m_lastWarnedElementNotReady, waitReason,
-                                    StringComparison.Ordinal))
-                            {
-                                Warn("Client circuit element is still absent: " + waitReason + ".");
-                            }
-                            m_lastWarnedElementNotReady = waitReason;
+                            // 按区块 + 间隔退避重试重建（见 ClientElementRecoveryIntervalMs）。
+                            // 旧实现只重建一次，重建后仍缺就永久停在等待（实测卡死 5 分钟以上）。
+                            TryClientElementRecovery(chunk, waitReason, nowMs);
                             break;
                         }
                         m_clientPrevalidatedSnapshots.Add(assembly.SnapshotId);
@@ -4011,6 +4083,9 @@ namespace SuMultiplayer.Modules
                         Warn("Circuit snapshot waits for local element " +
                             m_lastElementNotReady + ".");
                     m_lastWarnedElementNotReady = m_lastElementNotReady;
+                    // 与 full-scope 路径同一套按区块退避重试：元件表建立与地形加载不同步时，
+                    // 光等快照过期（SnapshotTimeoutMs=10s）太慢且不重建元件表。
+                    TryClientElementRecovery(key, m_lastElementNotReady, nowMs);
                     if (IsSnapshotExpired(assembly, nowMs))
                     {
                         BeginClientFullScopeSnapshotRefresh(nowMs,
@@ -4142,6 +4217,8 @@ namespace SuMultiplayer.Modules
                     if (assembly.Full)
                     {
                         m_clientInitializedScope.Add(key);
+                        // 该区块的元件已就绪 → 清掉它的重试状态（下次再缺从 0 开始计数）。
+                        m_clientElementRecovery.Remove(key);
                         if (m_clientFullScopeSnapshotPending &&
                             assembly.HostStep == m_clientFullScopeSnapshotStep)
                             m_clientFullScopeSnapshotApplied.Add(key);
@@ -4249,7 +4326,7 @@ namespace SuMultiplayer.Modules
                 m_lastCircuitStep = Math.Max(m_lastCircuitStep,
                     m_clientFullScopeSnapshotStep);
                 m_clientFullScopeSnapshotPending = false;
-                m_clientElementRecoveryAttempted = false;
+                m_clientElementRecovery.Clear();
                 m_clientPrevalidatedSnapshots.Clear();
                 m_clientSimulationBlockReason = "ready";
             }
@@ -4281,7 +4358,7 @@ namespace SuMultiplayer.Modules
                 m_clientFullScopeSnapshotPending = false;
                 m_clientFullScopeSnapshotStep = int.MinValue;
                 m_clientFullScopeSnapshotMinimumStep = message.HostCircuitStep;
-                m_clientElementRecoveryAttempted = false;
+                m_clientElementRecovery.Clear();
                 m_clientChunkBoundaries.Clear();
                 m_clientInitializedScope.Clear();
                 m_clientHashCheckpoints.Clear();
@@ -4887,7 +4964,7 @@ namespace SuMultiplayer.Modules
             m_clientScopeRequestSentMs = 0;
             m_wasCircuitAttached = false;
             m_clientFullScopeSnapshotPending = false;
-            m_clientElementRecoveryAttempted = false;
+            m_clientElementRecovery.Clear();
             m_clientFullScopeSnapshotStep = int.MinValue;
             m_clientFullScopeSnapshotApplied.Clear();
             m_clientPrevalidatedSnapshots.Clear();
@@ -4911,7 +4988,7 @@ namespace SuMultiplayer.Modules
             m_clientPrevalidatedSnapshots.Clear();
             m_clientFullScopeSnapshotApplied.Clear();
             m_clientFullScopeSnapshotPending = false;
-            m_clientElementRecoveryAttempted = false;
+            m_clientElementRecovery.Clear();
             m_clientFullScopeSnapshotStep = int.MinValue;
             m_clientChunkBoundaries.Clear();
             m_clientHashCheckpoints.Clear();
