@@ -125,6 +125,10 @@ message ChunkResync {
   bytes records = 5;
   // Change journal sequence captured when this snapshot was encoded (absent = unknown).
   optional int64 watermark = 6;
+  // 这份快照**只含树叶段**（落叶树树叶 12/13/256/263 + 落叶方块 261），
+  // 用于"季节驱动的树叶季相变化"：客户端按轻量路径落地（只写数组、不派发电路/行为/副本事件），
+  // 落地后不重算整块摘要。见 doc/leaves-layer-resync-plan.md 第 5、6 章。
+  bool leaves_only = 7;
   // Third-party extension points: see doc/message-protocol.md.
   bytes ext = 100;
   google.protobuf.Any custom = 101;

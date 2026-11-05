@@ -1378,6 +1378,56 @@ namespace SuMultiplayer.Engine
         }
     }
 
+    /// <summary>
+    /// 「季节驱动的树叶季相变化」的识别与上报（主机侧）。
+    ///
+    /// 判定必须做在**真实写入 chunk 之后**（用户口径）：队列项可能因为
+    /// <c>SubsystemCellChangeQueue.ApplyCellChanges</c> 的 RequiredValue 校验失败而不落地，
+    /// 离队即标记会标出一份没发生的改动。
+    ///
+    /// 判据（见 doc/leaves-layer-resync-plan.md 第 3.4 节）：
+    ///   · 落叶树树叶：contents 不变，且 data 只有低 6 位变（Season/TimeOfSeason/IsShaken）；
+    ///   · 落叶方块 261：<c>CreateFallenLeaves</c> 新生成了落叶（同一季节事件的一部分）。
+    ///
+    /// 玩家放/砍树叶走 <c>ChangeCell → OnBlockAdded/OnBlockRemoved</c>，
+    /// 而 <c>SubsystemDeciduousLeavesBlockBehavior</c> 没有 override 这两个回调 ⇒ 天然不经过这里。
+    /// </summary>
+    internal static class SeasonLeavesChange
+    {
+        /// <summary>主机侧「树叶季相真实写入」的上报出口（由 TerrainSyncModule 在建成房间时挂上）。</summary>
+        internal static Action<int, int, int> Notifier;
+
+        /// <summary>
+        /// 这次值变化是不是「季节驱动的树叶季相写入」。
+        /// </summary>
+        internal static bool IsLeavesSeasonWrite(int before, int after)
+        {
+            if (before == after) return false;                       // 没有真实变化
+
+            int oldContents = Game.Terrain.ExtractContents(before);
+            int newContents = Game.Terrain.ExtractContents(after);
+            if (newContents == 0) return false;                      // 变成空气 = 不是季相
+
+            // ① 落叶方块：CreateFallenLeaves 把空气/可替换格变成 261（同一季节事件）。
+            if (newContents == LeavesPatchContents.FallenLeaves) return true;
+
+            // ② 树叶季相：contents 不变，只有 data 低 6 位变。
+            if (oldContents != newContents) return false;
+            if (!LeavesPatchContents.IsLeavesPatch(newContents)) return false;
+            int oldData = Game.Terrain.ExtractData(before);
+            int newData = Game.Terrain.ExtractData(after);
+            return ((oldData ^ newData) & ~0x3F) == 0;
+        }
+
+        /// <summary>主机：真实发生了树叶季相写入 → 交给 <see cref="Notifier"/>（没有主机就什么也不做）。</summary>
+        internal static void Note(int x, int y, int z)
+        {
+            Action<int, int, int> notifier = Notifier;
+            if (notifier == null) return;
+            notifier(x, y, z);
+        }
+    }
+
     public sealed class SuSubsystemDeciduousLeavesBlockBehavior :
         SubsystemDeciduousLeavesBlockBehavior
     {
@@ -1393,7 +1443,15 @@ namespace SuMultiplayer.Engine
                 QueueLeafParticlesOnly(value, x, y, z);
                 return;
             }
+            // 主机：applyImmediately=true ⇒ base 内部立刻 ChangeCell，返回时值已定。
+            // 只有在**值真的变了**之后才打「树叶季相」标记（离队即标记是不允许的：
+            // 引擎可能因为值未变而直接 return，那样标出来的是一份没发生的改动）。
+            // 见 doc/leaves-layer-resync-plan.md 第 3.2、3.3 节。
+            var cell = new Point3(x, y, z);
+            int before = ReadCellValueForSeasons(cell);
             base.OnBlockGenerated(value, x, y, z, isLoaded);
+            int after = ReadCellValueForSeasons(cell);
+            if (SeasonLeavesChange.IsLeavesSeasonWrite(before, after)) SeasonLeavesChange.Note(x, y, z);
             // Source: Survivalcraft/Game/SubsystemDeciduousLeavesBlockBehavior.cs:OnBlockGenerated:62
             // （applyImmediately:true → ChangeCell）与 CreateFallenLeaves（QueueCellChange）
             ReplicaGates.RescueEvolutionCells(SubsystemTerrain);
@@ -1406,9 +1464,19 @@ namespace SuMultiplayer.Engine
                 QueueLeafParticlesOnly(value, x, y, z);
                 return;
             }
+            // 注意：这里**不**打标记。OnPoll 走的是延迟队列（applyImmediately:false），
+            // base 返回时值还没变 —— 真实写入发生在 SubsystemCellChangeQueue.Update →
+            // ApplyCellChanges，那个外壳会做前后比对并打标记（见 SuSubsystemCellChangeQueue）。
             base.OnPoll(value, x, y, z, pollPass);
             // Source: Survivalcraft/Game/SubsystemDeciduousLeavesBlockBehavior.cs:OnPoll:68
             ReplicaGates.RescueEvolutionCells(SubsystemTerrain);
+        }
+
+        /// <summary>读该格当前值（读不到就是 0：判据里 0 一律不成立，不会误标）。</summary>
+        private int ReadCellValueForSeasons(Point3 cell)
+        {
+            try { return ReplicaGates.ReadCellValue(SubsystemTerrain, cell); }
+            catch (Exception) { return 0; }
         }
 
         /// <summary>
@@ -3046,6 +3114,11 @@ namespace SuMultiplayer.Engine
     {
         private SubsystemTerrain m_terrain;
         private MethodInfo m_baseUpdate;
+        /// <summary>
+        /// 本轮排队格的**旧值**（base 应用之前记下）。base 跑完逐个比对：
+        /// 只有真的变了才算「真实写入 chunk」，才允许打树叶季相标记。
+        /// </summary>
+        private readonly Dictionary<Point3, int> m_beforeValues = new Dictionary<Point3, int>();
 
         protected override void Load(ValuesDictionary valuesDictionary)
         {
@@ -3080,8 +3153,22 @@ namespace SuMultiplayer.Engine
             }
             object table = ReplicaGates.GetField(this, "m_toChange",
                 typeof(SubsystemCellChangeQueue));
-            if (table is IDictionary dictionary && dictionary.Count == 0) return;
+            if (table is not IDictionary dictionary) return;
+            if (dictionary.Count == 0) return;
             if (m_baseUpdate == null) return;
+
+            // ---- 树叶季相标记：在**真实写入 chunk 之后**才打（用户口径）----
+            //
+            // 为什么在这里而不是 QueueCellChange 处：ApplyCellChanges 会校验 RequiredValue，
+            // 不匹配的队列项**不会落地**（那说明这格已被别的改动抢先写过）。
+            // 所以先记下每一格的旧值，等 base 真的跑完再比对 —— 只有值变了才算真实写入。
+            // 见 doc/leaves-layer-resync-plan.md 第 3.2、3.3 节。
+            m_beforeValues.Clear();
+            foreach (DictionaryEntry entry in dictionary)
+            {
+                if (entry.Key is not Point3 cell) continue;
+                m_beforeValues[cell] = ReadCellValue(cell);
+            }
             try
             {
                 m_baseUpdate.Invoke(this, new object[] { dt });
@@ -3090,9 +3177,24 @@ namespace SuMultiplayer.Engine
             {
                 Log.Error("[SuMP] cellChangeQueue: 调用引擎 Update 失败：" +
                     e.GetType().Name + " " + e.Message + "（延迟写格未应用）");
+                m_beforeValues.Clear();
                 return;
             }
+            foreach (KeyValuePair<Point3, int> pair in m_beforeValues)
+            {
+                int after = ReadCellValue(pair.Key);
+                if (after == pair.Value) continue;          // RequiredValue 校验没过 → 没落地，不标记
+                if (!SeasonLeavesChange.IsLeavesSeasonWrite(pair.Value, after)) continue;
+                SeasonLeavesChange.Note(pair.Key.X, pair.Key.Y, pair.Key.Z);
+            }
+            m_beforeValues.Clear();
             ReplicaGates.RescueEvolutionCells(m_terrain);
+        }
+
+        private int ReadCellValue(Point3 cell)
+        {
+            try { return ReplicaGates.ReadCellValue(m_terrain, cell); }
+            catch (Exception) { return 0; }
         }
     }
 

@@ -26,7 +26,8 @@ namespace SuMultiplayer.Engine
     /// 演示页标记：BRG01。
     /// </summary>
     public sealed class TerrainBridge : ITerrainWorld, IPackedTerrainWorld, ITopLayerTerrainWorld,
-        IChunkStabilityWorld, ITerrainResyncDiagnosticWorld
+        IChunkStabilityWorld, ITerrainResyncDiagnosticWorld, IRawCellTerrainWriter,
+        ITopLayerTrimTerrainWriter
     {
         private readonly ConcurrentQueue<ReceivedFrame> m_inbox = new ConcurrentQueue<ReceivedFrame>();
         /// <summary>
@@ -411,6 +412,103 @@ namespace SuMultiplayer.Engine
             TerrainResyncDiagnosticWindow diagnostics)
         {
             return ApplyCellsCore(key, edits, diagnostics, deferInvalidation: true);
+        }
+
+        /// <summary>
+        /// 顶层补丁落地：**先清掉主机顶格之上的残留，再写主机顶格**。
+        ///
+        /// 引擎侧依据：融雪/化冰就是「把这格清成空气」——
+        /// <c>SubsystemWeather.FreezeThawAndDepositSnow:598,602</c> 调
+        /// <c>SubsystemTerrain.DestroyCell(0, x, y, z, newValue: 0, ...)</c> →
+        /// <c>ChangeCell(x, y, z, 0)</c>（雪 61 / 冰 62 都是 0）。所以这里清成 0 与引擎完全一致。
+        ///
+        /// 为什么"顶格之上必为空气"：<c>Shafts</c> 的 topHeight 定义就是最高非空气格
+        /// （TerrainUpdater.GenerateChunkSunlightAndHeights:887-898 从 255 向下找第一个非空气格）。
+        ///
+        /// 写入用 <c>SetCellValueFast</c>（不经 ChangeCell）→ 不进 <c>m_modifiedCells</c> →
+        /// 不会被客户端当成玩家编辑回传主机。
+        /// </summary>
+        public int ApplyTopLayerWithTrim(ChunkKey key, IReadOnlyList<CellEdit> cells)
+        {
+            EnsureMainThread("ApplyTopLayerWithTrim");
+            Game.Terrain terrain = CurrentTerrain;
+            if (terrain == null || cells == null || cells.Count == 0) return 0;
+            int baseX = key.X * 16;
+            int baseZ = key.Z * 16;
+            TerrainChunk chunk = terrain.GetChunkAtCell(baseX + 8, baseZ + 8);
+            if (chunk == null || chunk.State < TerrainChunkState.InvalidLight) return 0;   // 块没加载：丢弃（上层会重问）
+            int changed = 0;
+            for (int i = 0; i < cells.Count; i++)
+            {
+                CellEdit edit = cells[i];
+                if (edit.X < 0 || edit.X >= 16 || edit.Z < 0 || edit.Z >= 16) continue;
+                if (edit.Y < 0 || edit.Y > 255) continue;
+                // ① 清掉主机顶格之上的残留（非空气才写，绝大多数列本来就没有残留 → 零写入）
+                for (int y = edit.Y + 1; y < TerrainChunk.Height; y++)
+                {
+                    int above = chunk.GetCellValueFast(edit.X, y, edit.Z);
+                    if (Game.Terrain.ReplaceLight(above, 0) == 0) continue;
+                    chunk.SetCellValueFast(edit.X, y, edit.Z, 0);   // 与引擎融雪/化冰同口径：清成空气
+                    changed++;
+                }
+                // ② 写主机顶格
+                int value = Game.Terrain.MakeBlockValue(edit.Contents, 0, edit.Data);
+                int old = chunk.GetCellValueFast(edit.X, edit.Y, edit.Z);
+                if (Game.Terrain.ReplaceLight(old, 0) == value) continue;
+                chunk.SetCellValueFast(edit.X, edit.Y, edit.Z, value);
+                changed++;
+            }
+            if (changed > 0)
+            {
+                // 与 ChangeCell / ApplyCellsCore 同源的"降级邻域"：让几何/光照/顶高在正常流程里重算。
+                m_subsystem?.TerrainUpdater?.DowngradeChunkNeighborhoodState(chunk.Coords, 1,
+                    TerrainChunkState.InvalidLight, forceGeometryRegeneration: false);
+            }
+            return changed;
+        }
+
+        /// <summary>
+        /// 树叶段补丁的**轻量落地**：只写引擎 <c>TerrainChunk.Cells</c> 数组 + 一次邻域降级，
+        /// **不派发**电路拓扑 / 方块行为 / 副本事件。
+        ///
+        /// 为什么可以省掉这三类派发：树叶段补丁只改方块 data（Season / TimeOfSeason），
+        /// contents 不变 ⇒ 电路拓扑不变、方块增删行为不触发。
+        /// 而 <see cref="ApplyCellsCore"/> 的每格 3 类派发正是客户端单帧 250~295ms 尖峰的来源。
+        ///
+        /// 与 <see cref="ApplyCellsCore"/> 一致：走 <c>SetCellValueFast</c>，**不经 ChangeCell**，
+        /// 所以不进 <c>m_modifiedCells</c> → 不会被 <c>CaptureClientEdits</c> 当成玩家编辑回传主机。
+        /// 见 doc/leaves-layer-resync-plan.md 第 6.1 节。
+        /// </summary>
+        public int SetCellsRaw(ChunkKey key, IReadOnlyList<CellEdit> edits)
+        {
+            EnsureMainThread("SetCellsRaw");
+            Game.Terrain terrain = CurrentTerrain;
+            if (terrain == null || edits == null || edits.Count == 0) return 0;
+            int baseX = key.X * 16;
+            int baseZ = key.Z * 16;
+            TerrainChunk chunk = terrain.GetChunkAtCell(baseX + 8, baseZ + 8);
+            if (chunk == null || chunk.State < TerrainChunkState.InvalidLight) return 0;   // 块没加载：丢弃（上层会重问）
+            int changed = 0;
+            for (int i = 0; i < edits.Count; i++)
+            {
+                CellEdit edit = edits[i];
+                if (edit.X < 0 || edit.X >= 16 || edit.Z < 0 || edit.Z >= 16) continue;
+                if (edit.Y < 0 || edit.Y > 255) continue;
+                int value = Game.Terrain.MakeBlockValue(edit.Contents, 0, edit.Data);
+                int old = chunk.GetCellValueFast(edit.X, edit.Y, edit.Z);
+                int oldWithoutLight = Game.Terrain.ReplaceLight(old, 0);
+                if (oldWithoutLight == value) continue;
+                chunk.SetCellValueFast(edit.X, edit.Y, edit.Z, value);
+                changed++;
+            }
+            if (changed > 0)
+            {
+                // 与 ChangeCell / ApplyCellsCore 同源的"降级邻域"（树叶 data 影响渲染与光照）。
+                // DowngradeChunkNeighborhoodState 是**实例**方法，借子系统实例来调（同 CompleteResyncChunk）。
+                m_subsystem?.TerrainUpdater?.DowngradeChunkNeighborhoodState(chunk.Coords, 1,
+                    TerrainChunkState.InvalidLight, forceGeometryRegeneration: false);
+            }
+            return changed;
         }
 
         private int ApplyCellsCore(ChunkKey key, IReadOnlyList<CellEdit> edits,

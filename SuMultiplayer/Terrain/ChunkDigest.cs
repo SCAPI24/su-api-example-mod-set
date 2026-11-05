@@ -25,6 +25,73 @@ namespace SuMultiplayer.Terrain
     public delegate void ChunkCellSource(int x, int y, int z, out int contents, out int data);
 
     /// <summary>
+    /// 一个 chunk 上「主机侧哪些类别被真实改过」的标记（**按客户端**记录，见 TerrainSyncHost.m_pendingKinds）。
+    ///
+    /// 语义是「这块有该类改动，该客户端需要补」，**不是**「这块是这类方块」。
+    /// 见 doc/leaves-layer-resync-plan.md 第 3 章。
+    /// </summary>
+    [Flags]
+    public enum ChunkMutationKind : byte
+    {
+        None = 0,
+        /// <summary>天气/季节的结冰、积雪（Contents 61/62）。行为不变：仍走顶层摘要修复。</summary>
+        Season = 1 << 0,
+        /// <summary>
+        /// 季节驱动的树叶季相变化：落叶树树叶的 data 低 6 位（Season/TimeOfSeason/IsShaken）变化，
+        /// 或 <c>CreateFallenLeaves</c> 新生成了落叶方块（Contents 261）。
+        /// 只在**真实写入 chunk 之后**才打这个标记（离队即标记是不允许的：队列项可能不落地）。
+        /// </summary>
+        Leaves = 1 << 1
+    }
+
+    /// <summary>
+    /// 树叶段补丁认的「树叶类」Contents：四种落叶树树叶 + 落叶方块。
+    ///
+    /// 为什么把 261（FallenLeaves）也算进来：<c>SubsystemDeciduousLeavesBlockBehavior.CreateFallenLeaves</c>
+    /// 会在秋→冬时把落叶方块放进树冠下方，那是**同一季节事件的一部分**；不带上它，
+    /// 客户端落地树叶补丁后整块仍不一致（永远收敛不了）。
+    /// 常绿树（14 Spruce / 225 TallSpruce）不是 <c>DeciduousLeavesBlock</c>，不参与季节变化。
+    /// </summary>
+    public static class LeavesPatchContents
+    {
+        public const int Oak = 12;
+        public const int Birch = 13;
+        public const int Mimosa = 256;
+        public const int Poplar = 263;
+        public const int FallenLeaves = 261;
+
+        /// <summary>contents → 是否属于树叶段补丁。上限按引擎 BlockIndex 上限（1024）裁。</summary>
+        public static bool IsLeavesPatch(int contents)
+        {
+            switch (contents)
+            {
+                case Oak:
+                case Birch:
+                case Mimosa:
+                case Poplar:
+                case FallenLeaves:
+                    return true;
+                default:
+                    return false;
+            }
+        }
+    }
+
+    /// <summary>
+    /// 可选的**轻量写格**通道：只写引擎 <c>TerrainChunk.Cells</c> 数组 + 一次邻域降级，
+    /// 不派发电路拓扑 / 方块行为 / 副本事件。
+    ///
+    /// 专供树叶段补丁：它只改方块 data（不影响电路拓扑），而 <see cref="ITerrainResyncDiagnosticWorld.ApplyResyncCells"/>
+    /// 的每格 3 类事件派发正是客户端单帧 250~295ms 尖峰的来源。
+    /// 不实现这个接口时调用方退回 <see cref="ITerrainWorld.ApplyCells"/>（功能不变，只是慢）。
+    /// </summary>
+    public interface IRawCellTerrainWriter
+    {
+        /// <summary>只写数组。返回真正发生变化的格数。</summary>
+        int SetCellsRaw(ChunkKey key, IReadOnlyList<CellEdit> edits);
+    }
+
+    /// <summary>
     /// 一个 chunk 的内容摘要（32 bit）。
     ///
     /// **只在加载时计算一次**（用户定）：块卸载时只是把摘要丢掉，不做任何维护；

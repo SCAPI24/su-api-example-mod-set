@@ -218,6 +218,39 @@ message TerrainSyncSample {
   // 客户端没带顶层 hash → 主机无法判断差异位置、保守走整块的次数。**应为 0**；
   // 不为 0 说明客户端有路径没刷新顶层 hash（就是"红框那一刻卡一下"的根因）。
   uint64 top_layer_fix_skipped_no_client_hash = 38;
+
+  // ---- 树叶段补丁（季节驱动的树叶季相；见 doc/leaves-layer-resync-plan.md）----
+  // 主机：观察到「树叶季相真实写入 chunk」并打标记的次数（按目标客户端展开前）。
+  uint64 leaves_marked = 39;
+  // 主机：打了标记但当时没有任何「在线且未持有该块」的客户端（不需要补）。
+  uint64 leaves_marked_unroutable = 40;
+  // 主机：入队的树叶段补丁作业数。
+  uint64 leaves_only_jobs = 41;
+  // 主机：树叶段补丁累计游程数。
+  uint64 leaves_only_runs = 42;
+  // 主机：树叶段补丁累计字节；÷ jobs 应与实测单块 224~3400 字节同量级。
+  uint64 leaves_only_bytes = 43;
+  // 主机：带树叶标记但编码出 0 游程 → 改走整块回传的次数。应接近 0。
+  uint64 leaves_zero_run_fallback = 44;
+  // 主机：客户端没带顶层 hash → 回 NotReady（树叶段也不发）的次数。启动后应很快归 0。
+  uint64 leaves_recalc_deferred = 45;
+  // 主机：顶层一致而未发顶层修复、只补了树叶段的次数。
+  uint64 leaves_top_layer_skipped = 46;
+  // 主机：树叶段补丁发完后的顶层修复发送失败次数（显式背压）。
+  uint64 leaves_fix_send_failures = 47;
+  // 主机：当前在册的（区块 × 身份）树叶季相标记条数。
+  uint64 leaves_pending_marks = 48;
+  // 客户端：树叶段补丁落地次数（末片落地算一次）。
+  uint64 leaves_fix_applied = 49;
+  // 客户端：树叶段补丁累计落地格数。
+  uint64 leaves_fix_cells = 50;
+  // 客户端：顶层补丁落地时清掉的「主机顶格之上的残留」格数。
+  // 融雪/化冰后客户端留着一层雪就是这类；这个数一旦增长，说明旧行为下红框会永不收敛。
+  uint64 top_layer_trimmed_cells = 51;
+  // 客户端：引擎未实现裁剪通道、顶层补丁退化为「只写不清」的次数（应为 0）。
+  uint64 top_layer_trim_unavailable = 52;
+  // 主机：同一块连续顶层补丁达上限（3 次）→ 改走整块回传的次数。
+  uint64 top_layer_fix_attempt_exceeded = 53;
 }
 
 message LiveTelemetry {

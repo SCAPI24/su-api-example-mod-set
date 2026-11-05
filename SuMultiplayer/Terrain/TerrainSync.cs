@@ -138,6 +138,36 @@ namespace SuMultiplayer.Terrain
             TerrainResyncDiagnosticWindow diagnostics);
     }
 
+    /// <summary>
+    /// 可选的**顶层补丁落地**通道：除了写主机顶格，还要**清掉客户端在主机顶格之上的残留**。
+    ///
+    /// 为什么必须有这一步（实机证据）：主机融雪走
+    /// <c>SubsystemWeather.FreezeThawAndDepositSnow</c> → <c>DestroyCell(..., newValue: 0, ...)</c>
+    /// → <c>ChangeCell(x,y,z,0)</c>，即**把雪格清成空气**（雪 61 与冰 62 都是 newValue: 0）。
+    /// 若客户端当时那块内容未定稿，这一格无处落地被丢弃；等它重新从自己的存档加载时，
+    /// 存档里还是冬季数据 → **顶格之上多一层雪**。
+    /// 而顶层补丁只写"主机顶格"（y = 主机 topHeight），那一层残留永远清不掉 →
+    /// 两端 topHeightHash 永远不同 → 主机每秒重发、客户端每秒落地，永不收敛
+    /// （实测 122 次/秒、红框不消失、客户端 terrain-sync 单次最坏 262ms）。
+    ///
+    /// 语义依据：<c>TerrainChunk.Shafts</c> 的 topHeight 定义就是「**最高的非空气格**」
+    /// （TerrainUpdater.GenerateChunkSunlightAndHeights:887-898 从 y=255 向下找第一个非空气格），
+    /// 所以「主机 topHeight 之上全是空气」是**定义保证**的，清成 0（空气）与引擎融雪/化冰完全一致。
+    ///
+    /// 不实现这个接口时调用方退回 <see cref="ITerrainWorld.ApplyCells"/>：
+    /// 补丁照常写顶格，但残留不会被清掉（功能退化为旧行为，不会更坏）。
+    /// </summary>
+    public interface ITopLayerTrimTerrainWriter
+    {
+        /// <summary>
+        /// 落地一份顶层补丁：对每个 <paramref name="cells"/>（Y = 主机 topHeight）：
+        ///   ① 把该列 (edit.Y+1 .. 255) 的**非空气格清成 0**（与引擎融雪/化冰同口径）；
+        ///   ② 写入主机顶格 (edit.Y)。
+        /// 返回真正发生变化的格数（含被清掉的残留格）。
+        /// </summary>
+        int ApplyTopLayerWithTrim(ChunkKey key, IReadOnlyList<CellEdit> cells);
+    }
+
     public struct TerrainResyncDiagnosticSample
     {
         public ulong RequestId;
@@ -331,9 +361,28 @@ namespace SuMultiplayer.Terrain
         public static List<List<byte[]>> Encode(ChunkKey key, ITerrainWorld world, out bool useRle,
             out int runCount, out int expandedCells, bool captureDiagnostics, long watermark = -1L)
         {
+            return Encode(key, world, out useRle, out runCount, out expandedCells,
+                captureDiagnostics, watermark, leavesOnly: false);
+        }
+
+        /// <param name="leavesOnly">
+        /// true = 只编码**树叶段**：按列取「首个树叶类格 ~ 末个树叶类格」的范围，
+        /// 范围内按相邻同值合并成游程。树叶类 = <see cref="LeavesPatchContents"/>（12/13/256/263/261）。
+        /// 见 doc/leaves-layer-resync-plan.md 第 5.2 节。
+        /// </param>
+        public static List<List<byte[]>> Encode(ChunkKey key, ITerrainWorld world, out bool useRle,
+            out int runCount, out int expandedCells, bool captureDiagnostics, long watermark,
+            bool leavesOnly)
+        {
             useRle = true;
             List<byte> records;
-            if (captureDiagnostics)
+            if (leavesOnly)
+            {
+                records = BuildLeavesColumnRuns(key, world);
+                runCount = records.Count / RecordBytes;
+                expandedCells = 0;
+            }
+            else if (captureDiagnostics)
                 records = BuildColumnRunsWithDiagnostics(key, world, out runCount,
                     out expandedCells);
             else
@@ -356,13 +405,73 @@ namespace SuMultiplayer.Terrain
                     Count = partCount,
                     Entries = take,
                     Records = ByteString.CopyFrom(records.GetRange(from * RecordBytes,
-                        take * RecordBytes).ToArray())
+                        take * RecordBytes).ToArray()),
+                    LeavesOnly = leavesOnly
                 };
                 // 只有"编码时确实有水位"才写这个 optional 字段；-1 = 未知（字段缺席）。
                 if (watermark >= 0) message.Watermark = watermark;
                 parts.Add(message.ToByteArray());
             }
             return new List<List<byte[]>> { parts };
+        }
+
+        /// <summary>
+        /// 只编码**树叶段**（见 <see cref="Encode"/> 的 leavesOnly）。
+        ///
+        /// 取范围的口径（用户定）：按列 (x,z) 从 y=0 扫到 y=255，
+        /// **第一个**树叶类格是起点、**最后一个**是终点，整段记录（中间的空隙也一起发）。
+        /// 例：y=70..75 是树叶、y=80..81 也是树叶 → 记录 70..81。
+        ///
+        /// 为什么不能按「连续同值」找范围：树冠里 y 与 y+1 的 data 常不同（季相进度随高度变），
+        /// 按同值扫描会把范围切碎，反而丢掉中间必须覆盖的格。
+        /// </summary>
+        private static List<byte> BuildLeavesColumnRuns(ChunkKey key, ITerrainWorld world)
+        {
+            var records = new List<byte>(256);
+            if (!world.HasContents(key)) return records;
+            ChunkCellSource source = world.GetCellSource(key);
+            var column = new int[ChunkDigest.Height];
+            for (int x = 0; x < ChunkDigest.SizeXZ; x++)
+            {
+                for (int z = 0; z < ChunkDigest.SizeXZ; z++)
+                {
+                    int first = -1;
+                    int last = -1;
+                    for (int y = 0; y < ChunkDigest.Height; y++)
+                    {
+                        source(x, y, z, out int c, out int d);
+                        column[y] = ((c & 0xFFFF) << 16) | (d & 0xFFFF);
+                        if (!LeavesPatchContents.IsLeavesPatch(c)) continue;
+                        if (first < 0) first = y;
+                        last = y;
+                    }
+                    if (first < 0) continue;   // 该列没有树叶类格：整列跳过（这是省下来的主体）
+                    int runStart = first;
+                    int prev = column[first];
+                    for (int y = first + 1; y <= last; y++)
+                    {
+                        int cur = column[y];
+                        if (cur == prev) continue;
+                        AppendRun(records, x, z, runStart, y - 1, prev);
+                        runStart = y;
+                        prev = cur;
+                    }
+                    AppendRun(records, x, z, runStart, last, prev);
+                }
+            }
+            return records;
+        }
+
+        private static void AppendRun(List<byte> records, int x, int z, int startY, int endY, int packed)
+        {
+            records.Add((byte)x);
+            records.Add((byte)z);
+            records.Add((byte)startY);
+            records.Add((byte)(endY - startY));
+            records.Add((byte)packed);
+            records.Add((byte)(packed >> 8));
+            records.Add((byte)(packed >> 16));
+            records.Add((byte)(packed >> 24));
         }
 
         private static List<byte> BuildColumnRuns(ChunkKey key, ITerrainWorld world)
@@ -1106,6 +1215,26 @@ namespace SuMultiplayer.Terrain
         /// <summary>等待重新裁决区块的轮转顺序（每 tick 从队首取若干条，没到点的放回队尾）。</summary>
         public readonly Queue<ChunkKey> StaleVerdictScan = new Queue<ChunkKey>();
 
+        /// <summary>
+        /// **同一块连续顶层补丁次数的上限台账**：键 = 区块，值 = 已经为它发过几次 TopLayerFix
+        /// 而仍是 Mismatch。
+        ///
+        /// 为什么需要（实机证据）：顶层补丁只写"主机顶格"、**不清掉客户端在顶格之上的残留**
+        /// （典型：融雪后客户端还留着雪，见 doc/chunk-digest-tiered-verify-plan.md
+        /// 与 leaves-layer-resync-plan 同期排查）。那种情况下顶层 hash 永远不同 →
+        /// 主机每秒重发一次 256 格、客户端每秒落地一次，实测 122 次/秒，红框永不收敛。
+        /// 达到上限后**强制整块回传**（一次性 65536 格），让内容真正对齐。
+        ///
+        /// 清除时机（关键，避免"反复进出区块后一直卡"）：
+        ///   · 该块裁决为 Match（已收敛）；
+        ///   · 该块入队整块回传（本机制自己触发的也算）；
+        ///   · 客户端**卸载**这一块（`ApplyClientChunkDelta` Loaded=false）；
+        ///   · 客户端**加载**这一块（Loaded=true / 整集替换后包含它）—— 重新加载是全新的核对起点，
+        ///     不能把上一轮的次数带进来，否则"加载 N 次后永久走整块回传"。
+        /// 与 <see cref="Verdicts"/> 同生命周期（会话结束整体清空）；跨重连保留（同一身份）。
+        /// </summary>
+        public readonly Dictionary<ChunkKey, int> TopLayerFixAttempts = new Dictionary<ChunkKey, int>();
+
         /// <summary>在册等待重新裁决的区块数。</summary>
         public int PendingStaleVerdicts => StaleVerdicts.Count;
 
@@ -1192,8 +1321,32 @@ namespace SuMultiplayer.Terrain
         public long TopLayerFixFromMismatch;
         /// <summary>主机发出的顶层补丁总数。</summary>
         public long TopLayerFixesSent;
+
+        // ---- 树叶段补丁（季节驱动的树叶季相；见 doc/leaves-layer-resync-plan.md）----
+        /// <summary>主机观察到「树叶季相真实写入 chunk」并打标记的次数（按目标客户端展开前）。</summary>
+        public long LeavesMarked;
+        /// <summary>打了标记但当次没有任何在线且未持有该块的客户端（不需要补）。</summary>
+        public long LeavesMarkedUnroutable;
+        /// <summary>主机入队的树叶段补丁作业数。</summary>
+        public long LeavesOnlyJobs;
+        /// <summary>树叶段补丁累计游程数。</summary>
+        public long LeavesOnlyRuns;
+        /// <summary>树叶段补丁累计字节。</summary>
+        public long LeavesOnlyBytes;
+        /// <summary>带树叶标记但编码出 0 游程、改走整块回传的次数。</summary>
+        public long LeavesZeroRunFallback;
+        /// <summary>客户端没带顶层 hash 而回 NotReady（树叶段也不发）的次数。</summary>
+        public long LeavesRecalcDeferred;
+        /// <summary>顶层一致而未发顶层修复的次数（只补了树叶段）。</summary>
+        public long LeavesTopLayerSkipped;
+        /// <summary>树叶段补丁发完后的顶层修复发送失败次数。</summary>
+        public long LeavesFixSendFailures;
+        /// <summary>当前在册的（区块 × 身份）树叶季相标记条数。</summary>
+        public long LeavesPendingMarks;
         /// <summary>顶层补丁发送失败（背压）次数。</summary>
         public long TopLayerFixSendFailures;
+        /// <summary>同一块连续顶层补丁达上限（3 次）→ 改走整块回传的次数。</summary>
+        public long TopLayerFixAttemptExceeded;
         /// <summary>Mismatch 但顶层并不不同（差异在深处）→ 改走整块回传的次数。</summary>
         public long TopLayerFixSkippedNotTopLayer;
         /// <summary>收到 clientHash == 0 并改判 NotReady 的次数（未知 ≠ 不一致）。</summary>
@@ -1345,6 +1498,10 @@ namespace SuMultiplayer.Terrain
         public long Match;
         public long Mismatch;
         public long ResyncApplied;
+        /// <summary>树叶段补丁（季节驱动的树叶季相）落地次数。**不重算整块摘要**。</summary>
+        public long LeavesFixApplied;
+        /// <summary>树叶段补丁累计落地格数。</summary>
+        public long LeavesFixCells;
         public long ResyncVerified;
         public long CellChangesApplied;
         public long Retries;
@@ -1364,6 +1521,10 @@ namespace SuMultiplayer.Terrain
         public long TopLayerFixesReceived;
         /// <summary>顶层补丁实际落地的格子数（应远小于整块 65536）。</summary>
         public long TopLayerFixCellsApplied;
+        /// <summary>顶层补丁落地时被清掉的「主机顶格之上的残留」格数（融雪/化冰后客户端留雪的那类）。</summary>
+        public long TopLayerTrimmedCells;
+        /// <summary>引擎未实现裁剪通道、顶层补丁退化为「只写不清」的次数（应为 0）。</summary>
+        public long TopLayerTrimUnavailable;
         /// <summary>顶层补不齐、升级为整块核对的次数（差异不只在顶层）。</summary>
         public long TopLayerFixEscalations;
         /// <summary>顶层摘要不可用的次数（世界不提供数组通道 / 块内容未定稿）。</summary>
@@ -1744,6 +1905,18 @@ namespace SuMultiplayer.Terrain
             public List<byte[]> Parts;
             public int Index;
             public long EncodeSequence = -1L;
+            /// <summary>
+            /// true = 这一份只发**树叶段**（季节驱动的树叶季相）。
+            /// 由 <see cref="TerrainSyncHost.ApplyVerdict"/> 在该客户端带 <see cref="ChunkMutationKind.Leaves"/>
+            /// 标记时设置；编码时走 <see cref="ChunkPayloadCodec.Encode(ChunkKey, ITerrainWorld, out bool, out int, out int, bool, long, bool)"/>
+            /// 的 leavesOnly 分支。见 doc/leaves-layer-resync-plan.md 第 4、5 章。
+            /// </summary>
+            public bool LeavesOnly;
+            /// <summary>
+            /// 树叶段补丁**全部分片发完之后**才发的顶层补丁载荷（null = 顶层相同/不可用，不需要发）。
+            /// 顺序由 TCP 保序保证：客户端一定先落地树叶段，再落地顶层。
+            /// </summary>
+            public byte[] TopLayerFixAfter;
         }
 
         /// <summary>
@@ -1807,6 +1980,31 @@ namespace SuMultiplayer.Terrain
         private readonly Dictionary<ChunkKey, Dictionary<string, long>> m_pendingClients =
             new Dictionary<ChunkKey, Dictionary<string, long>>();
 
+        // ---- 变更类别标记（按客户端）：季节驱动的树叶季相 ----
+        //
+        // 为什么必须**按客户端**记（不能全局一份）：主机改动时 A、B 都不持有该块 → 各记一条；
+        // A 先加载、补丁落地后消耗掉自己的记录，B 的记录必须还在，否则 B 永远收不到这次变更。
+        //
+        // 为什么不能复用 m_pendingClients：它在客户端**加载块**时就清（ClearPendingOnChunkLoaded），
+        // 而这里必须活到**裁决时**（加载之后、摘要上报比对）才用得上。
+        //
+        // 清除时机（用户口径）：该客户端收到补丁并落地后，只清它自己那一条。
+        // 见 doc/leaves-layer-resync-plan.md 第 3.6、4.4、10 章。
+        private readonly Dictionary<ChunkKey, Dictionary<string, ChunkMutationKind>> m_pendingKinds =
+            new Dictionary<ChunkKey, Dictionary<string, ChunkMutationKind>>();
+
+        private long m_leavesMarked;
+        private long m_leavesMarkedUnroutable;
+        private long m_leavesOnlyJobs;
+        private long m_leavesOnlyRuns;
+        private long m_leavesOnlyBytes;
+        private long m_leavesZeroRunFallback;
+        private long m_leavesRecalcDeferred;
+        private long m_leavesTopLayerSkipped;
+        private long m_leavesFixSendFailures;
+        private long m_lastLeavesZeroRunLogMs;
+        private long m_lastLeavesZeroRunLogged;
+
         // ---- 断线重连追帧（同会话）：改动历史 / 已接受的重连目标 / 计数与限流 ----
         /// <summary>
         /// 已广播的权威改动序号（从 1 递增；世界清单的导出基线与追帧范围都以它为准）。
@@ -1837,8 +2035,16 @@ namespace SuMultiplayer.Terrain
         // ---- 顶层补丁（主机侧）：整块回传之前的降级路径 ----
         /// <summary>经由 Mismatch 走顶层补丁的次数（不是客户端主动请求的那条路）。</summary>
         private long m_topLayerFixFromMismatch;
+        /// <summary>
+        /// 同一块连续顶层补丁次数的上限（用户口径：3 次）。达到后**强制整块回传**，
+        /// 防止"顶层补丁修不动"的情况变成每秒重发的死循环（实测 122 次/秒、红框永不收敛）。
+        /// </summary>
+        private const int TopLayerFixAttemptLimit = 3;
         /// <summary>主机发出的顶层补丁数。</summary>
         private long m_topLayerFixesSent;
+        /// <summary>因连续顶层补丁达上限而改走整块回传的次数（诊断）。</summary>
+        private long m_topLayerFixAttemptExceeded;
+        private long m_lastTopLayerAttemptLogMs;
         /// <summary>顶层补丁发送失败（背压）次数 —— 不静默，客户端重报时会再触发。</summary>
         private long m_topLayerFixSendFailures;
         /// <summary>
@@ -2396,7 +2602,18 @@ namespace SuMultiplayer.Terrain
                 ResyncCoalesced = m_resyncCoalesced, ResyncEmptySkipped = m_resyncEmptySkipped,
                 TopLayerFixFromMismatch = m_topLayerFixFromMismatch,
                 TopLayerFixesSent = m_topLayerFixesSent,
+                LeavesMarked = m_leavesMarked,
+                LeavesMarkedUnroutable = m_leavesMarkedUnroutable,
+                LeavesOnlyJobs = m_leavesOnlyJobs,
+                LeavesOnlyRuns = m_leavesOnlyRuns,
+                LeavesOnlyBytes = m_leavesOnlyBytes,
+                LeavesZeroRunFallback = m_leavesZeroRunFallback,
+                LeavesRecalcDeferred = m_leavesRecalcDeferred,
+                LeavesTopLayerSkipped = m_leavesTopLayerSkipped,
+                LeavesFixSendFailures = m_leavesFixSendFailures,
+                LeavesPendingMarks = CountPendingKindMarksLocked(),
                 TopLayerFixSendFailures = m_topLayerFixSendFailures,
+                TopLayerFixAttemptExceeded = m_topLayerFixAttemptExceeded,
                 TopLayerFixSkippedNotTopLayer = m_topLayerFixSkippedNotTopLayer,
                 ClientHashZeroVerdicts = m_clientHashZeroVerdicts,
                 TopLayerFixSkippedNoClientHash = m_topLayerFixSkippedNoClientHash,
@@ -2642,7 +2859,7 @@ namespace SuMultiplayer.Terrain
                             List<List<byte[]>> encoded = ChunkPayloadCodec.Encode(job.Key,
                                 m_world, out _, out int runCount, out int expandedCells,
                                 captureDiagnostics: m_resyncEncodeDiagnosticsEnabled,
-                                watermark: job.EncodeSequence);
+                                watermark: job.EncodeSequence, leavesOnly: job.LeavesOnly);
                             if (m_resyncEncodeDiagnosticsEnabled)
                             {
                                 m_resyncEncodeTicks += System.Diagnostics.Stopwatch.GetTimestamp() - encodeStarted;
@@ -2650,6 +2867,24 @@ namespace SuMultiplayer.Terrain
                                 m_resyncExpandedCells += expandedCells;
                             }
                             job.Parts = encoded[0];
+                            if (job.LeavesOnly)
+                            {
+                                m_leavesOnlyRuns += runCount;
+                                for (int p = 0; p < job.Parts.Count; p++)
+                                    m_leavesOnlyBytes += job.Parts[p].Length;
+                                if (runCount == 0)
+                                {
+                                    // 标记还在、但这块已经没有树叶类格（树叶被砍光 / 标记失真）→
+                                    // **不发空快照**（那会命中下面的零格判定 → NotReady → 重报 → 死循环）。
+                                    // 用户口径：改走整块回传，并写清原因。
+                                    state.PendingResync.Dequeue();
+                                    m_leavesZeroRunFallback++;
+                                    NoteLeavesZeroRunFallback(state, job.Key);
+                                    state.PendingResync.Enqueue(new PendingResyncJob { Key = job.Key });
+                                    work++;
+                                    continue;
+                                }
+                            }
                         }
                         if (job.Parts.Count == 0)
                         {
@@ -2678,6 +2913,36 @@ namespace SuMultiplayer.Terrain
                         if (job.Index >= job.Parts.Count)
                         {
                             state.PendingResync.Dequeue();
+                            if (job.LeavesOnly)
+                            {
+                                // 树叶段补丁全部分片已发出 ⇒ 紧接着发顶层修复（若有）。
+                                // TCP 保序保证客户端先落地树叶段、再落地顶层。
+                                if (job.TopLayerFixAfter != null)
+                                {
+                                    if (m_server.TrySend(state.Id, MessageType.TopLayerFix,
+                                            job.TopLayerFixAfter))
+                                    {
+                                        m_topLayerFixesSent++;
+                                    }
+                                    else
+                                    {
+                                        m_leavesFixSendFailures++;
+                                        m_topLayerFixSendFailures++;
+                                    }
+                                }
+                                // 该**客户端**的树叶标记到此消耗掉：只清它自己那一条，
+                                // 其他还没加载这块的身份必须继续保留（用户口径）。
+                                if (state.Session != null &&
+                                    state.Session.CurrentClientId == state.Id)
+                                {
+                                    ClearPendingKindLocked(state.Session, job.Key,
+                                        ChunkMutationKind.Leaves);
+                                }
+                                // 树叶段补丁落地即收尾：**不**要求客户端重算整块摘要
+                                // （与结冰的顶层修复一致，只修复这部分就行）。
+                                work++;
+                                continue;
+                            }
                             // 整块快照已经全部发给它：这块如果还停在红（Mismatch），那条结论可能已经过期
                             // （客户端内容刚被主机内容覆盖），必须重新裁决（见 TickStaleVerdicts）。
                             NoteVerdictNeedsRejudge(state, job.Key,
@@ -3997,6 +4262,47 @@ namespace SuMultiplayer.Terrain
             }
         }
 
+        /// <summary>顶层比对结果（无副作用；见 <see cref="CompareTopLayer"/>）。</summary>
+        private enum TopLayerOutcome
+        {
+            /// <summary>两端的顶层摘要一致 ⇒ 差异在深处。</summary>
+            Same,
+            /// <summary>两端顶层不同 ⇒ 发 256 格顶层补丁就够。</summary>
+            Different,
+            /// <summary>客户端没带顶层 hash（0 = 未提供）⇒ 回 NotReady 让它重算再报。</summary>
+            ClientMustRecalc,
+            /// <summary>主机这块顶层不可用（块没了 / 世界不支持数组通道 / 摘要算不出）。</summary>
+            Unavailable
+        }
+
+        /// <summary>
+        /// 主机：**纯比对**该块顶层（16×16 = 256 格）与客户端上报的两个 hash。不发任何消息、不改计数。
+        ///
+        /// 与 <see cref="TrySendTopLayerFix"/> 分开：树叶段补丁的判定需要先知道"顶层要不要补"，
+        /// 但它自己负责发送、且发送顺序必须是"先树叶后顶层"，所以这里只给结论。
+        /// </summary>
+        private TopLayerOutcome CompareTopLayer(ChunkKey key,
+            uint clientTopHeightHash, uint clientTopBlockHash, out uint hostH, out uint hostB)
+        {
+            hostH = 0u;
+            hostB = 0u;
+            if (!m_world.HasContents(key)) return TopLayerOutcome.Unavailable;
+            if (!(m_world is ITopLayerTerrainWorld topLayer)) return TopLayerOutcome.Unavailable;
+            if (!topLayer.TryGetChunkArrays(key, out int[] cells, out int[] shafts))
+                return TopLayerOutcome.Unavailable;
+
+            var digest = new ChunkDigest();
+            digest.ComputeTopLayer(cells, shafts);
+            if (!digest.HasTopLayer) return TopLayerOutcome.Unavailable;
+            hostH = digest.TopHeightHash;
+            hostB = digest.TopBlockHash;
+
+            if (clientTopHeightHash == 0u && clientTopBlockHash == 0u)
+                return TopLayerOutcome.ClientMustRecalc;
+            return (clientTopHeightHash == hostH && clientTopBlockHash == hostB)
+                ? TopLayerOutcome.Same : TopLayerOutcome.Different;
+        }
+
         /// <summary>
         /// 主机：把该块**顶层那一层**（16×16 = 256 格）的权威内容下发给客户端。
         ///
@@ -4059,6 +4365,27 @@ namespace SuMultiplayer.Terrain
             // 逐列取主机顶格。x/z 是 chunk-local，y 是绝对高度。
             // cells 是引擎原始 int（含光照位）：拆成 contents/data 传，
             // 客户端 ApplyCells 只认这两个，光照位不会被带过去。
+            byte[] payload = BuildTopLayerFixPayload(key, hostH, hostB, cells, shafts);
+            // 发送失败（背压）= 没发出去：返回 true 但明确计数，
+            // 由客户端的摘要重报再触发一次（不在这里改成整块回传，那会放大成本）。
+            if (!m_server.TrySend(state.Id, MessageType.TopLayerFix, payload))
+            {
+                m_topLayerFixSendFailures++;
+                return true;
+            }
+            m_topLayerFixesSent++;
+            return true;
+        }
+
+        /// <summary>
+        /// 主机：把「顶层那一层」的权威内容编成 <see cref="PT.TopLayerFix"/> 载荷（**只编码、不发送**）。
+        ///
+        /// 单独拆出来是为了树叶段补丁：它的发送顺序必须是"树叶段全部分片发完 → 再发顶层"，
+        /// 所以要先把顶层载荷准备好挂在 <see cref="PendingResyncJob.TopLayerFixAfter"/> 上。
+        /// </summary>
+        private static byte[] BuildTopLayerFixPayload(ChunkKey key, uint hostH, uint hostB,
+            int[] cells, int[] shafts)
+        {
             var fix = new PT.TopLayerFix
             {
                 Key = new PT.ChunkKey { X = key.X, Z = key.Z },
@@ -4083,15 +4410,7 @@ namespace SuMultiplayer.Terrain
                     });
                 }
             }
-            // 发送失败（背压）= 没发出去：返回 true 但明确计数，
-            // 由客户端的摘要重报再触发一次（不在这里改成整块回传，那会放大成本）。
-            if (!m_server.TrySend(state.Id, MessageType.TopLayerFix, fix.ToByteArray()))
-            {
-                m_topLayerFixSendFailures++;
-                return true;
-            }
-            m_topLayerFixesSent++;
-            return true;
+            return fix.ToByteArray();
         }
 
         private void HandleDigestReport(State state, PT.ChunkDigestReport report)
@@ -4232,15 +4551,20 @@ namespace SuMultiplayer.Terrain
                 var key = new ChunkKey(entry.X, entry.Z);
                 if (entry.Loaded)
                 {
+                    // 重新加载这一块 = 全新的核对起点：把上一轮的连续顶层补丁次数清零，
+                    // 否则「反复进出同一块」会把计数攒到上限，之后每次都强制整块回传（一直卡）。
+                    session.TopLayerFixAttempts.Remove(key);
                     if (session.MemoryChunks.Add(key))
                     {
                         added++;
                         QueueOwedSnapshotIfNeeded(state, session, key);
                     }
                 }
-                else if (session.MemoryChunks.Remove(key))
+                else
                 {
-                    removed++;
+                    // 卸载也清零（无论集合里有没有它）：下次加载时从 1 开始数（同上）。
+                    session.TopLayerFixAttempts.Remove(key);
+                    if (session.MemoryChunks.Remove(key)) removed++;
                 }
             }
             session.ClientChunkDeltaMessages++;
@@ -4310,6 +4634,9 @@ namespace SuMultiplayer.Terrain
             HashSet<ChunkKey> previousChunks = new HashSet<ChunkKey>(session.MemoryChunks);
             int previous = session.MemoryChunks.Count;
             session.MemoryChunks.Clear();
+            // 整集替换 = 客户端重新报了一遍「我内存里有哪些块」：连续顶层补丁计数一并丢弃，
+            // 让每个块从全新的核对起点开始（防止反复进出后累计到上限而一直强制整块回传）。
+            session.TopLayerFixAttempts.Clear();
             foreach (ChunkKey key in session.ClientChunkFullBuffer)
             {
                 session.MemoryChunks.Add(key);
@@ -4431,6 +4758,8 @@ namespace SuMultiplayer.Terrain
             if (verdict == DigestVerdict.Match)
             {
                 ClearPendingOnChunkLoaded(session, key, out _);
+                // 已收敛：连续顶层补丁计数清零，下次不一致重新从 1 开始数。
+                session.TopLayerFixAttempts.Remove(key);
                 state.Match++;
                 // 之前失败过、回传后这次通过 = **二次验证成功**（蓝框），否则就是一次通过（绿框）
                 bool wasFailed = session.Verdicts.TryGetValue(key, out byte previous) &&
@@ -4464,12 +4793,74 @@ namespace SuMultiplayer.Terrain
             // 刚判成红：如果这块已经在自愈台账里，只把下一次请求退避到正常收敛之后
             // （**不**重置首次登记时刻 → 同一块的自愈次数与清除上限仍然有界）；否则登记一条。
             NoteVerdictNeedsRejudge(session, key, "主机刚判 Mismatch（回传落地后需要一次新鲜摘要）");
+
+            // ---- 树叶季相优先：该**客户端**在这块上有季节树叶标记 → 只发树叶段 ----
+            //
+            // 判定依据是**按客户端**的标记（不是全局）：A 已经收到过 CellChange、B 没有，
+            // 两者的处理必须不同。用户口径（见 doc/leaves-layer-resync-plan.md 第 4 章）：
+            //   · 有树叶标记 ⇒ **先无条件发树叶段**（客户端已请求，必须给它修复）；
+            //   · 再看顶层摘要：相同 ⇒ 不发顶层；不同 ⇒ 树叶段发完后再发顶层；
+            //     客户端没带顶层 hash ⇒ 回 NotReady（树叶段也不发），让它重算再申请；
+            //   · 无任何标记 ⇒ 走下面现有逻辑（顶层补丁 / 整块回传）。
+            ChunkMutationKind pendingKind = PendingKindLocked(session, key);
+            if ((pendingKind & ChunkMutationKind.Leaves) != 0)
+            {
+                // 同一块已经有一份**同类型**的回传在队列里 → 合并，不 1:1 放大队列与带宽。
+                foreach (PendingResyncJob queued in state.PendingResync)
+                {
+                    if (!queued.Key.Equals(key) || !queued.LeavesOnly) continue;
+                    m_resyncCoalesced++;
+                    return;
+                }
+
+                byte[] topLayerAfter = null;
+                switch (CompareTopLayer(key, clientTopHeightHash, clientTopBlockHash,
+                            out uint hostTopH, out uint hostTopB))
+                {
+                    case TopLayerOutcome.ClientMustRecalc:
+                        // 客户端没带顶层 hash：无从判断顶层要不要补 → 回 NotReady 让它重算再报。
+                        // 树叶段这一轮也不发（用户口径），免得发了一份无法判定是否完整的修复。
+                        m_leavesRecalcDeferred++;
+                        long recalcSeq = m_chunkChangeSequence.TryGetValue(key, out long lhs) ? lhs : 0L;
+                        SendVerdict(state, key, DigestVerdict.NotReady, 0u, recalcSeq);
+                        return;
+
+                    case TopLayerOutcome.Different:
+                        // 顶层也不同 ⇒ 树叶段发完再发顶层（TCP 保序，客户端先树叶后顶层）。
+                        if (m_world is ITopLayerTerrainWorld topWorld &&
+                            topWorld.TryGetChunkArrays(key, out int[] topCells, out int[] topShafts))
+                        {
+                            topLayerAfter = BuildTopLayerFixPayload(key, hostTopH, hostTopB,
+                                topCells, topShafts);
+                        }
+                        break;
+
+                    case TopLayerOutcome.Same:
+                        // 顶层一致 ⇒ 差异只在树叶 ⇒ 只发树叶段，不发顶层。
+                        m_leavesTopLayerSkipped++;
+                        break;
+
+                    default:
+                        // 顶层通道不可用：树叶段照发（那是本方案负责的部分），顶层留给后续路径。
+                        break;
+                }
+
+                m_leavesOnlyJobs++;
+                state.PendingResync.Enqueue(new PendingResyncJob
+                {
+                    Key = key,
+                    LeavesOnly = true,
+                    TopLayerFixAfter = topLayerAfter
+                });
+                return;
+            }
+
             // 同一块已经有一份回传快照在队列里（客户端重报 / 迟到的裁决）→ **合并**，
             // 不再 1:1 放大回传队列与带宽。这一份快照在发送时刻按**当时最新内容**编码（见 PendingResyncJob），
             // 覆盖它本来就要覆盖的全部内容；客户端落地后仍不一致会再报一次，由下一份快照处理。
             foreach (PendingResyncJob queued in state.PendingResync)
             {
-                if (!queued.Key.Equals(key)) continue;
+                if (!queued.Key.Equals(key) || queued.LeavesOnly) continue;
                 m_resyncCoalesced++;
                 return;
             }
@@ -4483,12 +4874,39 @@ namespace SuMultiplayer.Terrain
             // 这里**不**需要客户端先发 TopLayerMismatchReport —— 主机手上就有权威内容，
             // 自己算出顶层差异格直接下发即可，少一次往返。
             // 若主机顶层也不可用（块又没了 / 世界不支持数组通道）→ 退回整块回传（下面的路径）。
+            //
+            // ---- 连续顶层补丁上限（用户口径：同一块最多 3 次，超过强制整块回传）----
+            //
+            // 为什么需要：顶层补丁只写「主机顶格」。若客户端在顶格之上有残留（融雪后留着一层雪，
+            // 实测 49/256 列），两端 topHeightHash 永远不同 → 每秒重发一次 256 格、
+            // 客户端每秒落地一次（实测 122 次/秒、红框永不收敛、terrain-sync 单次最坏 262ms）。
+            // 客户端侧已加了「落地时清掉顶格之上残留」（ITopLayerTrimTerrainWriter），
+            // 这里再加一道硬上限：任何「补丁修不动」的新情况都不会无限循环。
+            //
+            // 注意「反复进出区块」：加载 / 卸载这一块都会把计数清零（见 ApplyClientChunkDelta），
+            // 所以「加载 3 次后一直卡」不会发生。
+            session.TopLayerFixAttempts.TryGetValue(key, out int topLayerAttempts);
+            if (topLayerAttempts >= TopLayerFixAttemptLimit)
+            {
+                // 已达上限：**这一轮不再发顶层补丁**，直接走整块回传把内容彻底对齐。
+                session.TopLayerFixAttempts.Remove(key);
+                m_topLayerFixAttemptExceeded++;
+                NoteTopLayerFixAttemptExceeded(state, key, topLayerAttempts);
+                state.PendingResync.Enqueue(new PendingResyncJob { Key = key });
+                return;
+            }
             if (TrySendTopLayerFix(state, key, clientTopHeightHash, clientTopBlockHash,
                     out bool clientMustRecalcTopLayer))
             {
                 m_topLayerFixFromMismatch++;
+                // 记一次"发了顶层补丁但仍 Mismatch"：下次同一块再走到这里就累加，
+                // 到上限改成整块回传。
+                session.TopLayerFixAttempts[key] = topLayerAttempts + 1;
                 return;
             }
+            // 顶层补丁没发（顶层不可用 / 顶层相同 / 缺客户端 hash）：这块这一轮的尝试结束，计数清零，
+            // 下次 Mismatch 重新从 1 开始（避免把不相干的失败累积成"超限"）。
+            session.TopLayerFixAttempts.Remove(key);
             if (clientMustRecalcTopLayer)
             {
                 // 客户端上报里没带顶层 hash → 让它重算一次再报（用户口径：这时候不需要补丁、
@@ -4640,6 +5058,37 @@ namespace SuMultiplayer.Terrain
             ReportUnresolved?.Invoke("区块 " + key + " 的 Mismatch 回传在编码时主机已没有内容（裁决后卸载 / 回退）" +
                 " → **不发零格快照**，已改回 NotReady（客户端按退避重问；不形成空回传循环）；" +
                 "clientId=" + state.Id + "（" + DisplayName(state) + "）· 累计 " + m_resyncEmptySkipped + " 次");
+        }
+
+        /// <summary>
+        /// 同一块连续顶层补丁已达上限 → 改走整块回传（明确写一行原因，不静默换路径）。
+        /// 典型成因：客户端在主机顶格之上有残留（融雪后留着一层雪），顶层 hash 永远不同。
+        /// 客户端侧已加「顶层补丁落地时清掉顶格之上残留」，这里是硬上限保险。
+        /// </summary>
+        private void NoteTopLayerFixAttemptExceeded(State state, ChunkKey key, int attempts)
+        {
+            long nowMs = Environment.TickCount64;
+            if (m_lastTopLayerAttemptLogMs != 0 &&
+                nowMs - m_lastTopLayerAttemptLogMs < m_options.ClientChunkLogIntervalMs) return;
+            m_lastTopLayerAttemptLogMs = nowMs;
+            ReportUnresolved?.Invoke("区块 " + key + " 连续 " + attempts + " 次顶层补丁后仍然不一致" +
+                " → **改走整块回传**（顶层补丁修不动，通常意味着客户端在主机顶格之上有残留方块）；" +
+                "clientId=" + state.Id + "（" + DisplayName(state) + "）· 累计 " +
+                m_topLayerFixAttemptExceeded + " 次");
+        }
+
+        private void NoteLeavesZeroRunFallback(State state, ChunkKey key)
+        {
+            long nowMs = Environment.TickCount64;
+            if (m_lastLeavesZeroRunLogMs != 0 &&
+                nowMs - m_lastLeavesZeroRunLogMs < m_options.ClientChunkLogIntervalMs) return;
+            m_lastLeavesZeroRunLogMs = nowMs;
+            long delta = m_leavesZeroRunFallback - m_lastLeavesZeroRunLogged;
+            m_lastLeavesZeroRunLogged = m_leavesZeroRunFallback;
+            ReportUnresolved?.Invoke("区块 " + key + " 带树叶季相标记，但编码出 0 个树叶游程" +
+                "（该块已无落叶树树叶 / 落叶方块）→ **不发树叶段补丁**，改走整块回传；" +
+                "clientId=" + state.Id + "（" + DisplayName(state) + "）· 本次窗口 " + delta +
+                " 次 / 累计 " + m_leavesZeroRunFallback + " 次");
         }
 
         /// <summary>
@@ -5348,6 +5797,14 @@ namespace SuMultiplayer.Terrain
             {
                 int marks = m_pendingClients.Count;
                 m_pendingClients.Clear();
+                // 变更类别标记（树叶季相）不跨会话：不落盘，下次加入一定是"全图最新"。
+                int kindMarks = m_pendingKinds.Count;
+                m_pendingKinds.Clear();
+                if (kindMarks > 0)
+                {
+                    PendingTrace?.Invoke("会话结束：变更类别标记整体清空（清掉 " + kindMarks +
+                        " 个区块的树叶季相标记；只在内存里，不落盘）");
+                }
                 int sessions = m_sessions.Count;
                 int degraded = m_degradedSessions.Count;
                 int reported = 0;
@@ -5539,7 +5996,16 @@ namespace SuMultiplayer.Terrain
         /// </summary>
         private int RemovePendingClientEverywhere(PlayerSessionRecord session, string why)
         {
-            if (session == null || m_pendingClients.Count == 0) return 0;
+            if (session == null) return 0;
+            // 变更类别标记（树叶季相）与欠更新计数同一口径：身份走了就把它的标记全部去掉。
+            int kindMarks = RemovePendingKindEverywhereLocked(session);
+            if (kindMarks > 0)
+            {
+                PendingTrace?.Invoke("身份 " + PlayerSessionKeys.ShortIdentity(session.Identity) +
+                    "（稳定键 " + session.StableKey + "）" + why + " → 从 " + kindMarks +
+                    " 个区块的变更类别标记里移除它（季节树叶季相补丁不再为它保留）");
+            }
+            if (m_pendingClients.Count == 0) return 0;
             int marks = 0;
             List<ChunkKey> emptied = null;
             foreach (KeyValuePair<ChunkKey, Dictionary<string, long>> pair in m_pendingClients)
@@ -5557,6 +6023,112 @@ namespace SuMultiplayer.Terrain
                 PendingTrace?.Invoke("身份 " + PlayerSessionKeys.ShortIdentity(session.Identity) +
                     "（稳定键 " + session.StableKey + "）" + why + " → 从 " + marks +
                     " 个区块的欠更新计数里移除它的标记（这些区块不再把它算作\"当前内存里没有这一块\"）");
+            }
+            return marks;
+        }
+
+        // =====================================================================================
+        // 变更类别标记（按客户端）：季节驱动的树叶季相
+        //   见 doc/leaves-layer-resync-plan.md 第 3.6、4、10 章。
+        // =====================================================================================
+
+        /// <summary>
+        /// 主机：**树叶季相真实写入 chunk 之后**登记一条类别标记。
+        ///
+        /// 调用点（都在 mod 侧、都做在"值真的变了"之后，离队即标记是不允许的）：
+        ///   · <c>SuSubsystemDeciduousLeavesBlockBehavior.OnBlockGenerated</c>（加载时 applyImmediately=true）；
+        ///   · <c>SuSubsystemCellChangeQueue.Update</c>（OnPoll / CreateFallenLeaves 的延迟落地）。
+        /// 见 Engine/ClientReplicaSubsystems.cs 与 doc 第 3.2、3.3 节。
+        ///
+        /// 只给「**在线**且**当前内存里没有这一块**」的身份记：
+        ///   · 内存里有这块 → 这份改动已经/将要走 CellChange 实时下发，不需要补；
+        ///   · 客户端不在线 → 它加入房间时拿到的就是同步存档，不需要记（用户口径）。
+        /// </summary>
+        public void NoteLeavesMutation(int worldX, int worldY, int worldZ)
+        {
+            if (worldY < 0 || worldY > 255) return;
+            var key = new ChunkKey(worldX >> 4, worldZ >> 4);
+            lock (m_gate)
+            {
+                m_leavesMarked++;
+                bool unroutable = true;
+                foreach (KeyValuePair<int, State> pair in m_clients)
+                {
+                    State state = pair.Value;
+                    if (state.Kind != ClientKind.Player) continue;   // 调试端（实时地图）只观察
+                    PlayerSessionRecord session = state.Session;
+                    if (session == null) continue;                   // 还没 Hello：不猜身份
+                    if (session.CurrentClientId != state.Id) continue;   // 老连接不代表该身份
+                    if (!CanStillReachPeer(state)) continue;         // 已不可达：由离开清理负责
+                    if (session.MemoryChunks.Contains(key)) continue;    // 它内存里有这块：走实时下发
+                    unroutable = false;
+                    MarkPendingKindLocked(key, session.StableKey, ChunkMutationKind.Leaves);
+                }
+                if (unroutable) m_leavesMarkedUnroutable++;
+            }
+        }
+
+        /// <summary>主机：该**身份**在这块上的类别标记（没有就是 None）。调用方已持有 m_gate。</summary>
+        private ChunkMutationKind PendingKindLocked(PlayerSessionRecord session, ChunkKey key)
+        {
+            if (session == null) return ChunkMutationKind.None;
+            if (!m_pendingKinds.TryGetValue(key, out Dictionary<string, ChunkMutationKind> set))
+                return ChunkMutationKind.None;
+            return set.TryGetValue(session.StableKey, out ChunkMutationKind kind)
+                ? kind : ChunkMutationKind.None;
+        }
+
+        private void MarkPendingKindLocked(ChunkKey key, string stableKey, ChunkMutationKind kind)
+        {
+            if (kind == ChunkMutationKind.None) return;
+            if (!m_pendingKinds.TryGetValue(key, out Dictionary<string, ChunkMutationKind> set))
+            {
+                set = new Dictionary<string, ChunkMutationKind>(StringComparer.Ordinal);
+                m_pendingKinds[key] = set;
+            }
+            set.TryGetValue(stableKey, out ChunkMutationKind prev);
+            set[stableKey] = prev | kind;
+        }
+
+        /// <summary>
+        /// 主机：该身份的补丁已经全部发出 → **只清它自己**在这一块上的类别标记。
+        /// 不清其他身份的标记（它们可能还没加载这块、还没收到补丁）。
+        /// </summary>
+        private void ClearPendingKindLocked(PlayerSessionRecord session, ChunkKey key,
+            ChunkMutationKind kind)
+        {
+            if (session == null) return;
+            if (!m_pendingKinds.TryGetValue(key, out Dictionary<string, ChunkMutationKind> set)) return;
+            if (!set.TryGetValue(session.StableKey, out ChunkMutationKind prev)) return;
+            ChunkMutationKind left = prev & ~kind;
+            if (left == ChunkMutationKind.None) set.Remove(session.StableKey);
+            else set[session.StableKey] = left;
+            if (set.Count == 0) m_pendingKinds.Remove(key);
+        }
+
+        /// <summary>当前在册的（区块 × 身份）类别标记条数（诊断用）。调用方已持有 m_gate。</summary>
+        private int CountPendingKindMarksLocked()
+        {
+            int total = 0;
+            foreach (KeyValuePair<ChunkKey, Dictionary<string, ChunkMutationKind>> pair in m_pendingKinds)
+                total += pair.Value.Count;
+            return total;
+        }
+
+        /// <summary>身份离开联机 → 把它从**所有**区块的类别标记里去掉（与欠更新计数同一口径）。</summary>
+        private int RemovePendingKindEverywhereLocked(PlayerSessionRecord session)
+        {            if (session == null || m_pendingKinds.Count == 0) return 0;
+            int marks = 0;
+            List<ChunkKey> emptied = null;
+            foreach (KeyValuePair<ChunkKey, Dictionary<string, ChunkMutationKind>> pair in m_pendingKinds)
+            {
+                if (!pair.Value.Remove(session.StableKey)) continue;
+                marks++;
+                if (pair.Value.Count == 0) (emptied ?? (emptied = new List<ChunkKey>())).Add(pair.Key);
+            }
+            if (emptied != null)
+            {
+                for (int i = 0; i < emptied.Count; i++) m_pendingKinds.Remove(emptied[i]);
             }
             return marks;
         }
@@ -5876,6 +6448,16 @@ namespace SuMultiplayer.Terrain
         /// <summary>世界整体替换时清掉的未完成核对工作条数（旧世界的验证状态对新世界无效）。</summary>
         private long m_worldReplaceClearedWork;
 
+        // ---- 树叶段补丁（季节驱动的树叶季相；见 doc/leaves-layer-resync-plan.md 第 6 章）----
+        /// <summary>树叶段补丁落地次数（末片落地算一次）。</summary>
+        private long m_leavesFixApplied;
+        /// <summary>树叶段补丁累计落地格数。</summary>
+        private long m_leavesFixCells;
+        /// <summary>顶层补丁落地时被清掉的「主机顶格之上的残留」格数（融雪/化冰后客户端留雪的那类）。</summary>
+        private long m_topLayerTrimmedCells;
+        /// <summary>引擎未实现裁剪通道、顶层补丁退化为「只写不清」的次数（应为 0）。</summary>
+        private long m_topLayerTrimUnavailable;
+
         // ---- 现场计数（每秒，只用于诊断/日志，不参与判定）----
         private long m_secondBucketStartedMs;
         private int m_reportsInSecond, m_matchInSecond, m_mismatchInSecond;
@@ -5986,15 +6568,22 @@ namespace SuMultiplayer.Terrain
         /// <summary>一份待落地的回传分片；<see cref="Generation"/> 与块当前"代"不一致 = 排队期间卸载过。</summary>
         private readonly struct ResyncJob
         {
-            public ResyncJob(ChunkKey key, byte[] payload, int generation, long watermark)
+            public ResyncJob(ChunkKey key, byte[] payload, int generation, long watermark,
+                bool leavesOnly = false)
             {
                 Key = key; Payload = payload; Generation = generation; Watermark = watermark;
+                LeavesOnly = leavesOnly;
             }
             public ChunkKey Key { get; }
             public byte[] Payload { get; }
             public int Generation { get; }
             /// <summary>主机编码这一片时的改动水位（-1 = 旧主机没有该尾字段，按到达顺序落地）。</summary>
             public long Watermark { get; }
+            /// <summary>
+            /// 这一片只含**树叶段**（季节驱动的树叶季相）：走轻量落地（只写数组）、
+            /// 落地后**不重算整块摘要**。见 doc/leaves-layer-resync-plan.md 第 6 章。
+            /// </summary>
+            public bool LeavesOnly { get; }
         }
 
         /// <summary>一块 NotReady 之后的重报安排（退避到点就重报一次）。</summary>
@@ -7150,7 +7739,15 @@ namespace SuMultiplayer.Terrain
                 }
                 if (part.Edits.Count > 0)
                 {
-                    if (m_world is ITerrainResyncDiagnosticWorld diagnosticWorld)
+                    if (job.LeavesOnly && m_world is IRawCellTerrainWriter rawWriter)
+                    {
+                        // 树叶段补丁：只改方块 data（不影响电路拓扑）→ 走轻量写格。
+                        // 每格不派发电路/行为/副本事件，避免客户端单帧 250~295ms 的落地尖峰。
+                        int rawChanged = rawWriter.SetCellsRaw(part.Key, part.Edits);
+                        if (rawChanged > 0) m_resyncChangedChunks[part.Key] = true;
+                        m_leavesFixCells += part.Edits.Count;
+                    }
+                    else if (m_world is ITerrainResyncDiagnosticWorld diagnosticWorld)
                     {
                         int changed = diagnosticWorld.ApplyResyncCells(part.Key, part.Edits,
                             diagnosticActive ? m_resyncDiagnostics : null);
@@ -7183,6 +7780,14 @@ namespace SuMultiplayer.Terrain
                 {
                     long applied = m_chunkChangeSequence.TryGetValue(part.Key, out long current) ? current : 0L;
                     if (job.Watermark > applied) m_chunkChangeSequence[part.Key] = job.Watermark;
+                }
+                if (job.LeavesOnly)
+                {
+                    // 树叶段补丁落地即收尾：**不重算整块摘要、不再上报**
+                    //（用户口径：与结冰的顶层修复一致，只修复这部分就行）。
+                    // 深层差异由"这块下次以无标记状态加载"时的现有整块摘要比对兜住。
+                    m_leavesFixApplied++;
+                    continue;
                 }
                 if (m_mismatchSuppressed.Contains(part.Key))
                 {
@@ -8017,8 +8622,23 @@ namespace SuMultiplayer.Terrain
                 }
                 if (edits.Count > 0)
                 {
-                    m_world.ApplyCells(key, edits);
-                    m_topLayerFixCellsApplied += edits.Count;
+                    if (m_world is ITopLayerTrimTerrainWriter trimWriter)
+                    {
+                        // 关键：**先清掉主机顶格之上的残留，再写顶格**。
+                        // 不做这一步时：融雪后客户端在顶格之上留着一层雪 → 两端 topHeightHash
+                        // 永远不同 → 主机每秒重发 256 格、客户端每秒落地，红框永不收敛
+                        // （实测 122 次/秒、terrain-sync 单次最坏 262ms）。
+                        int trimmed = trimWriter.ApplyTopLayerWithTrim(key, edits);
+                        m_topLayerFixCellsApplied += edits.Count;
+                        if (trimmed > edits.Count) m_topLayerTrimmedCells += trimmed - edits.Count;
+                    }
+                    else
+                    {
+                        // 引擎没实现裁剪通道：退化为旧行为（写顶格但不清残留），明确计数便于发现。
+                        m_world.ApplyCells(key, edits);
+                        m_topLayerFixCellsApplied += edits.Count;
+                        m_topLayerTrimUnavailable++;
+                    }
                 }
             }
 
@@ -8178,7 +8798,8 @@ namespace SuMultiplayer.Terrain
             m_chunkGeneration.TryGetValue(key, out int generation);
             m_queuedParts.TryGetValue(key, out int queued);
             m_queuedParts[key] = queued + 1;
-            m_resyncQueue.Enqueue(new ResyncJob(key, payload, generation, watermark));
+            m_resyncQueue.Enqueue(new ResyncJob(key, payload, generation, watermark,
+                message.LeavesOnly));
             m_resyncReceivedInSecond++;
         }
 
@@ -8878,6 +9499,7 @@ namespace SuMultiplayer.Terrain
             {
                 Center = Center, Radius = ViewRadius, ReportsSent = m_reportsSent, Match = m_match,
                 Mismatch = m_mismatch, ResyncApplied = m_resyncApplied, ResyncVerified = m_resyncVerified,
+                LeavesFixApplied = m_leavesFixApplied, LeavesFixCells = m_leavesFixCells,
                 CellChangesApplied = m_cellChanges, Retries = m_retries, LastVerifyMs = m_lastVerifyMs,
                 MaxVerifyMs = m_maxVerifyMs, State = m_channel.State, BytesReceived = m_channel.Stats.BytesReceived,
                 ReReports = m_reReports, Abandoned = m_abandoned,
@@ -8885,6 +9507,8 @@ namespace SuMultiplayer.Terrain
                 TopLayerReportsSent = m_topLayerReportsSent,
                 TopLayerFixesReceived = m_topLayerFixesReceived,
                 TopLayerFixCellsApplied = m_topLayerFixCellsApplied,
+                TopLayerTrimmedCells = m_topLayerTrimmedCells,
+                TopLayerTrimUnavailable = m_topLayerTrimUnavailable,
                 TopLayerFixEscalations = m_topLayerFixEscalations,
                 TopLayerUnavailable = m_topLayerUnavailable,
                 TopLayerConvergeUnreported = m_topLayerConvergeUnreported,

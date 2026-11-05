@@ -2034,7 +2034,26 @@ footer{margin-top:20px;padding-top:12px;border-top:1px solid var(--line);font-si
         // 改判前这里会被当成红框 + 触发整块回传（主机有内容却显示红的根因）。
         ["clientHashZeroVerdicts", terrain.clientHashZeroVerdicts, "收到 0 → 改判 NotReady"],
         // 应为 0。不为 0 = 客户端有路径没刷新顶层 hash → 该走顶层补丁的走了整块 → 卡一下。
-        ["topLayerFixSkippedNoClientHash", terrain.topLayerFixSkippedNoClientHash, "缺客户端顶层hash→整块"]
+        ["topLayerFixSkippedNoClientHash", terrain.topLayerFixSkippedNoClientHash, "缺客户端顶层hash→整块"],
+        // 树叶段补丁（季节驱动的树叶季相）：只发树叶格，不发整块。
+        // 看 leavesOnlyBytes ÷ leavesOnlyJobs 是否在 224~3400 字节量级（整块是 10~19 KB）。
+        ["leavesMarked", terrain.leavesMarked, "树叶季相真实写入→打标记"],
+        ["leavesMarkedUnroutable", terrain.leavesMarkedUnroutable, "打标记但无人需要补"],
+        ["leavesOnlyJobs", terrain.leavesOnlyJobs, "树叶段补丁作业数"],
+        ["leavesOnlyRuns", terrain.leavesOnlyRuns, "树叶段补丁游程数"],
+        ["leavesOnlyBytes", terrain.leavesOnlyBytes, "树叶段补丁字节数"],
+        ["leavesZeroRunFallback", terrain.leavesZeroRunFallback, "0游程→改整块（应≈0）"],
+        ["leavesRecalcDeferred", terrain.leavesRecalcDeferred, "缺顶层hash→回NotReady"],
+        ["leavesTopLayerSkipped", terrain.leavesTopLayerSkipped, "顶层一致→只补树叶"],
+        ["leavesFixSendFailures", terrain.leavesFixSendFailures, "树叶后的顶层补丁发送失败"],
+        ["leavesPendingMarks", terrain.leavesPendingMarks, "在册树叶季相标记数"],
+        ["leavesFixApplied", terrain.leavesFixApplied, "客户端树叶补丁落地次数"],
+        ["leavesFixCells", terrain.leavesFixCells, "客户端树叶补丁落地格数"],
+        // 顶层补丁「清残留」：融雪/化冰后客户端在主机顶格之上留雪 → 顶层hash永不收敛（红框死循环）。
+        // trimmed > 0 说明旧行为下这些块的红框永远消不掉；attemptExceeded 是硬上限保险触发次数。
+        ["topLayerTrimmedCells", terrain.topLayerTrimmedCells, "顶层补丁清掉的残留格数"],
+        ["topLayerTrimUnavailable", terrain.topLayerTrimUnavailable, "引擎无裁剪通道（应=0）"],
+        ["topLayerFixAttemptExceeded", terrain.topLayerFixAttemptExceeded, "顶层补丁超3次→强制整块"]
       ].forEach(function (metric) {
         var rate = formatCounterRate(telemetry, metric[1], tl, metric[0], function (v) {
           return metricValue(v, 1) + " /s";

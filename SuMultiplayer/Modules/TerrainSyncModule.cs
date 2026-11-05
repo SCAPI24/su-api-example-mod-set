@@ -679,7 +679,14 @@ namespace SuMultiplayer.Modules
                 TopLayerConvergeUnreported = (ulong)Math.Max(0, snapshot.TopLayerConvergeUnreported),
                 StaleHealed = (ulong)Math.Max(0, snapshot.StaleHealed),
                 ClientHashZeroSkipped = (ulong)Math.Max(0, snapshot.ClientHashZero),
-                ReportsDeferredNotStable = (ulong)Math.Max(0, snapshot.ReportsDeferredNotStable)
+                ReportsDeferredNotStable = (ulong)Math.Max(0, snapshot.ReportsDeferredNotStable),
+                // 树叶段补丁落地（季节驱动的树叶季相；落地后**不**重算整块摘要）。
+                // 这两行是客户端独占计数：不在这里上报，LiveMap 上 leavesFixApplied 恒为 0。
+                LeavesFixApplied = (ulong)Math.Max(0, snapshot.LeavesFixApplied),
+                LeavesFixCells = (ulong)Math.Max(0, snapshot.LeavesFixCells),
+                // 顶层补丁落地时清掉的「主机顶格之上的残留」格数（融雪/化冰后客户端留雪那类）
+                TopLayerTrimmedCells = (ulong)Math.Max(0, snapshot.TopLayerTrimmedCells),
+                TopLayerTrimUnavailable = (ulong)Math.Max(0, snapshot.TopLayerTrimUnavailable)
             };
         }
 
@@ -728,7 +735,19 @@ namespace SuMultiplayer.Modules
                         hostSnapshot.TopLayerFixSkippedNotTopLayer),
                     ClientHashZeroVerdicts = (ulong)Math.Max(0, hostSnapshot.ClientHashZeroVerdicts),
                     TopLayerFixSkippedNoClientHash = (ulong)Math.Max(0,
-                        hostSnapshot.TopLayerFixSkippedNoClientHash)
+                        hostSnapshot.TopLayerFixSkippedNoClientHash),
+                    TopLayerFixAttemptExceeded = (ulong)Math.Max(0,
+                        hostSnapshot.TopLayerFixAttemptExceeded),
+                    LeavesMarked = (ulong)Math.Max(0, hostSnapshot.LeavesMarked),
+                    LeavesMarkedUnroutable = (ulong)Math.Max(0, hostSnapshot.LeavesMarkedUnroutable),
+                    LeavesOnlyJobs = (ulong)Math.Max(0, hostSnapshot.LeavesOnlyJobs),
+                    LeavesOnlyRuns = (ulong)Math.Max(0, hostSnapshot.LeavesOnlyRuns),
+                    LeavesOnlyBytes = (ulong)Math.Max(0, hostSnapshot.LeavesOnlyBytes),
+                    LeavesZeroRunFallback = (ulong)Math.Max(0, hostSnapshot.LeavesZeroRunFallback),
+                    LeavesRecalcDeferred = (ulong)Math.Max(0, hostSnapshot.LeavesRecalcDeferred),
+                    LeavesTopLayerSkipped = (ulong)Math.Max(0, hostSnapshot.LeavesTopLayerSkipped),
+                    LeavesFixSendFailures = (ulong)Math.Max(0, hostSnapshot.LeavesFixSendFailures),
+                    LeavesPendingMarks = (ulong)Math.Max(0, hostSnapshot.LeavesPendingMarks)
                 };
             }
             if (m_clientSync != null)
@@ -752,7 +771,10 @@ namespace SuMultiplayer.Modules
                     TopLayerUnavailable = (ulong)Math.Max(0, snapshot.TopLayerUnavailable),
                     // 第 6/8 步：这两类块**不再**被当成不一致（因此不再触发整块回传）
                     DigestsDeferredNotStable = (ulong)Math.Max(0, snapshot.DigestsDeferredNotStable),
-                    VerdictsStaleSkipped = (ulong)Math.Max(0, snapshot.VerdictsStaleSkipped)
+                    VerdictsStaleSkipped = (ulong)Math.Max(0, snapshot.VerdictsStaleSkipped),
+                    // 树叶段补丁落地（季节驱动的树叶季相；落地后**不**重算整块摘要）
+                    LeavesFixApplied = (ulong)Math.Max(0, snapshot.LeavesFixApplied),
+                    LeavesFixCells = (ulong)Math.Max(0, snapshot.LeavesFixCells)
                 };
             }
 
@@ -985,6 +1007,11 @@ namespace SuMultiplayer.Modules
                 m_host.MultiplayerProtocolVersion = MultiplayerModCompatibility.ProtocolVersion;
                 m_host.MultiplayerProtocolHash = localProtocolHash;
                 m_host.MultiplayerBuildFingerprint = localBuildFingerprint;
+                // 树叶季相标记的出口（主机）：mod 的落叶季相外壳在「真实写入 chunk」之后把格子交上来，
+                // 由 host 按**客户端身份**记账（谁当时不持有这块 → 记一条待补）。
+                // 见 doc/leaves-layer-resync-plan.md 第 3.6 节。
+                TerrainSyncHost leavesHost = m_host;
+                SeasonLeavesChange.Notifier = leavesHost.NoteLeavesMutation;
                 m_host.CircuitTicketProvider = m_server.CreateCircuitTicket;
                 m_host.CircuitTicketProblem += HandleCircuitTicketProblem;
                 m_host.WorldDownloadPauseFilter = IsClientDownloading;
@@ -1058,6 +1085,7 @@ namespace SuMultiplayer.Modules
                 catch (Exception) { }
                 m_server = null;
                 m_host = null;
+                SeasonLeavesChange.Notifier = null;   // 房间结束：不再把树叶季相标记交出去
                 m_sessionId = string.Empty;
                 return false;
             }
@@ -1272,6 +1300,7 @@ namespace SuMultiplayer.Modules
             m_server = null;
             m_client = null;
             m_host = null;
+            SeasonLeavesChange.Notifier = null;   // 断线 / 下线：不再把树叶季相标记交给旧 host
             m_clientSync = null;
             m_hostClientId = 0;
             m_circuitPeerIds.Clear();

@@ -49,45 +49,46 @@ namespace SuMultiplayer.Protocol.Terrain {
             "AygLMhYuc3VtcC50ZXJyYWluLkNlbGxFZGl0EhwKFGhvc3RfdG9wX2hlaWdo",
             "dF9oYXNoGAMgASgNEhsKE2hvc3RfdG9wX2Jsb2NrX2hhc2gYBCABKA0SCwoD",
             "ZXh0GGQgASgMEiQKBmN1c3RvbRhlIAEoCzIULmdvb2dsZS5wcm90b2J1Zi5B",
-            "bnkiywEKC0NodW5rUmVzeW5jEiMKA2tleRgBIAEoCzIWLnN1bXAudGVycmFp",
+            "bnki4AEKC0NodW5rUmVzeW5jEiMKA2tleRgBIAEoCzIWLnN1bXAudGVycmFp",
             "bi5DaHVua0tleRINCgVpbmRleBgCIAEoBRINCgVjb3VudBgDIAEoBRIPCgdl",
             "bnRyaWVzGAQgASgFEg8KB3JlY29yZHMYBSABKAwSFgoJd2F0ZXJtYXJrGAYg",
-            "ASgDSACIAQESCwoDZXh0GGQgASgMEiQKBmN1c3RvbRhlIAEoCzIULmdvb2ds",
-            "ZS5wcm90b2J1Zi5BbnlCDAoKX3dhdGVybWFyayKbAgoKQ2VsbENoYW5nZRIv",
-            "CgdlbnRyaWVzGAEgAygLMh4uc3VtcC50ZXJyYWluLkNlbGxDaGFuZ2UuRW50",
-            "cnkSEQoJc2VxdWVuY2VzGAIgAygDEg0KBWZsYWdzGAMgASgNEhsKE3ByZXZf",
-            "ZGVsaXZlcnlfaW5kZXgYBCABKAMSFgoOZGVsaXZlcnlfaW5kZXgYBSABKAMS",
-            "CwoDZXh0GGQgASgMEiQKBmN1c3RvbRhlIAEoCzIULmdvb2dsZS5wcm90b2J1",
-            "Zi5BbnkaUgoFRW50cnkSIwoDa2V5GAEgASgLMhYuc3VtcC50ZXJyYWluLkNo",
-            "dW5rS2V5EiQKBGVkaXQYAiABKAsyFi5zdW1wLnRlcnJhaW4uQ2VsbEVkaXQi",
-            "yQEKB0NhdGNoVXASKQoFcGhhc2UYASABKA4yGi5zdW1wLnRlcnJhaW4uQ2F0",
-            "Y2hVcFBoYXNlEhQKDGxhc3RfYXBwbGllZBgCIAEoAxIMCgRoZWFkGAMgASgD",
-            "EhYKDmZpcnN0X3JldGFpbmVkGAQgASgDEhQKDGNoYW5nZV9jb3VudBgFIAEo",
-            "BRIOCgZyZWFzb24YBiABKAkSCwoDZXh0GGQgASgMEiQKBmN1c3RvbRhlIAEo",
-            "CzIULmdvb2dsZS5wcm90b2J1Zi5BbnkimwIKDENsaWVudENodW5rcxIoCgRt",
-            "b2RlGAEgASgOMhouc3VtcC50ZXJyYWluLkNodW5rU2V0TW9kZRITCgtmdWxs",
-            "X3NldF9pZBgCIAEoBRISCgpwYXJ0X2luZGV4GAMgASgFEhIKCnBhcnRfY291",
-            "bnQYBCABKAUSMQoHZW50cmllcxgFIAMoCzIgLnN1bXAudGVycmFpbi5DbGll",
-            "bnRDaHVua3MuRW50cnkSDwoHdmVyc2lvbhgGIAEoDRILCgNleHQYZCABKAwS",
-            "JAoGY3VzdG9tGGUgASgLMhQuZ29vZ2xlLnByb3RvYnVmLkFueRotCgVFbnRy",
-            "eRIJCgF4GAEgASgREgkKAXoYAiABKBESDgoGbG9hZGVkGAMgASgIImkKDFZl",
-            "cmlmeUNodW5rcxImCgZjaHVua3MYASADKAsyFi5zdW1wLnRlcnJhaW4uQ2h1",
-            "bmtLZXkSCwoDZXh0GGQgASgMEiQKBmN1c3RvbRhlIAEoCzIULmdvb2dsZS5w",
-            "cm90b2J1Zi5BbnkiOgoNQ2lyY3VpdEF0dGFjaBIZChFwcmltYXJ5X2NsaWVu",
-            "dF9pZBgBIAEoBRIOCgZ0aWNrZXQYAiABKAwiTgoPQ2lyY3VpdEF0dGFjaGVk",
-            "EhkKEXByaW1hcnlfY2xpZW50X2lkGAEgASgFEhAKCGFjY2VwdGVkGAIgASgI",
-            "Eg4KBnJlYXNvbhgDIAEoCSIqChRDaXJjdWl0VGlja2V0UmVxdWVzdBISCgpy",
-            "ZXF1ZXN0X2lkGAEgASgEIkoKFUNpcmN1aXRUaWNrZXRSZXNwb25zZRISCgpy",
-            "ZXF1ZXN0X2lkGAEgASgEEg4KBnRpY2tldBgCIAEoDBINCgVlcnJvchgDIAEo",
-            "CSp7ChJDaHVua0RpZ2VzdFZlcmRpY3QSIgoeQ0hVTktfRElHRVNUX1ZFUkRJ",
-            "Q1RfTk9UX1JFQURZEAASHgoaQ0hVTktfRElHRVNUX1ZFUkRJQ1RfTUFUQ0gQ",
-            "ARIhCh1DSFVOS19ESUdFU1RfVkVSRElDVF9NSVNNQVRDSBACKpkBCgxDYXRj",
-            "aFVwUGhhc2USGgoWQ0FUQ0hfVVBfUEhBU0VfUkVRVUVTVBAAEhgKFENBVENI",
-            "X1VQX1BIQVNFX0JFR0lOEAESGgoWQ0FUQ0hfVVBfUEhBU0VfQkFSUklFUhAC",
-            "EhsKF0NBVENIX1VQX1BIQVNFX1JFSkVDVEVEEAMSGgoWQ0FUQ0hfVVBfUEhB",
-            "U0VfQVBQTElFRBAEKkUKDENodW5rU2V0TW9kZRIYChRDSFVOS19TRVRfTU9E",
-            "RV9ERUxUQRAAEhsKF0NIVU5LX1NFVF9NT0RFX0ZVTExfU0VUEAFCI0gBqgIe",
-            "U3VNdWx0aXBsYXllci5Qcm90b2NvbC5UZXJyYWluYgZwcm90bzM="));
+            "ASgDSACIAQESEwoLbGVhdmVzX29ubHkYByABKAgSCwoDZXh0GGQgASgMEiQK",
+            "BmN1c3RvbRhlIAEoCzIULmdvb2dsZS5wcm90b2J1Zi5BbnlCDAoKX3dhdGVy",
+            "bWFyayKbAgoKQ2VsbENoYW5nZRIvCgdlbnRyaWVzGAEgAygLMh4uc3VtcC50",
+            "ZXJyYWluLkNlbGxDaGFuZ2UuRW50cnkSEQoJc2VxdWVuY2VzGAIgAygDEg0K",
+            "BWZsYWdzGAMgASgNEhsKE3ByZXZfZGVsaXZlcnlfaW5kZXgYBCABKAMSFgoO",
+            "ZGVsaXZlcnlfaW5kZXgYBSABKAMSCwoDZXh0GGQgASgMEiQKBmN1c3RvbRhl",
+            "IAEoCzIULmdvb2dsZS5wcm90b2J1Zi5BbnkaUgoFRW50cnkSIwoDa2V5GAEg",
+            "ASgLMhYuc3VtcC50ZXJyYWluLkNodW5rS2V5EiQKBGVkaXQYAiABKAsyFi5z",
+            "dW1wLnRlcnJhaW4uQ2VsbEVkaXQiyQEKB0NhdGNoVXASKQoFcGhhc2UYASAB",
+            "KA4yGi5zdW1wLnRlcnJhaW4uQ2F0Y2hVcFBoYXNlEhQKDGxhc3RfYXBwbGll",
+            "ZBgCIAEoAxIMCgRoZWFkGAMgASgDEhYKDmZpcnN0X3JldGFpbmVkGAQgASgD",
+            "EhQKDGNoYW5nZV9jb3VudBgFIAEoBRIOCgZyZWFzb24YBiABKAkSCwoDZXh0",
+            "GGQgASgMEiQKBmN1c3RvbRhlIAEoCzIULmdvb2dsZS5wcm90b2J1Zi5Bbnki",
+            "mwIKDENsaWVudENodW5rcxIoCgRtb2RlGAEgASgOMhouc3VtcC50ZXJyYWlu",
+            "LkNodW5rU2V0TW9kZRITCgtmdWxsX3NldF9pZBgCIAEoBRISCgpwYXJ0X2lu",
+            "ZGV4GAMgASgFEhIKCnBhcnRfY291bnQYBCABKAUSMQoHZW50cmllcxgFIAMo",
+            "CzIgLnN1bXAudGVycmFpbi5DbGllbnRDaHVua3MuRW50cnkSDwoHdmVyc2lv",
+            "bhgGIAEoDRILCgNleHQYZCABKAwSJAoGY3VzdG9tGGUgASgLMhQuZ29vZ2xl",
+            "LnByb3RvYnVmLkFueRotCgVFbnRyeRIJCgF4GAEgASgREgkKAXoYAiABKBES",
+            "DgoGbG9hZGVkGAMgASgIImkKDFZlcmlmeUNodW5rcxImCgZjaHVua3MYASAD",
+            "KAsyFi5zdW1wLnRlcnJhaW4uQ2h1bmtLZXkSCwoDZXh0GGQgASgMEiQKBmN1",
+            "c3RvbRhlIAEoCzIULmdvb2dsZS5wcm90b2J1Zi5BbnkiOgoNQ2lyY3VpdEF0",
+            "dGFjaBIZChFwcmltYXJ5X2NsaWVudF9pZBgBIAEoBRIOCgZ0aWNrZXQYAiAB",
+            "KAwiTgoPQ2lyY3VpdEF0dGFjaGVkEhkKEXByaW1hcnlfY2xpZW50X2lkGAEg",
+            "ASgFEhAKCGFjY2VwdGVkGAIgASgIEg4KBnJlYXNvbhgDIAEoCSIqChRDaXJj",
+            "dWl0VGlja2V0UmVxdWVzdBISCgpyZXF1ZXN0X2lkGAEgASgEIkoKFUNpcmN1",
+            "aXRUaWNrZXRSZXNwb25zZRISCgpyZXF1ZXN0X2lkGAEgASgEEg4KBnRpY2tl",
+            "dBgCIAEoDBINCgVlcnJvchgDIAEoCSp7ChJDaHVua0RpZ2VzdFZlcmRpY3QS",
+            "IgoeQ0hVTktfRElHRVNUX1ZFUkRJQ1RfTk9UX1JFQURZEAASHgoaQ0hVTktf",
+            "RElHRVNUX1ZFUkRJQ1RfTUFUQ0gQARIhCh1DSFVOS19ESUdFU1RfVkVSRElD",
+            "VF9NSVNNQVRDSBACKpkBCgxDYXRjaFVwUGhhc2USGgoWQ0FUQ0hfVVBfUEhB",
+            "U0VfUkVRVUVTVBAAEhgKFENBVENIX1VQX1BIQVNFX0JFR0lOEAESGgoWQ0FU",
+            "Q0hfVVBfUEhBU0VfQkFSUklFUhACEhsKF0NBVENIX1VQX1BIQVNFX1JFSkVD",
+            "VEVEEAMSGgoWQ0FUQ0hfVVBfUEhBU0VfQVBQTElFRBAEKkUKDENodW5rU2V0",
+            "TW9kZRIYChRDSFVOS19TRVRfTU9ERV9ERUxUQRAAEhsKF0NIVU5LX1NFVF9N",
+            "T0RFX0ZVTExfU0VUEAFCI0gBqgIeU3VNdWx0aXBsYXllci5Qcm90b2NvbC5U",
+            "ZXJyYWluYgZwcm90bzM="));
       descriptor = pbr::FileDescriptor.FromGeneratedCode(descriptorData,
           new pbr::FileDescriptor[] { global::Google.Protobuf.WellKnownTypes.AnyReflection.Descriptor, },
           new pbr::GeneratedClrTypeInfo(new[] {typeof(global::SuMultiplayer.Protocol.Terrain.ChunkDigestVerdict), typeof(global::SuMultiplayer.Protocol.Terrain.CatchUpPhase), typeof(global::SuMultiplayer.Protocol.Terrain.ChunkSetMode), }, null, new pbr::GeneratedClrTypeInfo[] {
@@ -97,7 +98,7 @@ namespace SuMultiplayer.Protocol.Terrain {
             new pbr::GeneratedClrTypeInfo(typeof(global::SuMultiplayer.Protocol.Terrain.ChunkVerdict), global::SuMultiplayer.Protocol.Terrain.ChunkVerdict.Parser, new[]{ "Entries", "Ext", "Custom" }, null, null, null, new pbr::GeneratedClrTypeInfo[] { new pbr::GeneratedClrTypeInfo(typeof(global::SuMultiplayer.Protocol.Terrain.ChunkVerdict.Types.Entry), global::SuMultiplayer.Protocol.Terrain.ChunkVerdict.Types.Entry.Parser, new[]{ "Key", "Verdict", "HostHash", "HostChangeSequence" }, null, null, null, null)}),
             new pbr::GeneratedClrTypeInfo(typeof(global::SuMultiplayer.Protocol.Terrain.TopLayerMismatchReport), global::SuMultiplayer.Protocol.Terrain.TopLayerMismatchReport.Parser, new[]{ "Key", "ClientTopHeightHash", "ClientTopBlockHash", "Ext", "Custom" }, null, null, null, null),
             new pbr::GeneratedClrTypeInfo(typeof(global::SuMultiplayer.Protocol.Terrain.TopLayerFix), global::SuMultiplayer.Protocol.Terrain.TopLayerFix.Parser, new[]{ "Key", "Cells", "HostTopHeightHash", "HostTopBlockHash", "Ext", "Custom" }, null, null, null, null),
-            new pbr::GeneratedClrTypeInfo(typeof(global::SuMultiplayer.Protocol.Terrain.ChunkResync), global::SuMultiplayer.Protocol.Terrain.ChunkResync.Parser, new[]{ "Key", "Index", "Count", "Entries", "Records", "Watermark", "Ext", "Custom" }, new[]{ "Watermark" }, null, null, null),
+            new pbr::GeneratedClrTypeInfo(typeof(global::SuMultiplayer.Protocol.Terrain.ChunkResync), global::SuMultiplayer.Protocol.Terrain.ChunkResync.Parser, new[]{ "Key", "Index", "Count", "Entries", "Records", "Watermark", "LeavesOnly", "Ext", "Custom" }, new[]{ "Watermark" }, null, null, null),
             new pbr::GeneratedClrTypeInfo(typeof(global::SuMultiplayer.Protocol.Terrain.CellChange), global::SuMultiplayer.Protocol.Terrain.CellChange.Parser, new[]{ "Entries", "Sequences", "Flags", "PrevDeliveryIndex", "DeliveryIndex", "Ext", "Custom" }, null, null, null, new pbr::GeneratedClrTypeInfo[] { new pbr::GeneratedClrTypeInfo(typeof(global::SuMultiplayer.Protocol.Terrain.CellChange.Types.Entry), global::SuMultiplayer.Protocol.Terrain.CellChange.Types.Entry.Parser, new[]{ "Key", "Edit" }, null, null, null, null)}),
             new pbr::GeneratedClrTypeInfo(typeof(global::SuMultiplayer.Protocol.Terrain.CatchUp), global::SuMultiplayer.Protocol.Terrain.CatchUp.Parser, new[]{ "Phase", "LastApplied", "Head", "FirstRetained", "ChangeCount", "Reason", "Ext", "Custom" }, null, null, null, null),
             new pbr::GeneratedClrTypeInfo(typeof(global::SuMultiplayer.Protocol.Terrain.ClientChunks), global::SuMultiplayer.Protocol.Terrain.ClientChunks.Parser, new[]{ "Mode", "FullSetId", "PartIndex", "PartCount", "Entries", "Version", "Ext", "Custom" }, null, null, null, new pbr::GeneratedClrTypeInfo[] { new pbr::GeneratedClrTypeInfo(typeof(global::SuMultiplayer.Protocol.Terrain.ClientChunks.Types.Entry), global::SuMultiplayer.Protocol.Terrain.ClientChunks.Types.Entry.Parser, new[]{ "X", "Z", "Loaded" }, null, null, null, null)}),
@@ -2868,6 +2869,7 @@ namespace SuMultiplayer.Protocol.Terrain {
       entries_ = other.entries_;
       records_ = other.records_;
       watermark_ = other.watermark_;
+      leavesOnly_ = other.leavesOnly_;
       ext_ = other.ext_;
       custom_ = other.custom_ != null ? other.custom_.Clone() : null;
       _unknownFields = pb::UnknownFieldSet.Clone(other._unknownFields);
@@ -2969,6 +2971,23 @@ namespace SuMultiplayer.Protocol.Terrain {
       _hasBits0 &= ~1;
     }
 
+    /// <summary>Field number for the "leaves_only" field.</summary>
+    public const int LeavesOnlyFieldNumber = 7;
+    private bool leavesOnly_;
+    /// <summary>
+    /// 这份快照**只含树叶段**（落叶树树叶 12/13/256/263 + 落叶方块 261），
+    /// 用于"季节驱动的树叶季相变化"：客户端按轻量路径落地（只写数组、不派发电路/行为/副本事件），
+    /// 落地后不重算整块摘要。见 doc/leaves-layer-resync-plan.md 第 5、6 章。
+    /// </summary>
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public bool LeavesOnly {
+      get { return leavesOnly_; }
+      set {
+        leavesOnly_ = value;
+      }
+    }
+
     /// <summary>Field number for the "ext" field.</summary>
     public const int ExtFieldNumber = 100;
     private pb::ByteString ext_ = pb::ByteString.Empty;
@@ -3017,6 +3036,7 @@ namespace SuMultiplayer.Protocol.Terrain {
       if (Entries != other.Entries) return false;
       if (Records != other.Records) return false;
       if (Watermark != other.Watermark) return false;
+      if (LeavesOnly != other.LeavesOnly) return false;
       if (Ext != other.Ext) return false;
       if (!object.Equals(Custom, other.Custom)) return false;
       return Equals(_unknownFields, other._unknownFields);
@@ -3032,6 +3052,7 @@ namespace SuMultiplayer.Protocol.Terrain {
       if (Entries != 0) hash ^= Entries.GetHashCode();
       if (Records.Length != 0) hash ^= Records.GetHashCode();
       if (HasWatermark) hash ^= Watermark.GetHashCode();
+      if (LeavesOnly != false) hash ^= LeavesOnly.GetHashCode();
       if (Ext.Length != 0) hash ^= Ext.GetHashCode();
       if (custom_ != null) hash ^= Custom.GetHashCode();
       if (_unknownFields != null) {
@@ -3076,6 +3097,10 @@ namespace SuMultiplayer.Protocol.Terrain {
         output.WriteRawTag(48);
         output.WriteInt64(Watermark);
       }
+      if (LeavesOnly != false) {
+        output.WriteRawTag(56);
+        output.WriteBool(LeavesOnly);
+      }
       if (Ext.Length != 0) {
         output.WriteRawTag(162, 6);
         output.WriteBytes(Ext);
@@ -3118,6 +3143,10 @@ namespace SuMultiplayer.Protocol.Terrain {
         output.WriteRawTag(48);
         output.WriteInt64(Watermark);
       }
+      if (LeavesOnly != false) {
+        output.WriteRawTag(56);
+        output.WriteBool(LeavesOnly);
+      }
       if (Ext.Length != 0) {
         output.WriteRawTag(162, 6);
         output.WriteBytes(Ext);
@@ -3153,6 +3182,9 @@ namespace SuMultiplayer.Protocol.Terrain {
       }
       if (HasWatermark) {
         size += 1 + pb::CodedOutputStream.ComputeInt64Size(Watermark);
+      }
+      if (LeavesOnly != false) {
+        size += 1 + 1;
       }
       if (Ext.Length != 0) {
         size += 2 + pb::CodedOutputStream.ComputeBytesSize(Ext);
@@ -3192,6 +3224,9 @@ namespace SuMultiplayer.Protocol.Terrain {
       }
       if (other.HasWatermark) {
         Watermark = other.Watermark;
+      }
+      if (other.LeavesOnly != false) {
+        LeavesOnly = other.LeavesOnly;
       }
       if (other.Ext.Length != 0) {
         Ext = other.Ext;
@@ -3246,6 +3281,10 @@ namespace SuMultiplayer.Protocol.Terrain {
           }
           case 48: {
             Watermark = input.ReadInt64();
+            break;
+          }
+          case 56: {
+            LeavesOnly = input.ReadBool();
             break;
           }
           case 802: {
@@ -3303,6 +3342,10 @@ namespace SuMultiplayer.Protocol.Terrain {
           }
           case 48: {
             Watermark = input.ReadInt64();
+            break;
+          }
+          case 56: {
+            LeavesOnly = input.ReadBool();
             break;
           }
           case 802: {

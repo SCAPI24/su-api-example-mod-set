@@ -107,7 +107,7 @@ namespace SuMultiplayer.Protocol.Telemetry {
             "EhcKD2hhc2hfbWlzbWF0Y2hlcxgRIAEoBBIPCgdoYXNoX21zGBIgASgCEhMK",
             "C2hhc2hfbWF4X21zGBMgASgCEhwKFHJlc3luY19jaGFuZ2VkX2NlbGxzGBQg",
             "ASgEEh4KFnJlc3luY191bmNoYW5nZWRfY2VsbHMYFSABKAQSHQoVdGVycmFp",
-            "bl9pbnZhbGlkYXRpb25zGBYgASgEIswJChFUZXJyYWluU3luY1NhbXBsZRIW",
+            "bl9pbnZhbGlkYXRpb25zGBYgASgEIpsNChFUZXJyYWluU3luY1NhbXBsZRIW",
             "Cg5kaWdlc3RfcmVwb3J0cxgBIAEoBBIeChZjZWxsX2NoYW5nZXNfYnJvYWRj",
             "YXN0GAIgASgEEhsKE2NlbGxfY2hhbmdlX3JlcGFpcnMYAyABKAQSFAoMcmVz",
             "eW5jX2J5dGVzGAQgASgEEhoKEnJlcG9ydHNfcGVyX3NlY29uZBgFIAEoBBIb",
@@ -134,26 +134,37 @@ namespace SuMultiplayer.Protocol.Telemetry {
             "X25vdF90b3BfbGF5ZXIYIiABKAQSIQoZY2xpZW50X2hhc2hfemVyb192ZXJk",
             "aWN0cxgjIAEoBBIgChhjbGllbnRfaGFzaF96ZXJvX3NraXBwZWQYJCABKAQS",
             "IwobcmVwb3J0c19kZWZlcnJlZF9ub3Rfc3RhYmxlGCUgASgEEiwKJHRvcF9s",
-            "YXllcl9maXhfc2tpcHBlZF9ub19jbGllbnRfaGFzaBgmIAEoBCLfAwoNTGl2",
-            "ZVRlbGVtZXRyeRIRCglzYW1wbGVfaWQYASABKAQSFQoNc2FtcGxlZF9hdF9t",
-            "cxgCIAEoBBIzCgxob3N0X3J1bnRpbWUYAyABKAsyHS5zdW1wLnRlbGVtZXRy",
-            "eS5SdW50aW1lU2FtcGxlEjIKB2NpcmN1aXQYBCABKAsyIS5zdW1wLnRlbGVt",
-            "ZXRyeS5DaXJjdWl0U3luY1NhbXBsZRIyCgd0ZXJyYWluGAUgASgLMiEuc3Vt",
-            "cC50ZWxlbWV0cnkuVGVycmFpblN5bmNTYW1wbGUSKQoFcGVlcnMYBiADKAsy",
-            "Gi5zdW1wLnRlbGVtZXRyeS5QZWVyU2FtcGxlEhkKEWxpdmVfbWFwX2J1aWxk",
-            "X21zGAcgASgCEhcKD2xpdmVfbWFwX2NodW5rcxgIIAEoDRIYChBsaXZlX21h",
-            "cF9iYXRjaGVzGAkgASgNEhsKE2xpdmVfbWFwX2J5dGVzX3NlbnQYCiABKAQS",
-            "HAoUbGl2ZV9tYXBfZnJhbWVzX3NlbnQYCyABKAQSGQoRbGl2ZV9tYXBfcmVx",
-            "dWVzdHMYDCABKAQSOAoRbW9uaXRvcl90cmFuc3BvcnQYDSABKAsyHS5zdW1w",
-            "LnRlbGVtZXRyeS5DaGFubmVsU2FtcGxlIrIBChZDbGllbnRSdW50aW1lVGVs",
-            "ZW1ldHJ5Ei4KB3J1bnRpbWUYASABKAsyHS5zdW1wLnRlbGVtZXRyeS5SdW50",
-            "aW1lU2FtcGxlEjQKB2NpcmN1aXQYAiABKAsyIy5zdW1wLnRlbGVtZXRyeS5D",
-            "bGllbnRDaXJjdWl0U2FtcGxlEjIKB3RlcnJhaW4YAyABKAsyIS5zdW1wLnRl",
-            "bGVtZXRyeS5UZXJyYWluU3luY1NhbXBsZSJBChhUZXJyYWluRGlhZ25vc3Rp",
-            "Y0NvbnRyb2wSEgoKcmVxdWVzdF9pZBgBIAEoBBIRCgl3aW5kb3dfbXMYAiAB",
-            "KA0iTgoXVGVycmFpbkRpYWdub3N0aWNSZXBvcnQSMwoGc2FtcGxlGAEgASgL",
-            "MiMuc3VtcC50ZWxlbWV0cnkuVGVycmFpblJlc3luY1NhbXBsZUIlSAGqAiBT",
-            "dU11bHRpcGxheWVyLlByb3RvY29sLlRlbGVtZXRyeWIGcHJvdG8z"));
+            "YXllcl9maXhfc2tpcHBlZF9ub19jbGllbnRfaGFzaBgmIAEoBBIVCg1sZWF2",
+            "ZXNfbWFya2VkGCcgASgEEiAKGGxlYXZlc19tYXJrZWRfdW5yb3V0YWJsZRgo",
+            "IAEoBBIYChBsZWF2ZXNfb25seV9qb2JzGCkgASgEEhgKEGxlYXZlc19vbmx5",
+            "X3J1bnMYKiABKAQSGQoRbGVhdmVzX29ubHlfYnl0ZXMYKyABKAQSIAoYbGVh",
+            "dmVzX3plcm9fcnVuX2ZhbGxiYWNrGCwgASgEEh4KFmxlYXZlc19yZWNhbGNf",
+            "ZGVmZXJyZWQYLSABKAQSIAoYbGVhdmVzX3RvcF9sYXllcl9za2lwcGVkGC4g",
+            "ASgEEiAKGGxlYXZlc19maXhfc2VuZF9mYWlsdXJlcxgvIAEoBBIcChRsZWF2",
+            "ZXNfcGVuZGluZ19tYXJrcxgwIAEoBBIaChJsZWF2ZXNfZml4X2FwcGxpZWQY",
+            "MSABKAQSGAoQbGVhdmVzX2ZpeF9jZWxscxgyIAEoBBIfChd0b3BfbGF5ZXJf",
+            "dHJpbW1lZF9jZWxscxgzIAEoBBIiChp0b3BfbGF5ZXJfdHJpbV91bmF2YWls",
+            "YWJsZRg0IAEoBBImCh50b3BfbGF5ZXJfZml4X2F0dGVtcHRfZXhjZWVkZWQY",
+            "NSABKAQi3wMKDUxpdmVUZWxlbWV0cnkSEQoJc2FtcGxlX2lkGAEgASgEEhUK",
+            "DXNhbXBsZWRfYXRfbXMYAiABKAQSMwoMaG9zdF9ydW50aW1lGAMgASgLMh0u",
+            "c3VtcC50ZWxlbWV0cnkuUnVudGltZVNhbXBsZRIyCgdjaXJjdWl0GAQgASgL",
+            "MiEuc3VtcC50ZWxlbWV0cnkuQ2lyY3VpdFN5bmNTYW1wbGUSMgoHdGVycmFp",
+            "bhgFIAEoCzIhLnN1bXAudGVsZW1ldHJ5LlRlcnJhaW5TeW5jU2FtcGxlEikK",
+            "BXBlZXJzGAYgAygLMhouc3VtcC50ZWxlbWV0cnkuUGVlclNhbXBsZRIZChFs",
+            "aXZlX21hcF9idWlsZF9tcxgHIAEoAhIXCg9saXZlX21hcF9jaHVua3MYCCAB",
+            "KA0SGAoQbGl2ZV9tYXBfYmF0Y2hlcxgJIAEoDRIbChNsaXZlX21hcF9ieXRl",
+            "c19zZW50GAogASgEEhwKFGxpdmVfbWFwX2ZyYW1lc19zZW50GAsgASgEEhkK",
+            "EWxpdmVfbWFwX3JlcXVlc3RzGAwgASgEEjgKEW1vbml0b3JfdHJhbnNwb3J0",
+            "GA0gASgLMh0uc3VtcC50ZWxlbWV0cnkuQ2hhbm5lbFNhbXBsZSKyAQoWQ2xp",
+            "ZW50UnVudGltZVRlbGVtZXRyeRIuCgdydW50aW1lGAEgASgLMh0uc3VtcC50",
+            "ZWxlbWV0cnkuUnVudGltZVNhbXBsZRI0CgdjaXJjdWl0GAIgASgLMiMuc3Vt",
+            "cC50ZWxlbWV0cnkuQ2xpZW50Q2lyY3VpdFNhbXBsZRIyCgd0ZXJyYWluGAMg",
+            "ASgLMiEuc3VtcC50ZWxlbWV0cnkuVGVycmFpblN5bmNTYW1wbGUiQQoYVGVy",
+            "cmFpbkRpYWdub3N0aWNDb250cm9sEhIKCnJlcXVlc3RfaWQYASABKAQSEQoJ",
+            "d2luZG93X21zGAIgASgNIk4KF1RlcnJhaW5EaWFnbm9zdGljUmVwb3J0EjMK",
+            "BnNhbXBsZRgBIAEoCzIjLnN1bXAudGVsZW1ldHJ5LlRlcnJhaW5SZXN5bmNT",
+            "YW1wbGVCJUgBqgIgU3VNdWx0aXBsYXllci5Qcm90b2NvbC5UZWxlbWV0cnli",
+            "BnByb3RvMw=="));
       descriptor = pbr::FileDescriptor.FromGeneratedCode(descriptorData,
           new pbr::FileDescriptor[] { },
           new pbr::GeneratedClrTypeInfo(null, null, new pbr::GeneratedClrTypeInfo[] {
@@ -166,7 +177,7 @@ namespace SuMultiplayer.Protocol.Telemetry {
             new pbr::GeneratedClrTypeInfo(typeof(global::SuMultiplayer.Protocol.Telemetry.CircuitSyncSample), global::SuMultiplayer.Protocol.Telemetry.CircuitSyncSample.Parser, new[]{ "Rounds", "AttachedPeers", "ScopeChunks", "SevenSegmentStates", "SnapshotChunks", "SnapshotElements", "SnapshotParts", "DeltaStates", "SendFailures", "ClientScopeRequests", "ClientScopeChunks", "ClientSnapshotParts", "ClientSnapshotsApplied", "ClientStatesApplied", "ClientApplyFailures", "ClientHashReports", "ClientHashChunks", "ClientWatermarkExpired", "ClientSimulationEnabled", "HostSyncWindowCalls", "HostSyncWindowMs", "HostSyncWindowMaxMs", "HashMismatchesObserved", "HashRepairChunksQueued", "RepairAckHashMismatches", "RepairAckChunksQueued", "SnapshotRequestChunks", "NeedsFullSnapshotChunksQueued", "SnapshotsInitialScope", "SnapshotsHashRepair", "SnapshotsRepairAckRepair", "SnapshotsClientRequest", "SnapshotsNeedsFullRecovery", "SnapshotsPauseBarrier", "SnapshotsTopologyChange", "SnapshotsSendFailureRecovery", "SnapshotSendFailures", "HostBatchCaptureFailures", "RequestedSnapshotCaptureFailures", "HostBatchCaptureChunksFailed", "Stages" }, null, null, null, null),
             new pbr::GeneratedClrTypeInfo(typeof(global::SuMultiplayer.Protocol.Telemetry.ClientCircuitSample), global::SuMultiplayer.Protocol.Telemetry.ClientCircuitSample.Parser, new[]{ "HashCaptureFailures", "HashCaptureChunksSkipped", "HashReportsSent", "HashChunksSent", "ScopeRequestsSent", "ScopeRequestChunksSent", "SnapshotPartsReceived", "SnapshotsApplied", "StatesApplied", "ApplyFailures", "WatermarkExpired", "SnapshotTimeouts", "Stages" }, null, null, null, null),
             new pbr::GeneratedClrTypeInfo(typeof(global::SuMultiplayer.Protocol.Telemetry.TerrainResyncSample), global::SuMultiplayer.Protocol.Telemetry.TerrainResyncSample.Parser, new[]{ "RequestId", "WindowMs", "ShardBytes", "RleRuns", "ExpandedCells", "DecodeMs", "ApplyMs", "CircuitCallbackMs", "FinalDigestMs", "AppliedParts", "NoPendingSixFaceRollbacks", "NoPendingSixFaceRollbackMs", "ChunkLoadEvents", "ChunkUnloadEvents", "HashChecks", "HashMatches", "HashMismatches", "HashMs", "HashMaxMs", "ResyncChangedCells", "ResyncUnchangedCells", "TerrainInvalidations" }, null, null, null, null),
-            new pbr::GeneratedClrTypeInfo(typeof(global::SuMultiplayer.Protocol.Telemetry.TerrainSyncSample), global::SuMultiplayer.Protocol.Telemetry.TerrainSyncSample.Parser, new[]{ "DigestReports", "CellChangesBroadcast", "CellChangeRepairs", "ResyncBytes", "ReportsPerSecond", "MismatchPerSecond", "ResyncReceivedPerSecond", "ResyncAppliedPerSecond", "VerifyRequestsSent", "VerifyRequestSendFailures", "PendingReports", "PendingMarks", "PendingClients", "ResyncRuns", "ResyncExpandedCells", "ResyncEncodeMs", "ResyncShardBytes", "OwedSnapshotsQueued", "OwedSnapshotsSkippedNoContent", "TopLayerChecks", "TopLayerMatches", "TopLayerReportsSent", "TopLayerFixesReceived", "TopLayerFixCellsApplied", "TopLayerFixEscalations", "TopLayerUnavailable", "DigestsDeferredNotStable", "VerdictsStaleSkipped", "TopLayerFixFromMismatch", "TopLayerFixesSent", "TopLayerFixSendFailures", "TopLayerConvergeUnreported", "StaleHealed", "TopLayerFixSkippedNotTopLayer", "ClientHashZeroVerdicts", "ClientHashZeroSkipped", "ReportsDeferredNotStable", "TopLayerFixSkippedNoClientHash" }, null, null, null, null),
+            new pbr::GeneratedClrTypeInfo(typeof(global::SuMultiplayer.Protocol.Telemetry.TerrainSyncSample), global::SuMultiplayer.Protocol.Telemetry.TerrainSyncSample.Parser, new[]{ "DigestReports", "CellChangesBroadcast", "CellChangeRepairs", "ResyncBytes", "ReportsPerSecond", "MismatchPerSecond", "ResyncReceivedPerSecond", "ResyncAppliedPerSecond", "VerifyRequestsSent", "VerifyRequestSendFailures", "PendingReports", "PendingMarks", "PendingClients", "ResyncRuns", "ResyncExpandedCells", "ResyncEncodeMs", "ResyncShardBytes", "OwedSnapshotsQueued", "OwedSnapshotsSkippedNoContent", "TopLayerChecks", "TopLayerMatches", "TopLayerReportsSent", "TopLayerFixesReceived", "TopLayerFixCellsApplied", "TopLayerFixEscalations", "TopLayerUnavailable", "DigestsDeferredNotStable", "VerdictsStaleSkipped", "TopLayerFixFromMismatch", "TopLayerFixesSent", "TopLayerFixSendFailures", "TopLayerConvergeUnreported", "StaleHealed", "TopLayerFixSkippedNotTopLayer", "ClientHashZeroVerdicts", "ClientHashZeroSkipped", "ReportsDeferredNotStable", "TopLayerFixSkippedNoClientHash", "LeavesMarked", "LeavesMarkedUnroutable", "LeavesOnlyJobs", "LeavesOnlyRuns", "LeavesOnlyBytes", "LeavesZeroRunFallback", "LeavesRecalcDeferred", "LeavesTopLayerSkipped", "LeavesFixSendFailures", "LeavesPendingMarks", "LeavesFixApplied", "LeavesFixCells", "TopLayerTrimmedCells", "TopLayerTrimUnavailable", "TopLayerFixAttemptExceeded" }, null, null, null, null),
             new pbr::GeneratedClrTypeInfo(typeof(global::SuMultiplayer.Protocol.Telemetry.LiveTelemetry), global::SuMultiplayer.Protocol.Telemetry.LiveTelemetry.Parser, new[]{ "SampleId", "SampledAtMs", "HostRuntime", "Circuit", "Terrain", "Peers", "LiveMapBuildMs", "LiveMapChunks", "LiveMapBatches", "LiveMapBytesSent", "LiveMapFramesSent", "LiveMapRequests", "MonitorTransport" }, null, null, null, null),
             new pbr::GeneratedClrTypeInfo(typeof(global::SuMultiplayer.Protocol.Telemetry.ClientRuntimeTelemetry), global::SuMultiplayer.Protocol.Telemetry.ClientRuntimeTelemetry.Parser, new[]{ "Runtime", "Circuit", "Terrain" }, null, null, null, null),
             new pbr::GeneratedClrTypeInfo(typeof(global::SuMultiplayer.Protocol.Telemetry.TerrainDiagnosticControl), global::SuMultiplayer.Protocol.Telemetry.TerrainDiagnosticControl.Parser, new[]{ "RequestId", "WindowMs" }, null, null, null, null),
@@ -6267,6 +6278,21 @@ namespace SuMultiplayer.Protocol.Telemetry {
       clientHashZeroSkipped_ = other.clientHashZeroSkipped_;
       reportsDeferredNotStable_ = other.reportsDeferredNotStable_;
       topLayerFixSkippedNoClientHash_ = other.topLayerFixSkippedNoClientHash_;
+      leavesMarked_ = other.leavesMarked_;
+      leavesMarkedUnroutable_ = other.leavesMarkedUnroutable_;
+      leavesOnlyJobs_ = other.leavesOnlyJobs_;
+      leavesOnlyRuns_ = other.leavesOnlyRuns_;
+      leavesOnlyBytes_ = other.leavesOnlyBytes_;
+      leavesZeroRunFallback_ = other.leavesZeroRunFallback_;
+      leavesRecalcDeferred_ = other.leavesRecalcDeferred_;
+      leavesTopLayerSkipped_ = other.leavesTopLayerSkipped_;
+      leavesFixSendFailures_ = other.leavesFixSendFailures_;
+      leavesPendingMarks_ = other.leavesPendingMarks_;
+      leavesFixApplied_ = other.leavesFixApplied_;
+      leavesFixCells_ = other.leavesFixCells_;
+      topLayerTrimmedCells_ = other.topLayerTrimmedCells_;
+      topLayerTrimUnavailable_ = other.topLayerTrimUnavailable_;
+      topLayerFixAttemptExceeded_ = other.topLayerFixAttemptExceeded_;
       _unknownFields = pb::UnknownFieldSet.Clone(other._unknownFields);
     }
 
@@ -6768,6 +6794,233 @@ namespace SuMultiplayer.Protocol.Telemetry {
       }
     }
 
+    /// <summary>Field number for the "leaves_marked" field.</summary>
+    public const int LeavesMarkedFieldNumber = 39;
+    private ulong leavesMarked_;
+    /// <summary>
+    /// ---- 树叶段补丁（季节驱动的树叶季相；见 doc/leaves-layer-resync-plan.md）----
+    /// 主机：观察到「树叶季相真实写入 chunk」并打标记的次数（按目标客户端展开前）。
+    /// </summary>
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public ulong LeavesMarked {
+      get { return leavesMarked_; }
+      set {
+        leavesMarked_ = value;
+      }
+    }
+
+    /// <summary>Field number for the "leaves_marked_unroutable" field.</summary>
+    public const int LeavesMarkedUnroutableFieldNumber = 40;
+    private ulong leavesMarkedUnroutable_;
+    /// <summary>
+    /// 主机：打了标记但当时没有任何「在线且未持有该块」的客户端（不需要补）。
+    /// </summary>
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public ulong LeavesMarkedUnroutable {
+      get { return leavesMarkedUnroutable_; }
+      set {
+        leavesMarkedUnroutable_ = value;
+      }
+    }
+
+    /// <summary>Field number for the "leaves_only_jobs" field.</summary>
+    public const int LeavesOnlyJobsFieldNumber = 41;
+    private ulong leavesOnlyJobs_;
+    /// <summary>
+    /// 主机：入队的树叶段补丁作业数。
+    /// </summary>
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public ulong LeavesOnlyJobs {
+      get { return leavesOnlyJobs_; }
+      set {
+        leavesOnlyJobs_ = value;
+      }
+    }
+
+    /// <summary>Field number for the "leaves_only_runs" field.</summary>
+    public const int LeavesOnlyRunsFieldNumber = 42;
+    private ulong leavesOnlyRuns_;
+    /// <summary>
+    /// 主机：树叶段补丁累计游程数。
+    /// </summary>
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public ulong LeavesOnlyRuns {
+      get { return leavesOnlyRuns_; }
+      set {
+        leavesOnlyRuns_ = value;
+      }
+    }
+
+    /// <summary>Field number for the "leaves_only_bytes" field.</summary>
+    public const int LeavesOnlyBytesFieldNumber = 43;
+    private ulong leavesOnlyBytes_;
+    /// <summary>
+    /// 主机：树叶段补丁累计字节；÷ jobs 应与实测单块 224~3400 字节同量级。
+    /// </summary>
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public ulong LeavesOnlyBytes {
+      get { return leavesOnlyBytes_; }
+      set {
+        leavesOnlyBytes_ = value;
+      }
+    }
+
+    /// <summary>Field number for the "leaves_zero_run_fallback" field.</summary>
+    public const int LeavesZeroRunFallbackFieldNumber = 44;
+    private ulong leavesZeroRunFallback_;
+    /// <summary>
+    /// 主机：带树叶标记但编码出 0 游程 → 改走整块回传的次数。应接近 0。
+    /// </summary>
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public ulong LeavesZeroRunFallback {
+      get { return leavesZeroRunFallback_; }
+      set {
+        leavesZeroRunFallback_ = value;
+      }
+    }
+
+    /// <summary>Field number for the "leaves_recalc_deferred" field.</summary>
+    public const int LeavesRecalcDeferredFieldNumber = 45;
+    private ulong leavesRecalcDeferred_;
+    /// <summary>
+    /// 主机：客户端没带顶层 hash → 回 NotReady（树叶段也不发）的次数。启动后应很快归 0。
+    /// </summary>
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public ulong LeavesRecalcDeferred {
+      get { return leavesRecalcDeferred_; }
+      set {
+        leavesRecalcDeferred_ = value;
+      }
+    }
+
+    /// <summary>Field number for the "leaves_top_layer_skipped" field.</summary>
+    public const int LeavesTopLayerSkippedFieldNumber = 46;
+    private ulong leavesTopLayerSkipped_;
+    /// <summary>
+    /// 主机：顶层一致而未发顶层修复、只补了树叶段的次数。
+    /// </summary>
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public ulong LeavesTopLayerSkipped {
+      get { return leavesTopLayerSkipped_; }
+      set {
+        leavesTopLayerSkipped_ = value;
+      }
+    }
+
+    /// <summary>Field number for the "leaves_fix_send_failures" field.</summary>
+    public const int LeavesFixSendFailuresFieldNumber = 47;
+    private ulong leavesFixSendFailures_;
+    /// <summary>
+    /// 主机：树叶段补丁发完后的顶层修复发送失败次数（显式背压）。
+    /// </summary>
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public ulong LeavesFixSendFailures {
+      get { return leavesFixSendFailures_; }
+      set {
+        leavesFixSendFailures_ = value;
+      }
+    }
+
+    /// <summary>Field number for the "leaves_pending_marks" field.</summary>
+    public const int LeavesPendingMarksFieldNumber = 48;
+    private ulong leavesPendingMarks_;
+    /// <summary>
+    /// 主机：当前在册的（区块 × 身份）树叶季相标记条数。
+    /// </summary>
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public ulong LeavesPendingMarks {
+      get { return leavesPendingMarks_; }
+      set {
+        leavesPendingMarks_ = value;
+      }
+    }
+
+    /// <summary>Field number for the "leaves_fix_applied" field.</summary>
+    public const int LeavesFixAppliedFieldNumber = 49;
+    private ulong leavesFixApplied_;
+    /// <summary>
+    /// 客户端：树叶段补丁落地次数（末片落地算一次）。
+    /// </summary>
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public ulong LeavesFixApplied {
+      get { return leavesFixApplied_; }
+      set {
+        leavesFixApplied_ = value;
+      }
+    }
+
+    /// <summary>Field number for the "leaves_fix_cells" field.</summary>
+    public const int LeavesFixCellsFieldNumber = 50;
+    private ulong leavesFixCells_;
+    /// <summary>
+    /// 客户端：树叶段补丁累计落地格数。
+    /// </summary>
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public ulong LeavesFixCells {
+      get { return leavesFixCells_; }
+      set {
+        leavesFixCells_ = value;
+      }
+    }
+
+    /// <summary>Field number for the "top_layer_trimmed_cells" field.</summary>
+    public const int TopLayerTrimmedCellsFieldNumber = 51;
+    private ulong topLayerTrimmedCells_;
+    /// <summary>
+    /// 客户端：顶层补丁落地时清掉的「主机顶格之上的残留」格数。
+    /// 融雪/化冰后客户端留着一层雪就是这类；这个数一旦增长，说明旧行为下红框会永不收敛。
+    /// </summary>
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public ulong TopLayerTrimmedCells {
+      get { return topLayerTrimmedCells_; }
+      set {
+        topLayerTrimmedCells_ = value;
+      }
+    }
+
+    /// <summary>Field number for the "top_layer_trim_unavailable" field.</summary>
+    public const int TopLayerTrimUnavailableFieldNumber = 52;
+    private ulong topLayerTrimUnavailable_;
+    /// <summary>
+    /// 客户端：引擎未实现裁剪通道、顶层补丁退化为「只写不清」的次数（应为 0）。
+    /// </summary>
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public ulong TopLayerTrimUnavailable {
+      get { return topLayerTrimUnavailable_; }
+      set {
+        topLayerTrimUnavailable_ = value;
+      }
+    }
+
+    /// <summary>Field number for the "top_layer_fix_attempt_exceeded" field.</summary>
+    public const int TopLayerFixAttemptExceededFieldNumber = 53;
+    private ulong topLayerFixAttemptExceeded_;
+    /// <summary>
+    /// 主机：同一块连续顶层补丁达上限（3 次）→ 改走整块回传的次数。
+    /// </summary>
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public ulong TopLayerFixAttemptExceeded {
+      get { return topLayerFixAttemptExceeded_; }
+      set {
+        topLayerFixAttemptExceeded_ = value;
+      }
+    }
+
     [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
     [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
     public override bool Equals(object other) {
@@ -6821,6 +7074,21 @@ namespace SuMultiplayer.Protocol.Telemetry {
       if (ClientHashZeroSkipped != other.ClientHashZeroSkipped) return false;
       if (ReportsDeferredNotStable != other.ReportsDeferredNotStable) return false;
       if (TopLayerFixSkippedNoClientHash != other.TopLayerFixSkippedNoClientHash) return false;
+      if (LeavesMarked != other.LeavesMarked) return false;
+      if (LeavesMarkedUnroutable != other.LeavesMarkedUnroutable) return false;
+      if (LeavesOnlyJobs != other.LeavesOnlyJobs) return false;
+      if (LeavesOnlyRuns != other.LeavesOnlyRuns) return false;
+      if (LeavesOnlyBytes != other.LeavesOnlyBytes) return false;
+      if (LeavesZeroRunFallback != other.LeavesZeroRunFallback) return false;
+      if (LeavesRecalcDeferred != other.LeavesRecalcDeferred) return false;
+      if (LeavesTopLayerSkipped != other.LeavesTopLayerSkipped) return false;
+      if (LeavesFixSendFailures != other.LeavesFixSendFailures) return false;
+      if (LeavesPendingMarks != other.LeavesPendingMarks) return false;
+      if (LeavesFixApplied != other.LeavesFixApplied) return false;
+      if (LeavesFixCells != other.LeavesFixCells) return false;
+      if (TopLayerTrimmedCells != other.TopLayerTrimmedCells) return false;
+      if (TopLayerTrimUnavailable != other.TopLayerTrimUnavailable) return false;
+      if (TopLayerFixAttemptExceeded != other.TopLayerFixAttemptExceeded) return false;
       return Equals(_unknownFields, other._unknownFields);
     }
 
@@ -6866,6 +7134,21 @@ namespace SuMultiplayer.Protocol.Telemetry {
       if (ClientHashZeroSkipped != 0UL) hash ^= ClientHashZeroSkipped.GetHashCode();
       if (ReportsDeferredNotStable != 0UL) hash ^= ReportsDeferredNotStable.GetHashCode();
       if (TopLayerFixSkippedNoClientHash != 0UL) hash ^= TopLayerFixSkippedNoClientHash.GetHashCode();
+      if (LeavesMarked != 0UL) hash ^= LeavesMarked.GetHashCode();
+      if (LeavesMarkedUnroutable != 0UL) hash ^= LeavesMarkedUnroutable.GetHashCode();
+      if (LeavesOnlyJobs != 0UL) hash ^= LeavesOnlyJobs.GetHashCode();
+      if (LeavesOnlyRuns != 0UL) hash ^= LeavesOnlyRuns.GetHashCode();
+      if (LeavesOnlyBytes != 0UL) hash ^= LeavesOnlyBytes.GetHashCode();
+      if (LeavesZeroRunFallback != 0UL) hash ^= LeavesZeroRunFallback.GetHashCode();
+      if (LeavesRecalcDeferred != 0UL) hash ^= LeavesRecalcDeferred.GetHashCode();
+      if (LeavesTopLayerSkipped != 0UL) hash ^= LeavesTopLayerSkipped.GetHashCode();
+      if (LeavesFixSendFailures != 0UL) hash ^= LeavesFixSendFailures.GetHashCode();
+      if (LeavesPendingMarks != 0UL) hash ^= LeavesPendingMarks.GetHashCode();
+      if (LeavesFixApplied != 0UL) hash ^= LeavesFixApplied.GetHashCode();
+      if (LeavesFixCells != 0UL) hash ^= LeavesFixCells.GetHashCode();
+      if (TopLayerTrimmedCells != 0UL) hash ^= TopLayerTrimmedCells.GetHashCode();
+      if (TopLayerTrimUnavailable != 0UL) hash ^= TopLayerTrimUnavailable.GetHashCode();
+      if (TopLayerFixAttemptExceeded != 0UL) hash ^= TopLayerFixAttemptExceeded.GetHashCode();
       if (_unknownFields != null) {
         hash ^= _unknownFields.GetHashCode();
       }
@@ -7036,6 +7319,66 @@ namespace SuMultiplayer.Protocol.Telemetry {
         output.WriteRawTag(176, 2);
         output.WriteUInt64(TopLayerFixSkippedNoClientHash);
       }
+      if (LeavesMarked != 0UL) {
+        output.WriteRawTag(184, 2);
+        output.WriteUInt64(LeavesMarked);
+      }
+      if (LeavesMarkedUnroutable != 0UL) {
+        output.WriteRawTag(192, 2);
+        output.WriteUInt64(LeavesMarkedUnroutable);
+      }
+      if (LeavesOnlyJobs != 0UL) {
+        output.WriteRawTag(200, 2);
+        output.WriteUInt64(LeavesOnlyJobs);
+      }
+      if (LeavesOnlyRuns != 0UL) {
+        output.WriteRawTag(208, 2);
+        output.WriteUInt64(LeavesOnlyRuns);
+      }
+      if (LeavesOnlyBytes != 0UL) {
+        output.WriteRawTag(216, 2);
+        output.WriteUInt64(LeavesOnlyBytes);
+      }
+      if (LeavesZeroRunFallback != 0UL) {
+        output.WriteRawTag(224, 2);
+        output.WriteUInt64(LeavesZeroRunFallback);
+      }
+      if (LeavesRecalcDeferred != 0UL) {
+        output.WriteRawTag(232, 2);
+        output.WriteUInt64(LeavesRecalcDeferred);
+      }
+      if (LeavesTopLayerSkipped != 0UL) {
+        output.WriteRawTag(240, 2);
+        output.WriteUInt64(LeavesTopLayerSkipped);
+      }
+      if (LeavesFixSendFailures != 0UL) {
+        output.WriteRawTag(248, 2);
+        output.WriteUInt64(LeavesFixSendFailures);
+      }
+      if (LeavesPendingMarks != 0UL) {
+        output.WriteRawTag(128, 3);
+        output.WriteUInt64(LeavesPendingMarks);
+      }
+      if (LeavesFixApplied != 0UL) {
+        output.WriteRawTag(136, 3);
+        output.WriteUInt64(LeavesFixApplied);
+      }
+      if (LeavesFixCells != 0UL) {
+        output.WriteRawTag(144, 3);
+        output.WriteUInt64(LeavesFixCells);
+      }
+      if (TopLayerTrimmedCells != 0UL) {
+        output.WriteRawTag(152, 3);
+        output.WriteUInt64(TopLayerTrimmedCells);
+      }
+      if (TopLayerTrimUnavailable != 0UL) {
+        output.WriteRawTag(160, 3);
+        output.WriteUInt64(TopLayerTrimUnavailable);
+      }
+      if (TopLayerFixAttemptExceeded != 0UL) {
+        output.WriteRawTag(168, 3);
+        output.WriteUInt64(TopLayerFixAttemptExceeded);
+      }
       if (_unknownFields != null) {
         _unknownFields.WriteTo(output);
       }
@@ -7198,6 +7541,66 @@ namespace SuMultiplayer.Protocol.Telemetry {
         output.WriteRawTag(176, 2);
         output.WriteUInt64(TopLayerFixSkippedNoClientHash);
       }
+      if (LeavesMarked != 0UL) {
+        output.WriteRawTag(184, 2);
+        output.WriteUInt64(LeavesMarked);
+      }
+      if (LeavesMarkedUnroutable != 0UL) {
+        output.WriteRawTag(192, 2);
+        output.WriteUInt64(LeavesMarkedUnroutable);
+      }
+      if (LeavesOnlyJobs != 0UL) {
+        output.WriteRawTag(200, 2);
+        output.WriteUInt64(LeavesOnlyJobs);
+      }
+      if (LeavesOnlyRuns != 0UL) {
+        output.WriteRawTag(208, 2);
+        output.WriteUInt64(LeavesOnlyRuns);
+      }
+      if (LeavesOnlyBytes != 0UL) {
+        output.WriteRawTag(216, 2);
+        output.WriteUInt64(LeavesOnlyBytes);
+      }
+      if (LeavesZeroRunFallback != 0UL) {
+        output.WriteRawTag(224, 2);
+        output.WriteUInt64(LeavesZeroRunFallback);
+      }
+      if (LeavesRecalcDeferred != 0UL) {
+        output.WriteRawTag(232, 2);
+        output.WriteUInt64(LeavesRecalcDeferred);
+      }
+      if (LeavesTopLayerSkipped != 0UL) {
+        output.WriteRawTag(240, 2);
+        output.WriteUInt64(LeavesTopLayerSkipped);
+      }
+      if (LeavesFixSendFailures != 0UL) {
+        output.WriteRawTag(248, 2);
+        output.WriteUInt64(LeavesFixSendFailures);
+      }
+      if (LeavesPendingMarks != 0UL) {
+        output.WriteRawTag(128, 3);
+        output.WriteUInt64(LeavesPendingMarks);
+      }
+      if (LeavesFixApplied != 0UL) {
+        output.WriteRawTag(136, 3);
+        output.WriteUInt64(LeavesFixApplied);
+      }
+      if (LeavesFixCells != 0UL) {
+        output.WriteRawTag(144, 3);
+        output.WriteUInt64(LeavesFixCells);
+      }
+      if (TopLayerTrimmedCells != 0UL) {
+        output.WriteRawTag(152, 3);
+        output.WriteUInt64(TopLayerTrimmedCells);
+      }
+      if (TopLayerTrimUnavailable != 0UL) {
+        output.WriteRawTag(160, 3);
+        output.WriteUInt64(TopLayerTrimUnavailable);
+      }
+      if (TopLayerFixAttemptExceeded != 0UL) {
+        output.WriteRawTag(168, 3);
+        output.WriteUInt64(TopLayerFixAttemptExceeded);
+      }
       if (_unknownFields != null) {
         _unknownFields.WriteTo(ref output);
       }
@@ -7321,6 +7724,51 @@ namespace SuMultiplayer.Protocol.Telemetry {
       }
       if (TopLayerFixSkippedNoClientHash != 0UL) {
         size += 2 + pb::CodedOutputStream.ComputeUInt64Size(TopLayerFixSkippedNoClientHash);
+      }
+      if (LeavesMarked != 0UL) {
+        size += 2 + pb::CodedOutputStream.ComputeUInt64Size(LeavesMarked);
+      }
+      if (LeavesMarkedUnroutable != 0UL) {
+        size += 2 + pb::CodedOutputStream.ComputeUInt64Size(LeavesMarkedUnroutable);
+      }
+      if (LeavesOnlyJobs != 0UL) {
+        size += 2 + pb::CodedOutputStream.ComputeUInt64Size(LeavesOnlyJobs);
+      }
+      if (LeavesOnlyRuns != 0UL) {
+        size += 2 + pb::CodedOutputStream.ComputeUInt64Size(LeavesOnlyRuns);
+      }
+      if (LeavesOnlyBytes != 0UL) {
+        size += 2 + pb::CodedOutputStream.ComputeUInt64Size(LeavesOnlyBytes);
+      }
+      if (LeavesZeroRunFallback != 0UL) {
+        size += 2 + pb::CodedOutputStream.ComputeUInt64Size(LeavesZeroRunFallback);
+      }
+      if (LeavesRecalcDeferred != 0UL) {
+        size += 2 + pb::CodedOutputStream.ComputeUInt64Size(LeavesRecalcDeferred);
+      }
+      if (LeavesTopLayerSkipped != 0UL) {
+        size += 2 + pb::CodedOutputStream.ComputeUInt64Size(LeavesTopLayerSkipped);
+      }
+      if (LeavesFixSendFailures != 0UL) {
+        size += 2 + pb::CodedOutputStream.ComputeUInt64Size(LeavesFixSendFailures);
+      }
+      if (LeavesPendingMarks != 0UL) {
+        size += 2 + pb::CodedOutputStream.ComputeUInt64Size(LeavesPendingMarks);
+      }
+      if (LeavesFixApplied != 0UL) {
+        size += 2 + pb::CodedOutputStream.ComputeUInt64Size(LeavesFixApplied);
+      }
+      if (LeavesFixCells != 0UL) {
+        size += 2 + pb::CodedOutputStream.ComputeUInt64Size(LeavesFixCells);
+      }
+      if (TopLayerTrimmedCells != 0UL) {
+        size += 2 + pb::CodedOutputStream.ComputeUInt64Size(TopLayerTrimmedCells);
+      }
+      if (TopLayerTrimUnavailable != 0UL) {
+        size += 2 + pb::CodedOutputStream.ComputeUInt64Size(TopLayerTrimUnavailable);
+      }
+      if (TopLayerFixAttemptExceeded != 0UL) {
+        size += 2 + pb::CodedOutputStream.ComputeUInt64Size(TopLayerFixAttemptExceeded);
       }
       if (_unknownFields != null) {
         size += _unknownFields.CalculateSize();
@@ -7447,6 +7895,51 @@ namespace SuMultiplayer.Protocol.Telemetry {
       }
       if (other.TopLayerFixSkippedNoClientHash != 0UL) {
         TopLayerFixSkippedNoClientHash = other.TopLayerFixSkippedNoClientHash;
+      }
+      if (other.LeavesMarked != 0UL) {
+        LeavesMarked = other.LeavesMarked;
+      }
+      if (other.LeavesMarkedUnroutable != 0UL) {
+        LeavesMarkedUnroutable = other.LeavesMarkedUnroutable;
+      }
+      if (other.LeavesOnlyJobs != 0UL) {
+        LeavesOnlyJobs = other.LeavesOnlyJobs;
+      }
+      if (other.LeavesOnlyRuns != 0UL) {
+        LeavesOnlyRuns = other.LeavesOnlyRuns;
+      }
+      if (other.LeavesOnlyBytes != 0UL) {
+        LeavesOnlyBytes = other.LeavesOnlyBytes;
+      }
+      if (other.LeavesZeroRunFallback != 0UL) {
+        LeavesZeroRunFallback = other.LeavesZeroRunFallback;
+      }
+      if (other.LeavesRecalcDeferred != 0UL) {
+        LeavesRecalcDeferred = other.LeavesRecalcDeferred;
+      }
+      if (other.LeavesTopLayerSkipped != 0UL) {
+        LeavesTopLayerSkipped = other.LeavesTopLayerSkipped;
+      }
+      if (other.LeavesFixSendFailures != 0UL) {
+        LeavesFixSendFailures = other.LeavesFixSendFailures;
+      }
+      if (other.LeavesPendingMarks != 0UL) {
+        LeavesPendingMarks = other.LeavesPendingMarks;
+      }
+      if (other.LeavesFixApplied != 0UL) {
+        LeavesFixApplied = other.LeavesFixApplied;
+      }
+      if (other.LeavesFixCells != 0UL) {
+        LeavesFixCells = other.LeavesFixCells;
+      }
+      if (other.TopLayerTrimmedCells != 0UL) {
+        TopLayerTrimmedCells = other.TopLayerTrimmedCells;
+      }
+      if (other.TopLayerTrimUnavailable != 0UL) {
+        TopLayerTrimUnavailable = other.TopLayerTrimUnavailable;
+      }
+      if (other.TopLayerFixAttemptExceeded != 0UL) {
+        TopLayerFixAttemptExceeded = other.TopLayerFixAttemptExceeded;
       }
       _unknownFields = pb::UnknownFieldSet.MergeFrom(_unknownFields, other._unknownFields);
     }
@@ -7619,6 +8112,66 @@ namespace SuMultiplayer.Protocol.Telemetry {
             TopLayerFixSkippedNoClientHash = input.ReadUInt64();
             break;
           }
+          case 312: {
+            LeavesMarked = input.ReadUInt64();
+            break;
+          }
+          case 320: {
+            LeavesMarkedUnroutable = input.ReadUInt64();
+            break;
+          }
+          case 328: {
+            LeavesOnlyJobs = input.ReadUInt64();
+            break;
+          }
+          case 336: {
+            LeavesOnlyRuns = input.ReadUInt64();
+            break;
+          }
+          case 344: {
+            LeavesOnlyBytes = input.ReadUInt64();
+            break;
+          }
+          case 352: {
+            LeavesZeroRunFallback = input.ReadUInt64();
+            break;
+          }
+          case 360: {
+            LeavesRecalcDeferred = input.ReadUInt64();
+            break;
+          }
+          case 368: {
+            LeavesTopLayerSkipped = input.ReadUInt64();
+            break;
+          }
+          case 376: {
+            LeavesFixSendFailures = input.ReadUInt64();
+            break;
+          }
+          case 384: {
+            LeavesPendingMarks = input.ReadUInt64();
+            break;
+          }
+          case 392: {
+            LeavesFixApplied = input.ReadUInt64();
+            break;
+          }
+          case 400: {
+            LeavesFixCells = input.ReadUInt64();
+            break;
+          }
+          case 408: {
+            TopLayerTrimmedCells = input.ReadUInt64();
+            break;
+          }
+          case 416: {
+            TopLayerTrimUnavailable = input.ReadUInt64();
+            break;
+          }
+          case 424: {
+            TopLayerFixAttemptExceeded = input.ReadUInt64();
+            break;
+          }
         }
       }
     #endif
@@ -7788,6 +8341,66 @@ namespace SuMultiplayer.Protocol.Telemetry {
           }
           case 304: {
             TopLayerFixSkippedNoClientHash = input.ReadUInt64();
+            break;
+          }
+          case 312: {
+            LeavesMarked = input.ReadUInt64();
+            break;
+          }
+          case 320: {
+            LeavesMarkedUnroutable = input.ReadUInt64();
+            break;
+          }
+          case 328: {
+            LeavesOnlyJobs = input.ReadUInt64();
+            break;
+          }
+          case 336: {
+            LeavesOnlyRuns = input.ReadUInt64();
+            break;
+          }
+          case 344: {
+            LeavesOnlyBytes = input.ReadUInt64();
+            break;
+          }
+          case 352: {
+            LeavesZeroRunFallback = input.ReadUInt64();
+            break;
+          }
+          case 360: {
+            LeavesRecalcDeferred = input.ReadUInt64();
+            break;
+          }
+          case 368: {
+            LeavesTopLayerSkipped = input.ReadUInt64();
+            break;
+          }
+          case 376: {
+            LeavesFixSendFailures = input.ReadUInt64();
+            break;
+          }
+          case 384: {
+            LeavesPendingMarks = input.ReadUInt64();
+            break;
+          }
+          case 392: {
+            LeavesFixApplied = input.ReadUInt64();
+            break;
+          }
+          case 400: {
+            LeavesFixCells = input.ReadUInt64();
+            break;
+          }
+          case 408: {
+            TopLayerTrimmedCells = input.ReadUInt64();
+            break;
+          }
+          case 416: {
+            TopLayerTrimUnavailable = input.ReadUInt64();
+            break;
+          }
+          case 424: {
+            TopLayerFixAttemptExceeded = input.ReadUInt64();
             break;
           }
         }
