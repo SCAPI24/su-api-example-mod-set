@@ -2012,11 +2012,15 @@ namespace SuMultiplayer.Terrain
         ///     **逐个在线玩家身份**按它自己的内存集合结算：该集合**不含**这一块 → 记上（同一身份只记一次）；
         ///     含这一块 → 不加，并移除它可能残留的标记；
         ///   · 某身份的内存集合**新增**这一块（<c>ClientChunks</c> 增量 add / 整集替换包含它）→
-        ///     从该块集合里移除它的标记（<see cref="ClearPendingOnChunkLoaded"/>）；
+        ///     该块对该身份的裁决**已落定**时，从该块集合里移除它的标记
+        ///     （唯一入口 <see cref="TryClearSettledPendingMarkLocked"/>）；
+        ///   · 该块对该身份的裁决**落定**（Match / Mismatch / 顶层确认 / footprint / 树叶段）→
+        ///     该身份内存集合已含这一块时，移除它的标记（同上唯一入口）；
         ///   · 身份离开联机（Bye / 链路失效）→ 把它从**所有**区块的集合里去掉（<see cref="RemovePendingClientEverywhere"/>）；
         ///   · 房间/会话结束 → 整体清空（<see cref="ClearPendingMarks"/>）；因为不落盘，下次加入一定是"全图最新"。
-        /// **不按投递结果结算、也不按裁决结果清除**：订阅表、CellChange 是否真的发出去、verdict 是不是 Match
-        /// 都不参与这个计数（它们各自有别的用途）；集合只由"改动时谁当前内存里没有这块"和"谁后来加载了这块"决定。
+        /// **清除口径（用户 2026-11-06 定）**：「该身份的内存集合包含这块」**且**「该块对该身份的裁决已落定」
+        /// → 清它自己的标记。两个条件缺一不可：不含这块 = 确实欠着；裁决未落定 = 可能还有演化改动欠账。
+        /// 不按投递结果结算：订阅表、CellChange 是否真的发出去都不参与这个计数。
         /// 只增/删条目本身，绝不写入任何文件、Project.xml 或世界目录。
         /// </summary>
         private readonly Dictionary<ChunkKey, Dictionary<string, long>> m_pendingClients =
@@ -2027,7 +2031,8 @@ namespace SuMultiplayer.Terrain
         // 为什么必须**按客户端**记（不能全局一份）：主机改动时 A、B 都不持有该块 → 各记一条；
         // A 先加载、补丁落地后消耗掉自己的记录，B 的记录必须还在，否则 B 永远收不到这次变更。
         //
-        // 为什么不能复用 m_pendingClients：它在客户端**加载块**时就清（ClearPendingOnChunkLoaded），
+        // 为什么不能复用 m_pendingClients：它会在客户端**加载块**时就可能清
+        // （<see cref="TryClearSettledPendingMarkLocked"/>：内存集合已含该块且裁决已落定时清），
         // 而这里必须活到**裁决时**（加载之后、摘要上报比对）才用得上。
         //
         // 清除时机（用户口径）：该客户端收到补丁并落地后，只清它自己那一条。
@@ -2168,6 +2173,7 @@ namespace SuMultiplayer.Terrain
         private long m_clientChunkDeltaMessagesSinceLog;
         private long m_clientChunkDeltaAddsSinceLog;
         private long m_clientChunkDeltaRemovesSinceLog;
+        private long m_clientChunkDeltaMarkClearsSinceLog;
 
         /// <param name="attachToChannel">
         /// false = 不自挂网络回调，由主线程泵调用 <see cref="ProcessFrame"/>。
@@ -3263,6 +3269,8 @@ namespace SuMultiplayer.Terrain
                 return;
             }
             session.Pending.Remove(key);
+            // 裁决已落定（Match / Mismatch 都是落定）→ 该身份若已持有这块就清掉它的欠更新标记。
+            TryClearSettledPendingMarkLocked(session, key);
             if (verdict == DigestVerdict.Match)
             {
                 MarkTopLayerVerifiedLocked(session, key);
@@ -4779,6 +4787,8 @@ namespace SuMultiplayer.Terrain
                     session.FootprintVerified.Add(key);
                     session.ResyncAwaitingConfirmation.Remove(key);
                     session.TopLayerSyncConfirmedClients.Add(key);
+                    // 裁决已落定 → 该身份已持有这块就清掉欠更新标记（多客户端下只清自己那条）。
+                    TryClearSettledPendingMarkLocked(session, key);
                     MarkTopLayerVerifiedLocked(session, key);
                     SendTopLayerDigestVerdict(state, key, PT.TopLayerDigestStatus.Confirmed,
                         hostHeight, hostBlock, hostSequence, 1u);
@@ -4808,6 +4818,8 @@ namespace SuMultiplayer.Terrain
                     ClearPendingKindLocked(session, key, ChunkMutationKind.Leaves);
                     ClearMutationClientLocked(session, key);
                     session.TopLayerSyncConfirmedClients.Add(key);
+                    // 裁决已落定 → 该身份已持有这块就清掉欠更新标记（多客户端下只清自己那条）。
+                    TryClearSettledPendingMarkLocked(session, key);
                     MarkTopLayerVerifiedLocked(session, key);
                     SendTopLayerDigestVerdict(state, key, PT.TopLayerDigestStatus.Confirmed,
                         hostHeight, hostBlock, hostSequence, 4u);
@@ -4844,6 +4856,8 @@ namespace SuMultiplayer.Terrain
                     ClearPendingKindLocked(session, key, ChunkMutationKind.Leaves);
                     ClearMutationClientLocked(session, key);
                     session.TopLayerSyncConfirmedClients.Add(key);
+                    // 裁决已落定 → 该身份已持有这块就清掉欠更新标记（多客户端下只清自己那条）。
+                    TryClearSettledPendingMarkLocked(session, key);
                     MarkTopLayerVerifiedLocked(session, key);
                     SendTopLayerDigestVerdict(state, key, PT.TopLayerDigestStatus.Confirmed,
                         hostHeight, hostBlock, hostSequence, 5u);
@@ -4920,7 +4934,7 @@ namespace SuMultiplayer.Terrain
                     session.ResyncAwaitingConfirmation.Remove(key);
                     ClearPendingKindLocked(session, key, ChunkMutationKind.Leaves);
                     ClearMutationClientLocked(session, key);
-                    ClearPendingOnChunkLoaded(session, key, out _);
+                    TryClearSettledPendingMarkLocked(session, key);
                     session.TopLayerSyncConfirmedClients.Add(key);
                     MarkTopLayerVerifiedLocked(session, key);
                     SendTopLayerDigestVerdict(state, key, PT.TopLayerDigestStatus.Confirmed,
@@ -4957,7 +4971,7 @@ namespace SuMultiplayer.Terrain
                 session.TopLayerSyncPending.Remove(key);
                 session.ResyncAwaitingConfirmation.Remove(key);
                 ClearPendingKindLocked(session, key, ChunkMutationKind.Leaves);
-                ClearPendingOnChunkLoaded(session, key, out _);
+                TryClearSettledPendingMarkLocked(session, key);
                 if (session.Verdicts.TryGetValue(key, out byte previous) &&
                     previous == (byte)ChunkVerifyState.Failed)
                     session.Verdicts[key] = (byte)ChunkVerifyState.ReVerified;
@@ -5063,7 +5077,7 @@ namespace SuMultiplayer.Terrain
                 session.TopLayerSyncConfirmedClients.Add(key);
                 ClearPendingKindLocked(session, key, ChunkMutationKind.Leaves);
                 ClearMutationClientLocked(session, key);
-                ClearPendingOnChunkLoaded(session, key, out _);
+                TryClearSettledPendingMarkLocked(session, key);
                 MarkTopLayerVerifiedLocked(session, key);
                 SendTopLayerDigestVerdict(state, key, PT.TopLayerDigestStatus.Confirmed,
                     hostHeight, hostBlock, hostSequence);
@@ -5226,8 +5240,13 @@ namespace SuMultiplayer.Terrain
 
         /// <summary>
         /// 增量：loaded=1 → add，loaded=0 → remove。
-        /// 新增区块只改变客户端内存集合；欠更新标记要等摘要裁决后才清除，避免
-        /// ClientChunks 先到而摘要尚未计算时丢掉冰雪等主机演化改动的欠账。
+        ///
+        /// 用户口径（2026-11-06 定）：「该身份的内存集合包含这块」且「该块对该身份的裁决已落定」
+        /// → 清它自己的欠更新标记。所以新增块这里就尝试一次
+        /// <see cref="TryClearSettledPendingMarkLocked"/>：该块没有待裁决摘要时立即清零
+        /// （网页数字马上消失）；还有待裁决摘要时不清，等裁决出口（ApplyVerdict /
+        /// 顶层确认 / footprint / 树叶段）再清 —— 这样既不丢「ClientChunks 先到、摘要未算」
+        /// 窗口里的欠账，也不会让数字长期挂着。
         /// （同一块在一条消息里出现多次以最后一次为准，因为逐条按顺序应用）。
         /// 只有**真的**新增 / 移除才计入日志里的增删数（重复的 no-op 不算）。
         /// 调用方已持有 m_gate。
@@ -5237,6 +5256,7 @@ namespace SuMultiplayer.Terrain
         {
             int added = 0;
             int removed = 0;
+            int marksCleared = 0;
             for (int i = 0; i < message.Entries.Count; i++)
             {
                 ClientChunkEntry entry = message.Entries[i];
@@ -5250,6 +5270,8 @@ namespace SuMultiplayer.Terrain
                     {
                         added++;
                     }
+                    // 内存集合已包含这块 → 若该块对该身份的裁决也已落定，就清掉它的欠更新标记。
+                    if (TryClearSettledPendingMarkLocked(session, key)) marksCleared++;
                 }
                 else
                 {
@@ -5263,6 +5285,7 @@ namespace SuMultiplayer.Terrain
             m_clientChunkDeltaMessagesSinceLog++;
             m_clientChunkDeltaAddsSinceLog += added;
             m_clientChunkDeltaRemovesSinceLog += removed;
+            m_clientChunkDeltaMarkClearsSinceLog += marksCleared;
             long nowMs = Environment.TickCount64;
             if (m_lastClientChunkDeltaLogMs != 0 &&
                 nowMs - m_lastClientChunkDeltaLogMs < m_options.ClientChunkLogIntervalMs)
@@ -5273,13 +5296,16 @@ namespace SuMultiplayer.Terrain
             long messages = m_clientChunkDeltaMessagesSinceLog;
             long logAdded = m_clientChunkDeltaAddsSinceLog;
             long logRemoved = m_clientChunkDeltaRemovesSinceLog;
+            long logMarkClears = m_clientChunkDeltaMarkClearsSinceLog;
             m_clientChunkDeltaMessagesSinceLog = 0;
             m_clientChunkDeltaAddsSinceLog = 0;
             m_clientChunkDeltaRemovesSinceLog = 0;
+            m_clientChunkDeltaMarkClearsSinceLog = 0;
             ClientChunkSetTrace?.Invoke("身份 " + PlayerSessionKeys.ShortIdentity(session.Identity) +
                 "（稳定键 " + session.StableKey + " · clientId=" + state.Id + "）内存区块增量：" +
                 "最近 " + m_options.ClientChunkLogIntervalMs + "ms 内应用 " + messages +
                 " 条消息 → 新增 " + logAdded + " 块 / 移除 " + logRemoved + " 块" +
+                (logMarkClears > 0 ? " / 清除欠更新标记 " + logMarkClears + " 个" : string.Empty) +
                 "（新增块先做摘要核对；只有摘要不一致才回传整块）" +
                 "；当前内存区块（引擎已分配）" + session.MemoryChunks.Count + " 块（累计增量消息 " +
                 session.ClientChunkDeltaMessages + " 条）");
@@ -5328,9 +5354,13 @@ namespace SuMultiplayer.Terrain
             // 整集替换 = 客户端重新报了一遍「我内存里有哪些块」：连续顶层补丁计数一并丢弃，
             // 让每个块从全新的核对起点开始（防止反复进出后累计到上限而一直强制整块回传）。
             session.TopLayerFixAttempts.Clear();
+            int marksCleared = 0;
             foreach (ChunkKey key in session.ClientChunkFullBuffer)
             {
                 session.MemoryChunks.Add(key);
+                // 与新集合一起清：内存集合已包含这块 且 该块对该身份的裁决已落定 → 清它的欠更新标记。
+                // 仍待裁决的块不清（等裁决出口再清），避免整集先到、摘要未算时丢掉演化改动欠账。
+                if (TryClearSettledPendingMarkLocked(session, key)) marksCleared++;
             }
             session.ClientChunkFullSets++;
             m_clientChunkFullSets++;
@@ -5340,7 +5370,10 @@ namespace SuMultiplayer.Terrain
                 "（稳定键 " + session.StableKey + " · clientId=" + state.Id + "）整集已收齐：id=" +
                 message.FullSetId + " · " + message.PartCount + " 片 / " + count +
                 " 块 → 内存区块集合（引擎已分配）整体替换（原 " + previous + " 块；v8 实时地图客户端线框只画这一份）" +
-                "；欠更新标记等待摘要裁决，不因整集到达而直接清除");
+                (marksCleared > 0
+                    ? "；新集合包含的块清掉 " + marksCleared + " 个已落定裁决的欠更新标记"
+                    : string.Empty) +
+                "；仍待裁决的块不清（等裁决落定后再清）");
         }
 
         /// <summary>丢弃该身份正在拼的整集（新连接握手 / 离开时调用；已收齐的不受影响）。</summary>
@@ -5437,7 +5470,7 @@ namespace SuMultiplayer.Terrain
 
             if (verdict == DigestVerdict.Match)
             {
-                ClearPendingOnChunkLoaded(session, key, out _);
+                TryClearSettledPendingMarkLocked(session, key);
                 // 已收敛：连续顶层补丁计数清零，下次不一致重新从 1 开始数。
                 session.TopLayerFixAttempts.Remove(key);
                 state.Match++;
@@ -5464,8 +5497,10 @@ namespace SuMultiplayer.Terrain
                             warning: false);
                     }
                 }
-                // 裁决只决定"绿/蓝/红"与回传；**不**参与欠更新计数 ——
-                // 那面数字只跟"该身份当前内存集合里有没有这一块"走（见 m_pendingClients）。
+                // 裁决落定参与欠更新计数的**清除**（用户口径 2026-11-06）：
+                // 「该身份的内存集合包含这块」且「该块对该身份的裁决已落定」→ 清它自己的标记。
+                // 上面 `session.Pending.Remove(key)` 之后才清，所以本函数的 Match / Mismatch
+                // 两个出口都满足"已落定"；内存集合不含这块时不清（它确实还没拿到内容）。
                 return;
             }
             state.Mismatch++;
@@ -6454,8 +6489,10 @@ namespace SuMultiplayer.Terrain
 
         /// <summary>
         /// 实时地图用：该区块"有几个在线身份当前内存集合里没有它"（0 = 不标注；按身份计数，重连不会算成两个）。
-        /// 集合成员只由"改动时谁没有这一块"与"谁后来把它加载进内存"决定；与主机自己是否加载了这一块、
-        /// CellChange 是否送达、裁决结果都无关（用户口径：主机卸载后标记照旧留着）。
+        /// 清除口径（用户 2026-11-06 定）：「该身份的内存集合包含这块」**且**「该块对该身份的裁决已落定」
+        /// → 清它自己的标记（唯一入口 <see cref="TryClearSettledPendingMarkLocked"/>）。
+        /// 与主机自己是否加载了这一块、CellChange 是否送达无关
+        /// （用户口径：主机卸载后标记照旧留着，直到该身份自己加载并裁决落定）。
         /// </summary>
         public int PendingClientCount(ChunkKey key)
         {
@@ -6615,9 +6652,19 @@ namespace SuMultiplayer.Terrain
         }
 
         /// <summary>
-        /// 某身份的当前内存集合**新增**了区块 X（<c>ClientChunks</c> 增量 add；整集替换时对新集合逐块调用）
-        /// → 从 X 的欠更新集合里去掉它（用户口径："走进 A 的区域、当前加载集合包含该块 → 它的欠账清零"）。
-        /// 集合里存身份稳定键，所以重连前后是同一个标记；移掉最后一个后计数为 0（网页不画数字）。
+        /// 用户口径（2026-11-06 定）：**「该身份的内存集合包含这块」且「该块对该身份的裁决已落定」→ 清它自己的标记。**
+        ///
+        /// 两个条件缺一不可：
+        ///   · 内存集合不含这块 → 它确实欠着，不能清；
+        ///   · 裁决还没落定（<see cref="PlayerSessionRecord.Pending"/> 里仍有该块的待裁决摘要）→
+        ///     ClientChunks 先到、摘要还没算，此时清会把「冰雪等主机演化改动」的欠账永久丢掉
+        ///     （这正是 32e8fbf 直接把清除删掉的原因，但那样做的代价是数字长期挂着不消失）。
+        ///
+        /// 所以裁决落定的所有出口都必须调用本方法（Match / Mismatch / 顶层确认 / footprint / 树叶段），
+        /// 而 ClientChunks 声明加载时也要尝试一次（无待裁决摘要则立即清）。
+        ///
+        /// 集合里存身份稳定键 ⇒ 重连前后是同一个标记；**只删当前 session 自己的键**，
+        /// 所以多客户端下 A 清了不会动到 B 的账（数字从 2 正确降到 1）。
         /// 只有真的移除了才返回 true；集合空条目一并删掉。逐块**不写日志**（可能一次几百块），
         /// 调用方把清除数量汇总进限流的增量 / 整集日志。调用方已持有 m_gate。
         /// </summary>
@@ -6631,6 +6678,24 @@ namespace SuMultiplayer.Terrain
             set.Remove(session.StableKey);
             if (set.Count == 0) m_pendingClients.Remove(key);
             return true;
+        }
+
+        /// <summary>
+        /// 用户口径（2026-11-06 定）的**唯一清除入口**：
+        /// 「该身份的内存集合包含这块」且「该块对该身份的裁决已落定」→ 清它自己的欠更新标记。
+        ///
+        /// 裁决未落定（<see cref="PlayerSessionRecord.Pending"/> 里还有该块）时**不清**并返回 false ——
+        /// 调用方据此把清除推迟到裁决出口（ApplyVerdict / 顶层确认 / footprint / 树叶段都会再调用一次）。
+        /// 内存集合不含这块时也不清：它确实还没拿到内容，欠账必须留着。
+        /// 返回 true 表示本次真的移除了标记（计数从 n 降到 n−1）。
+        /// 调用方已持有 m_gate。
+        /// </summary>
+        private bool TryClearSettledPendingMarkLocked(PlayerSessionRecord session, ChunkKey key)
+        {
+            if (session == null) return false;
+            if (!session.MemoryChunks.Contains(key)) return false;      // 条件一：内存集合包含这块
+            if (session.Pending.ContainsKey(key)) return false;         // 条件二：裁决已落定（无待裁决摘要）
+            return ClearPendingOnChunkLoaded(session, key, out _);
         }
 
         /// <summary>
