@@ -542,9 +542,16 @@ namespace SuMultiplayer.Engine
                         int value = Game.Terrain.MakeBlockValue(edit.Contents, 0, edit.Data);
                         int oldValue = terrain.GetCellValueFast(x, edit.Y, z);
                         int oldValueWithoutLight = Game.Terrain.ReplaceLight(oldValue, 0);
+                        // 内容没变就绝不写格：MakeBlockValue 的光照位恒为 0，写下去会把该格已有光照
+                        // 静默清成 0；而 changedCells 只按内容计数 → CompleteResyncChunk 拿到
+                        // changed=false 直接 return → DowngradeChunkNeighborhoodState 不执行 →
+                        // 被清掉的光照没有任何重算来修复（实机缺陷：暴露在天空下的掉落物永久纯黑，
+                        // 因为引擎 SubsystemPickables.Draw 在该位置 fract=0，只取本格光照）。
+                        // 同 SetCellsRaw 的做法：先比内容，相同即跳过。
+                        if (oldValueWithoutLight == value) continue;
                         terrain.SetCellValueFast(x, edit.Y, z, value);
-                        if (oldValueWithoutLight != value) changedCells++;
-                        bool electricCellChanged = ClientReplica && oldValueWithoutLight != value &&
+                        changedCells++;
+                        bool electricCellChanged = ClientReplica &&
                             IsElectricCell(oldValueWithoutLight, value);
                         bool electricTopologyChanged = electricCellChanged &&
                             NotifyElectricTopologyChanged(oldValueWithoutLight, value, x, edit.Y, z);
@@ -578,14 +585,22 @@ namespace SuMultiplayer.Engine
                         int value = Game.Terrain.MakeBlockValue(edit.Contents, 0, edit.Data);
                         int oldValue = terrain.GetCellValueFast(x, edit.Y, z);
                         int oldValueWithoutLight = Game.Terrain.ReplaceLight(oldValue, 0);
+                        // 与上面的非测量分支同一条判据：内容没变就绝不写格（否则光照位被清成 0
+                        // 且 changedCells 不增 → 不会降级重算 → 光照永久丢失）。
+                        if (oldValueWithoutLight == value)
+                        {
+                            ResyncDiagnostics.RecordResyncCell(false);
+                            ResyncDiagnostics.RecordApplyCell(
+                                System.Diagnostics.Stopwatch.GetTimestamp() - cellApplyStarted);
+                            continue;
+                        }
                         terrain.SetCellValueFast(x, edit.Y, z, value);
-                        bool cellChanged = oldValueWithoutLight != value;
-                        if (cellChanged) changedCells++;
-                        if (measureResyncCallbacks) ResyncDiagnostics.RecordResyncCell(cellChanged);
-                        bool electricCellChanged = ClientReplica && oldValueWithoutLight != value &&
+                        changedCells++;
+                        if (measureResyncCallbacks) ResyncDiagnostics.RecordResyncCell(true);
+                        bool electricCellChanged = ClientReplica &&
                             IsElectricCell(oldValueWithoutLight, value);
                         bool electricTopologyChanged = false;
-                        if (ClientReplica && oldValueWithoutLight != value)
+                        if (ClientReplica)
                         {
                             long started = System.Diagnostics.Stopwatch.GetTimestamp();
                             if (electricCellChanged)
@@ -595,7 +610,7 @@ namespace SuMultiplayer.Engine
                             circuitCallbackTicks += elapsedTicks;
                             ResyncDiagnostics.RecordCircuitCallback(elapsedTicks);
                         }
-                        if (ClientReplica && oldValueWithoutLight != value)
+                        if (ClientReplica)
                             BlockBehaviorNotify.Notify(subsystem, oldValue, value, x, edit.Y, z);
                         if (electricCellChanged)
                             circuitCallbackTicks += InvokeResyncCallback(

@@ -67,6 +67,7 @@ namespace SuMPLiveMap
         private static bool s_all = true;                // 默认：主机整片已加载区域
         private static TcpTerrainClient s_primary;
         private static TcpTerrainClient s_client;
+        private static int s_connectedPort;
 
         private static void Log(string message)
         {
@@ -191,6 +192,7 @@ namespace SuMPLiveMap
                 return;
             }
             s_primary = primary;
+            s_connectedPort = port;
             Log("已连上房间主连接 " + s_host + ":" + port + "（kind=Debug，只读，等待地形分流连接）");
         }
 
@@ -251,7 +253,12 @@ namespace SuMPLiveMap
                 return;
             }
             if (s_client != null && s_client.IsTerrainAttached) return;
-            var terrain = new TcpTerrainClient(s_host, s_port, 4096);
+            if (s_connectedPort <= 0)
+            {
+                Log("LiveMap 尚未记录已连接的房间端口 → 地形 TCP 连接明确失败");
+                return;
+            }
+            var terrain = new TcpTerrainClient(s_host, s_connectedPort, 4096);
             terrain.TerrainFrameReceived += OnFrame;
             terrain.TerrainAttachCompleted += OnTerrainAttachCompleted;
             if (!terrain.ConnectTerrain(ack.ClientId, ack.TerrainTicket.ToByteArray(), 3000))

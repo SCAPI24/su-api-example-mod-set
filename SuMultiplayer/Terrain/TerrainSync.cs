@@ -2289,7 +2289,7 @@ namespace SuMultiplayer.Terrain
                     Ticket = Google.Protobuf.ByteString.CopyFrom(ticket),
                     ChannelKind = terrain ? (uint)SecondaryChannelKind.Terrain : 0u
                 };
-                if (!m_server.TrySend(context.ClientId,
+                if (!m_messages.TrySend(context.ClientId,
                         MessageType.CircuitTicketResponse, response.ToByteArray()))
                     CircuitTicketProblem?.Invoke("附属 ticket 回执发送失败（clientId=" +
                         context.ClientId + "）");
@@ -2312,7 +2312,7 @@ namespace SuMultiplayer.Terrain
                 Error = reason ?? "unknown-ticket-error",
                 ChannelKind = terrain ? (uint)SecondaryChannelKind.Terrain : 0u
             };
-            m_server.TrySend(clientId, MessageType.CircuitTicketResponse,
+            m_messages.TrySend(clientId, MessageType.CircuitTicketResponse,
                 response.ToByteArray());
         }
 
@@ -2325,7 +2325,7 @@ namespace SuMultiplayer.Terrain
         {
             if (message == null) return;
             var pong = new Pong { Nonce = message.Nonce };
-            m_server.TrySend(context.ClientId, MessageType.Pong, pong.ToByteArray());
+            m_messages.TrySend(context.ClientId, MessageType.Pong, pong.ToByteArray());
         }
 
         private void OnInterest(MessageContext context, InterestUpdate message)
@@ -2980,7 +2980,7 @@ namespace SuMultiplayer.Terrain
                             work++;
                             continue;
                         }
-                        if (!m_server.TrySend(state.Id, MessageType.ChunkResync, job.Parts[job.Index])) break;
+                        if (!m_messages.TrySend(state.Id, MessageType.ChunkResync, job.Parts[job.Index])) break;
                         state.ResyncPartsSent++;
                         m_resyncBytes += job.Parts[job.Index].Length;
                         if (m_resyncEncodeDiagnosticsEnabled)
@@ -2995,7 +2995,7 @@ namespace SuMultiplayer.Terrain
                                 // TCP 保序保证客户端先落地树叶段、再落地顶层。
                                 if (job.TopLayerFixAfter != null)
                                 {
-                                    if (m_server.TrySend(state.Id, MessageType.TopLayerFix,
+                                    if (m_messages.TrySend(state.Id, MessageType.TopLayerFix,
                                             job.TopLayerFixAfter))
                                     {
                                         m_topLayerFixesSent++;
@@ -3983,7 +3983,7 @@ namespace SuMultiplayer.Terrain
                 ChangeCount = changeCount,
                 Reason = reason ?? string.Empty
             };
-            return m_server.TrySend(clientId, MessageType.CatchUp, message.ToByteArray());
+            return m_messages.TrySend(clientId, MessageType.CatchUp, message.ToByteArray());
         }
 
         /// <summary>
@@ -4007,7 +4007,7 @@ namespace SuMultiplayer.Terrain
                     long prevIndex = state != null ? state.DeliveryIndex : -1L;
                     long index = prevIndex >= 0 ? prevIndex + 1 : -1L;
                     byte[] payload = EncodeCatchUpBatch(job.Entries, job.Index, count, prevIndex, index);
-                    if (!m_server.TrySend(job.ClientId, MessageType.CellChange, payload))
+                    if (!m_messages.TrySend(job.ClientId, MessageType.CellChange, payload))
                     {
                         // 显式背压：这一批没发出去，任务保留，下一 tick 从同一位置继续。
                         m_catchUpSendDeferrals++;
@@ -4577,7 +4577,7 @@ namespace SuMultiplayer.Terrain
             byte[] payload = BuildTopLayerFixPayload(key, hostH, hostB, cells, shafts);
             // 发送失败（背压）= 没发出去：返回 true 但明确计数，
             // 由客户端的摘要重报再触发一次（不在这里改成整块回传，那会放大成本）。
-            if (!m_server.TrySend(state.Id, MessageType.TopLayerFix, payload))
+            if (!m_messages.TrySend(state.Id, MessageType.TopLayerFix, payload))
             {
                 m_topLayerFixSendFailures++;
                 return true;
@@ -4826,7 +4826,7 @@ namespace SuMultiplayer.Terrain
                         PT.TopLayerFix fix = PT.TopLayerFix.Parser.ParseFrom(followupTopFix);
                         fix.RequireTopLayerConfirmation = true;
                         fix.ConfirmationPurpose = 3u;
-                        if (!m_server.TrySend(state.Id, MessageType.TopLayerFix, fix.ToByteArray()))
+                        if (!m_messages.TrySend(state.Id, MessageType.TopLayerFix, fix.ToByteArray()))
                         {
                             m_topLayerFixSendFailures++;
                             SendTopLayerDigestVerdict(state, key, PT.TopLayerDigestStatus.NotReady,
@@ -4895,7 +4895,7 @@ namespace SuMultiplayer.Terrain
                             PT.TopLayerFix fix = PT.TopLayerFix.Parser.ParseFrom(topFix);
                             fix.RequireTopLayerConfirmation = true;
                             fix.ConfirmationPurpose = 3u;
-                            if (!m_server.TrySend(state.Id, MessageType.TopLayerFix, fix.ToByteArray()))
+                            if (!m_messages.TrySend(state.Id, MessageType.TopLayerFix, fix.ToByteArray()))
                             {
                                 m_topLayerFixSendFailures++;
                                 SendTopLayerDigestVerdict(state, key, PT.TopLayerDigestStatus.NotReady,
@@ -5027,7 +5027,7 @@ namespace SuMultiplayer.Terrain
             }
             if (topFix != null)
             {
-                if (!m_server.TrySend(state.Id, MessageType.TopLayerFix, topFix))
+                if (!m_messages.TrySend(state.Id, MessageType.TopLayerFix, topFix))
                 {
                     session.TopLayerSyncPending.Remove(key);
                     SendTopLayerDigestVerdict(state, key, PT.TopLayerDigestStatus.NotReady,
@@ -5168,7 +5168,7 @@ namespace SuMultiplayer.Terrain
                 HostChangeSequence = hostSequence,
                 ConfirmationPurpose = confirmationPurpose
             });
-            return m_server.TrySend(state.Id, MessageType.TopLayerDigestVerdict, message.ToByteArray());
+            return m_messages.TrySend(state.Id, MessageType.TopLayerDigestVerdict, message.ToByteArray());
         }
 
         // ------------------------------------------------------------ 客户端当前内存区块集合（v8 实时地图）
@@ -5813,7 +5813,7 @@ namespace SuMultiplayer.Terrain
                 HostChangeSequence = hostChangeSequence,
                 Purpose = purpose
             });
-            return m_server.TrySend(state.Id, MessageType.ChunkVerdict, message.ToByteArray());
+            return m_messages.TrySend(state.Id, MessageType.ChunkVerdict, message.ToByteArray());
         }
 
         /// <summary>
@@ -5876,7 +5876,7 @@ namespace SuMultiplayer.Terrain
                 CellDelivery target = plan[i];
                 byte[] payload = EncodeCellChange(key, edit, sequence, target.PrevIndex, target.Index,
                     replay: false);
-                if (!m_server.TrySend(target.ClientId, MessageType.CellChange, payload))
+                if (!m_messages.TrySend(target.ClientId, MessageType.CellChange, payload))
                 {
                     // 显式背压 / 对端不可达：这一份**没有**发出去（不推进投递序号，随后按历史顺序补发）。
                     (failed ?? (failed = new List<int>())).Add(target.ClientId);
@@ -6077,7 +6077,7 @@ namespace SuMultiplayer.Terrain
                 long prevIndex = state.DeliveryIndex;
                 byte[] payload = EncodeCellChange(entry.Key, entry.Edit, entry.Sequence, prevIndex,
                     prevIndex + 1, replay: false);
-                if (!m_server.TrySend(state.Id, MessageType.CellChange, payload))
+                if (!m_messages.TrySend(state.Id, MessageType.CellChange, payload))
                 {
                     // 显式背压：这一条没发出去，下一 tick 从同一位置继续（顺序不变，绝不跳过）。
                     m_cellChangeRepairDeferrals++;
@@ -6116,7 +6116,7 @@ namespace SuMultiplayer.Terrain
         {
             // 空列表 = 全部内存块。
             var request = new PT.VerifyChunks();
-            if (!m_server.TrySend(state.Id, MessageType.VerifyChunks, request.ToByteArray()))
+            if (!m_messages.TrySend(state.Id, MessageType.VerifyChunks, request.ToByteArray()))
             {
                 m_verifyRequestSendFailures++;
                 CatchUpProblem?.Invoke("无法要求客户端重新核对内存区块（clientId=" + state.Id +
@@ -6259,7 +6259,7 @@ namespace SuMultiplayer.Terrain
                 ChunkKey key = m_staleVerdictBatch[i];
                 message.Chunks.Add(new PT.ChunkKey { X = key.X, Z = key.Z });
             }
-            if (!m_server.TrySend(state.Id, MessageType.VerifyChunks, message.ToByteArray()))
+            if (!m_messages.TrySend(state.Id, MessageType.VerifyChunks, message.ToByteArray()))
             {
                 m_staleVerdictRefreshDeferred++;
                 long due = nowMs + Math.Max(1, m_options.StaleVerdictRejudgeRetryMs);
@@ -6909,7 +6909,7 @@ namespace SuMultiplayer.Terrain
             int sent = 0;
             for (int i = 0; i < targets.Count; i++)
             {
-                if (!m_server.TrySend(targets[i], MessageType.PlayerPositions, payload)) continue;
+                if (!m_messages.TrySend(targets[i], MessageType.PlayerPositions, payload)) continue;
                 sent++;
             }
             return sent;
@@ -6948,7 +6948,7 @@ namespace SuMultiplayer.Terrain
                     state.Kind != ClientKind.Player)
                     return false;
             }
-            return m_server.TrySend(clientId, MessageType.PlayerPositions, payload);
+            return m_messages.TrySend(clientId, MessageType.PlayerPositions, payload);
         }
     }
 
@@ -7869,22 +7869,24 @@ namespace SuMultiplayer.Terrain
             m_replayStartedMs = 0L;
             m_replayStuckLogged = false;
             m_heldChanges.Clear();
-            m_channel.TrySend(MessageType.Hello, hello.ToByteArray());
+            m_messages.TrySend(0, MessageType.Hello, hello.ToByteArray());
         }
 
-        public void SendInterest(ChunkKey center, int radius)
+        public bool SendInterest(ChunkKey center, int radius)
         {
-            Center = center;
-            ViewRadius = Math.Max(1, Math.Min(m_options.MaxRadius, radius));
-            m_interestKnown = true;
-            QueueFootprintWindow();
+            int nextRadius = Math.Max(1, Math.Min(m_options.MaxRadius, radius));
             var interest = new InterestUpdate
             {
                 CenterX = center.X,
                 CenterZ = center.Z,
-                Radius = ViewRadius
+                Radius = nextRadius
             };
-            m_channel.TrySend(MessageType.InterestUpdate, interest.ToByteArray());
+            if (!m_messages.TrySend(0, MessageType.InterestUpdate, interest.ToByteArray())) return false;
+            Center = center;
+            ViewRadius = nextRadius;
+            m_interestKnown = true;
+            QueueFootprintWindow();
+            return true;
         }
 
         /// <summary>
@@ -8341,7 +8343,7 @@ namespace SuMultiplayer.Terrain
             while (budget > 0 && m_clientChunkFullPartIndex < m_clientChunkFullParts.Count)
             {
                 byte[] payload = m_clientChunkFullParts[m_clientChunkFullPartIndex];
-                if (!m_channel.TrySend(MessageType.ClientChunks, payload))
+                if (!m_messages.TrySend(0, MessageType.ClientChunks, payload))
                 {
                     m_clientChunkSendDeferrals++;
                     return sentThisTick;
@@ -8370,7 +8372,7 @@ namespace SuMultiplayer.Terrain
                     if (m_clientChunkEntryBuffer.Count >= ClientChunkSetCodec.MaxEntriesPerMessage) break;
                 }
                 byte[] payload = ClientChunkSetCodec.EncodeDelta(m_clientChunkEntryBuffer);
-                if (!m_channel.TrySend(MessageType.ClientChunks, payload))
+                if (!m_messages.TrySend(0, MessageType.ClientChunks, payload))
                 {
                     m_clientChunkSendDeferrals++;
                     return sentThisTick;
@@ -8538,7 +8540,7 @@ namespace SuMultiplayer.Terrain
                 ClientTopHeightHash = h,
                 ClientTopBlockHash = b
             };
-            if (m_channel.TrySend(MessageType.TopLayerMismatchReport, message.ToByteArray()))
+            if (m_messages.TrySend(0, MessageType.TopLayerMismatchReport, message.ToByteArray()))
             {
                 m_topLayerReportsSent++;
                 m_topLayerMismatches++;
@@ -8577,7 +8579,7 @@ namespace SuMultiplayer.Terrain
             if (m_lastPingSentMs > 0 && nowMs - m_lastPingSentMs < PingIntervalMs) return;
             m_pingNonce++;
             var ping = new Ping { Nonce = m_pingNonce };
-            if (!m_channel.TrySend(MessageType.Ping, ping.ToByteArray())) return;
+            if (!m_messages.TrySend(0, MessageType.Ping, ping.ToByteArray())) return;
             m_lastPingSentMs = nowMs;
         }
 
@@ -8983,7 +8985,7 @@ namespace SuMultiplayer.Terrain
                     TopReady = true,
                     ConfirmationPurpose = item.ConfirmationPurpose
                 });
-                if (!m_channel.TrySend(MessageType.TopLayerDigestReport, report.ToByteArray())) break;
+                if (!m_messages.TrySend(0, MessageType.TopLayerDigestReport, report.ToByteArray())) break;
                 m_topLayerReportQueue.Dequeue();
                 if (item.Kind == PT.TopLayerDigestKind.Confirmation)
                     m_topConfirmationAwaiting.Add(item.Key);
@@ -9155,7 +9157,7 @@ namespace SuMultiplayer.Terrain
                         ClientTopBlockHash = topB
                     });
                 }
-                if (!m_channel.TrySend(MessageType.ChunkDigestReport, report.ToByteArray()))
+                if (!m_messages.TrySend(0, MessageType.ChunkDigestReport, report.ToByteArray()))
                 {
                     // 显式背压：条目一条都不动，下一帧再发（计数，不静默）。
                     m_reportSendDeferrals++;
@@ -9304,7 +9306,7 @@ namespace SuMultiplayer.Terrain
         public bool SendPlayerPosition(byte[] payload)
         {
             if (payload == null || payload.Length == 0) return false;
-            return m_channel.TrySend(MessageType.PlayerPosition, payload);
+            return m_messages.TrySend(0, MessageType.PlayerPosition, payload);
         }
 
         private void OnFrame(ReceivedFrame frame) => m_messages.Dispatch(in frame);
@@ -9591,7 +9593,7 @@ namespace SuMultiplayer.Terrain
                         Phase = PT.CatchUpPhase.Request,
                         LastApplied = m_lastAppliedChangeSequence
                     };
-                    if (!m_channel.TrySend(MessageType.CatchUp, request.ToByteArray()))
+                    if (!m_messages.TrySend(0, MessageType.CatchUp, request.ToByteArray()))
                     {
                         // 显式背压：这次没发出去，不算一次尝试、也不假装请求成功；下一帧再试。
                         m_catchUpRequestSentMs = nowMs;
@@ -9649,7 +9651,7 @@ namespace SuMultiplayer.Terrain
                         LastApplied = m_lastAppliedChangeSequence,
                         Head = m_catchUpTargetSequence
                     };
-                    if (!m_channel.TrySend(MessageType.CatchUp, appliedMessage.ToByteArray()))
+                    if (!m_messages.TrySend(0, MessageType.CatchUp, appliedMessage.ToByteArray()))
                     {
                         // 完成回报没发出去：不标完成（下一帧重试），也绝不假装追帧已确认。
                         if (!m_catchUpAppliedSendFailureLogged)

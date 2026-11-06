@@ -315,13 +315,13 @@ internal enum DigestKind : byte
 
 完整核验仅针对角色脚下中心 chunk 和四个正交相邻 chunk。客户端与主机分别计算完整 hash，客户端将摘要发给主机比较。每块完成一次最终核验后，以该客户端本次内存驻留代记录为已处理；离开该五块范围再进入不重复，只有 chunk 卸载并重新加载后才重新核验。若最终核验不匹配，主机按权威整块快照修复；权威修复完成后也将该驻留代记为已处理，不再用完整 hash 重复检查。
 
-**实现状态**：阶段 1、阶段 2 和阶段 3 已落地上述流程。`TerrainBridge` 捕获真实天气/季节写入并记录 `Season` / `Content` 三态；树叶真实写入通过 `NoteLeavesMutation` 按客户端记录 `Leaves`。新块首报只进入顶层摘要池，树叶段/顶层补丁落地后通过带用途的顶层确认闭环；完整摘要只进入客户端与主机的脚下五块最终核验池。TCP 传输现在有主连接、电路连接、地形连接三路：地形同步、区块集合、摘要/裁决、顶层补丁、兴趣/位置和 LiveMap 请求/回传走独立地形连接，角色/实体/交互等仍走主连接，电路消息仍走电路连接。LiveMap 先建立只读主连接，再用 HelloAck 的地形 ticket 建立独立地形连接。`TsVerify` 已废弃，不能用旧验证套件验收这套新协议。
+**实现状态**：阶段 1、阶段 2 和阶段 3 已落地上述流程。`TerrainBridge` 捕获真实天气/季节写入并记录 `Season` / `Content` 三态；树叶真实写入通过 `NoteLeavesMutation` 按客户端记录 `Leaves`。新块首报只进入顶层摘要池，树叶段/顶层补丁落地后通过带用途的顶层确认闭环；完整摘要只进入客户端与主机的脚下五块最终核验池。TCP 传输现在有主连接、电路连接、地形连接三路：地形同步、区块集合、摘要/裁决、顶层补丁、兴趣、诊断遥测和 LiveMap 请求/回传走独立地形连接；角色位置/动作、实体/交互等仍走主连接，电路消息仍走电路连接。LiveMap 先建立只读主连接，再用 HelloAck 的地形 ticket 建立独立地形连接。`TsVerify` 已废弃，不能用旧验证套件验收这套新协议。
 
 ---
 
 ## 4. TCP 三通道拆分
 
-### 4.1 现状（已核实）
+### 4.1 改造前现状（基线）
 
 ```
 主机 TcpTerrainServer
@@ -340,7 +340,7 @@ internal enum DigestKind : byte
 主机 TcpTerrainServer
   ├── Peer (ChannelKind.Primary) : 动物 / 角色 / 聊天 / 音频 / 交互（低延迟小消息）
   ├── Peer (ChannelKind.Circuit) : 电路（已存在）
-  └── Peer (ChannelKind.Terrain) : **新增** → 地形同步 / 区块回传 / 摘要上报 / 裁决 / 顶层补丁
+  └── Peer (ChannelKind.Terrain) : **新增** → 地形同步 / 区块回传 / 摘要上报 / 裁决 / 顶层补丁 / LiveMap
 ```
 
 **与用户方案的差异**：用户提的是「电路 / 地形 / 音频 / 主」，本方案把**音频留在主通道**。
@@ -392,8 +392,10 @@ public bool IsCircuit => Kind == ChannelKind.Circuit;
 | `InterestUpdate` | 兴趣范围变化 |
 | `CellChange` | 主机权威格改动（小消息**高频**） |
 | `ClientChunkSet` / `ChunkSnapshotRequest` 等 | 区块加载控制 |
+| `MapRequest` / `MapState` | LiveMap 请求与快照回传 |
+| `TerrainDiagnosticControl` / `TerrainDiagnosticReport` / `ClientRuntimeTelemetry` | 地形诊断与遥测 |
 
-**留在主通道**：动物、角色位置/动作、聊天、音频、交互、背包、电路之外的一切。
+**留在主通道**：动物、角色位置/动作、聊天、音频、交互、背包及其他非地形、非电路消息。
 
 **走电路通道**（不变）：电路快照 / delta / 时钟。
 

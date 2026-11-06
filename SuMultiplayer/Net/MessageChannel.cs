@@ -492,6 +492,22 @@ namespace SuMultiplayer.Net
             return true;
         }
 
+        /// <summary>
+        /// 发送已经编码好的内置协议载荷，并仍然经过组合根的消息路由。
+        /// TerrainSync 的内部发送路径需要保留原始 <see cref="MessageType"/>，
+        /// 让主机端/客户端组合根决定它应走主连接还是附属地形连接。
+        /// </summary>
+        public bool TrySend(int clientId, MessageType type, byte[] payload)
+        {
+            if (!m_send(clientId, type, payload ?? Array.Empty<byte>()))
+            {
+                SendFailures++;
+                return false;
+            }
+            MessagesSent++;
+            return true;
+        }
+
         public string Describe()
         {
             return "name=" + m_name + " sent=" + MessagesSent + " sendFailures=" + SendFailures +

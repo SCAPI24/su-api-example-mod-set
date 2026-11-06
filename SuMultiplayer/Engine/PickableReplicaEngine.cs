@@ -2435,7 +2435,6 @@ namespace SuMultiplayer.Engine
                 LastUpdateTime = Time.RealTime
             };
             ApplyPickableTarget(replica, state);
-            RefreshPickableLight(pickable);
             m_clientPickables[state.Id] = replica;
             m_replicasCreated++;
             return true;
@@ -2465,30 +2464,6 @@ namespace SuMultiplayer.Engine
             pickable.StuckMatrix = state.HasStuckMatrix
                 ? CreateStuckMatrix(state.StuckPosition, state.StuckRotation)
                 : (Matrix?)null;
-        }
-
-        private void RefreshPickableLight(Pickable pickable)
-        {
-            if (!m_clientReplica || pickable == null || m_terrainSubsystem?.Terrain == null) return;
-            Vector3 position = pickable.Position;
-            int x = global::Game.Terrain.ToCell(position.X);
-            int y = global::Game.Terrain.ToCell(position.Y);
-            int z = global::Game.Terrain.ToCell(position.Z);
-            TerrainChunk chunk = m_terrainSubsystem.Terrain.GetChunkAtCell(x, z);
-            if (chunk == null || y < 0 || y >= 255) return;
-            float fraction = MathUtils.Max(position.Y - y - 0.75f, 0f) / 0.25f;
-            int currentLight = m_terrainSubsystem.Terrain.GetCellLightFast(x, y, z);
-            int aboveLight = m_terrainSubsystem.Terrain.GetCellLightFast(x, y + 1, z);
-            int light = (int)MathUtils.Lerp(currentLight, aboveLight, fraction);
-            // Source: Survivalcraft/Game/TerrainUpdater.cs:GenerateChunkSunlightAndHeights
-            // 网络挖掘先写入不带光照位的方块值，光照重算可能延后一拍；掉落物位于最高非空气格
-            // 之上时，按引擎直射天空光规则直接使用当前 SkyLightValue，避免正午新掉落物保持黑色。
-            if (light == 0 && y > m_terrainSubsystem.Terrain.GetSunlightHeight(x, z))
-            {
-                SubsystemSky sky = m_project?.FindSubsystem<SubsystemSky>(false);
-                if (sky != null) light = sky.SkyLightValue;
-            }
-            pickable.Light = light;
         }
 
         public bool TryApplyProjectile(in ProjectileStateData state, out string reason)
@@ -2809,7 +2784,6 @@ namespace SuMultiplayer.Engine
                 pickable.FlyToPosition = item.Value.TargetHasFlyTo
                     ? item.Value.TargetFlyTo
                     : (Vector3?)null;
-                RefreshPickableLight(pickable);
             }
             if (stale == null) return;
             for (int i = 0; i < stale.Count; i++)

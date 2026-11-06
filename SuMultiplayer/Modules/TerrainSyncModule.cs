@@ -570,8 +570,6 @@ namespace SuMultiplayer.Modules
                 case MessageType.CellChange:
                 case MessageType.MapRequest:
                 case MessageType.MapState:
-                case MessageType.PlayerPosition:
-                case MessageType.PlayerPositions:
                 case MessageType.ClientChunks:
                 case MessageType.CatchUp:
                 case MessageType.VerifyChunks:
@@ -688,9 +686,9 @@ namespace SuMultiplayer.Modules
             // 客户端自己的地形同步计数（含顶层摘要校验效果与第 6/8 步拦截量）。
             // 主机侧不做顶层校验，这些字段只有从客户端上报才能在 LiveMap 上看到。
             if (m_clientSync != null) report.Terrain = BuildTerrainClientSample();
-            if (!m_client.TrySend(MessageType.ClientRuntimeTelemetry, report.ToByteArray()))
+            if (!m_messages.TrySend(0, MessageType.ClientRuntimeTelemetry, report.ToByteArray()))
                 LogRateLimited("runtime-telemetry-send-failed",
-                    "本机运行时遥测发送失败（主连接背压或失效）", 5000);
+                    "本机运行时遥测发送失败（地形通道背压或失效）", 5000);
         }
 
         /// <summary>
@@ -868,10 +866,12 @@ namespace SuMultiplayer.Modules
                     ChannelStats monitorStats = m_server.StatsOf(monitorClientId);
                     telemetry.MonitorTransport = BuildChannelSample(monitorStats,
                         m_server.StateOf(monitorClientId));
-                    if (monitorStats != null)
+                    // MapState 走附属地形 TCP；这里不能从 LiveMap 的主连接统计读取。
+                    ChannelStats terrainStats = m_server.TerrainStatsOf(monitorClientId);
+                    if (terrainStats != null)
                     {
-                    foreach (MessageTypeTrafficSnapshot entry in
-                        monitorStats.SnapshotByMessageType())
+                        foreach (MessageTypeTrafficSnapshot entry in
+                            terrainStats.SnapshotByMessageType())
                         {
                             if (entry.TypeId != (ushort)MessageType.MapState) continue;
                             telemetry.LiveMapFramesSent = (ulong)Math.Max(0, entry.FramesSent);
@@ -1798,9 +1798,9 @@ namespace SuMultiplayer.Modules
                     {
                         Sample = ToProtocolSample(diagnosticSample)
                     };
-                    if (!m_client.TrySend(MessageType.TerrainDiagnosticReport, report.ToByteArray()))
+                    if (!m_messages.TrySend(0, MessageType.TerrainDiagnosticReport, report.ToByteArray()))
                         LogRateLimited("terrain-diagnostic-report-send-failed",
-                            "区块重同步诊断采样回传失败（主连接背压或已失效）", 5000);
+                            "区块重同步诊断采样回传失败（地形通道背压或已失效）", 5000);
                 }
                 // 跨连接保存"上次应用序号 + 最近主机会话"：通道断掉时新客户端不会从 0 重来。
                 m_clientChangeSequence = m_clientSync.LastAppliedChangeSequence;
@@ -2178,7 +2178,15 @@ namespace SuMultiplayer.Modules
         /// </summary>
         private void SendInterest(ChunkKey center, int radius, float visibility)
         {
-            m_clientSync.SendInterest(center, radius);
+            if (!m_clientSync.SendInterest(center, radius))
+            {
+                // 兴趣只允许走地形 TCP；未 attach / 显式背压时保留失败状态，下一轮重试，
+                // 绝不把它静默改发主连接。
+                m_hasCenter = false;
+                LogRateLimited("interest-send-failed",
+                    "兴趣上报失败（地形 TCP 未建立或背压）→ 保留待重试状态，不改发主连接", 5000);
+                return;
+            }
             m_interestSends++;
             m_interestRadiusSent = radius;
             m_interestVisibilitySent = visibility;
@@ -2961,6 +2969,14 @@ namespace SuMultiplayer.Modules
             if (accepted)
             {
                 Log("附属地形 TCP 已通过 ticket 绑定；地形同步已从主连接分流");
+                if (m_clientSync != null)
+                {
+                    // attach 前产生的兴趣帧可能仍在主连接队列中；绑定完成后必须在新通道重发，
+                    // 并把已常驻区块重新排进最终核验队列，避免只建立连接却没有后续地形流量。
+                    if (m_hasCenter)
+                        SendInterest(m_lastCenter, m_lastRadius, m_interestVisibilitySent);
+                    m_clientSync.ArmResidentRequeue("附属地形 TCP attach 完成，重发兴趣并核对常驻区块");
+                }
                 return;
             }
             LogWarning("附属地形 TCP 被主机拒绝（" +
