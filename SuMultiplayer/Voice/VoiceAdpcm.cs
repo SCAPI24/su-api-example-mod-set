@@ -28,6 +28,13 @@ namespace SuMultiplayer.Voice
     {
         public const int MaxStepIndex = 88;
 
+        /// <summary>
+        /// 估算起始步长索引时探测的样本数（10 ms @ 8 kHz）。
+        /// 起始瞬态就在包开头，取 8 个样本（一阶差分）足以判断本包的量级；
+        /// 窗口再长会把后续安静段平均进来，反而低估真正需要的起始步长。
+        /// </summary>
+        public const int StartStepProbeSamples = 8;
+
         private static readonly int[] StepTable =
         {
             7, 8, 9, 10, 11, 12, 13, 14, 16, 17, 19, 21, 23, 25, 28, 31, 34, 37, 41, 45,
@@ -87,7 +94,20 @@ namespace SuMultiplayer.Voice
             }
 
             int predictor = pcm[offset];
-            int index = 0;
+            // 起始步长索引按**本包自身**的斜率估算，不再硬编码 0。
+            //
+            // 为什么（2026-11-06 修）：index=0 意味着每包起始步长恒为 StepTable[0]=7
+            // （最小档）。大幅度信号（大声说话 / 唱歌）在每包开头都要用几十个样本把
+            // 步长从 7 爬升到匹配量级，那段爬升期量化严重不足 → 每包（40 ms，即每秒
+            // 25 次）一次短暂的阶梯失真。实机听感就是持续发声时的"噗噗"声，且与网络
+            // 无关（实测 voiceLateDropped=0、voiceRecv≈voicePlayed）。
+            //
+            // 仍然每包独立（不复用上一包的 predictor / index），所以丢包、乱序、
+            // 中途加入都不会让解码器状态错位 —— 鲁棒性完全保留；只是把"起始 points
+            // 从最小步长"改成"起始点匹配本包信号幅度"。
+            // 解码端不用改：它本来就从包头第 3 字节读取 index（TryDecode:data[offset+2]），
+            // 线格式与协议完全不变。
+            int index = EstimateStartStepIndex(pcm, offset, count);
             target[targetOffset] = (byte)(predictor & 0xFF);
             target[targetOffset + 1] = (byte)((predictor >> 8) & 0xFF);
             target[targetOffset + 2] = (byte)index;
@@ -166,6 +186,34 @@ namespace SuMultiplayer.Voice
                 target[targetOffset + i] = (short)predictor;
             }
             return true;
+        }
+
+        /// <summary>
+        /// 按本包起始若干样本的**平均绝对一阶差分**，在 step 表里选一个合适的起始索引。
+        ///
+        /// 为什么要它（见 <see cref="TryEncode"/> 里调用处的注释）：每包独立是为了丢包鲁棒，
+        /// 但 index 从 0 起意味着起始步长恒为最小值 7；大幅度信号在每包开头要花几十个
+        /// 样本把步长爬升到匹配量级，那段爬升就是每秒 25 次的可听见失真。
+        /// 用本包自身斜率选起点，既保留每包独立，又消掉爬升期。
+        ///
+        /// 为什么用一阶差分而不是幅度均值：ADPCM 的步长匹配的是**样本间变化量**，不是
+        /// 绝对电平（大音量的低频正弦差分反而小）。差分直接对上一阶量化台阶。
+        ///
+        /// 为什么只探前 <see cref="StartStepProbeSamples"/> 个样本：起始瞬态就在包开头，
+        /// 窗口取太长会把后续的安静段平均进来，反而低估真正需要的起始步长。
+        /// 越界一律钳到合法索引（绝不让上层拿到非法值）。
+        /// </summary>
+        private static int EstimateStartStepIndex(short[] pcm, int offset, int count)
+        {
+            int samples = Math.Min(StartStepProbeSamples, count - 1);
+            if (samples <= 0) return 0;
+            long sum = 0;
+            for (int i = 1; i <= samples; i++)
+                sum += Math.Abs((int)pcm[offset + i] - pcm[offset + i - 1]);
+            int averageDelta = (int)(sum / samples);
+            for (int i = 0; i < StepTable.Length; i++)
+                if (StepTable[i] >= averageDelta) return i;
+            return MaxStepIndex;
         }
 
         private static int EncodeSample(int sample, int bits, ref int predictor, ref int index)

@@ -90,6 +90,12 @@ namespace SuMultiplayer
         private CircuitUseInputSink m_circuitPresentation;
         private CircuitStateCodec m_circuitCodec;
         private CircuitWorldEngine m_circuitWorld;
+        /// <summary>
+        /// 联机时禁止本地界面冻结世界时钟（doc/reconnect-and-kick-plan.md G8）。
+        /// 每帧在 Frame.Update 里调 Maintain：引擎 NextFrame 每帧会把 GameTimeFactor 压成 0
+        /// （所有人开着 GameMenuDialog），联机时必须拉回 1，否则其它端的世界会一起停住。
+        /// </summary>
+        private Engine.MultiplayerTimeFlow m_timeFlow;
         private CircuitSyncModule m_circuitModule;
         /// <summary>世界控制：引擎适配（客户端四按钮拦截 + 主机权威执行 + 客户端提示）+ 网络模块。</summary>
         private WorldControlEngine m_worldControlEngine;
@@ -216,6 +222,7 @@ namespace SuMultiplayer
         /// <summary>CmdBridge 调试钩子：仅控制电路同步暂停信号，不改变游戏时间。</summary>
         public CircuitSyncDebugAutomation CircuitSyncDebugAutomation { get; private set; }
 
+
         public string Name => ModIdentifier;
         public string Version => ModVersionText;
         public bool IsEnabled { get; set; } = true;
@@ -261,6 +268,19 @@ namespace SuMultiplayer
                 message => Log.Warning("[SuMP] " + message),
                 CharacterNameRoller.NewSessionSalt());
             m_terrainModule = new TerrainSyncModule(m_config, profileStore: profileStore);
+            // G10：主机正常退出游戏时通知房间里的客户端（让它们立即退出，而不是等 30 秒重连窗口）。
+            // 引擎的 Window.Closed 是**窗口关闭时唯一可靠的钩子**：mod 的 OnUnload 在游戏退出
+            // 路径上没有任何调用点（SuAPI 只在 ModLoader 内部用到），所以必须挂在这里。
+            // 强杀进程不会触发它 —— 那种情况由客户端的 ECONNREFUSED 判定收尾。
+            try
+            {
+                global::Engine.Window.Closed += HandleWindowClosedForHostShutdown;
+            }
+            catch (Exception e)
+            {
+                ModLog.Warn("[SuMP][host-shutdown] 订阅 Window.Closed 失败 → 主机正常关闭时" +
+                    "客户端只能等重连窗口耗尽（仍会退出）：" + e.GetType().Name + " " + e.Message);
+            }
             // 客户端引信表现：挂在桥的 ApplyCells 漏斗上（主机 / 单机不会进入该分支）。
             m_fusePresenter = new FuseReplicaPresentation();
             m_terrainModule.Bridge.FusePresenter = m_fusePresenter;
@@ -401,6 +421,13 @@ namespace SuMultiplayer
             {
                 Fallback = m_blockUseEngine
             };
+            // 联机时禁止本地界面冻结世界时钟（G8）。绑定失败会写明确原因，不静默。
+            m_timeFlow = new Engine.MultiplayerTimeFlow(engineModManager.ModParentField);
+            if (!m_timeFlow.IsBound)
+            {
+                ModLog.Warn("[SuMP][time-flow] 世界时钟维护绑定失败 → " + m_timeFlow.BindFailureReason +
+                    "；联机时打开菜单仍会冻结世界（其余功能不受影响）");
+            }
             m_circuitCodec = new CircuitStateCodec(engineModManager.ModParentField);
             m_circuitWorld = new CircuitWorldEngine(m_terrainModule.Bridge, m_circuitCodec,
                 engineModManager.ModParentField, engineModManager.ModParentMethod,
@@ -1197,6 +1224,65 @@ namespace SuMultiplayer
                     try { m_circuitWorld?.NormalizeClientSleepTime(); }
                     catch (Exception e) { NoteFrameStepFailure("client-sleep-time", e); }
 
+                    // 联机时禁止本地界面冻结世界时钟（G8）。**必须每帧**：
+                    // SubsystemTime.NextFrame 每帧按"所有人是否都开着 GameMenuDialog"重算
+                    // m_gameTimeFactor，联机房间里还有别的设备上的玩家，本地菜单不该让别人的
+                    // 世界停住。时序已确认：Program 主循环里 ScreensManager.Update()
+                    // （→ GameScreen.Update → NextFrame）在本回调之前跑完，所以这里写是同帧生效的。
+                    try
+                    {
+                        // 单机（既没建房也没加入）时完全不干预：ESC 暂停是引擎的正确行为。
+                        bool multiplayerActive = m_sessionModule != null &&
+                            (m_sessionModule.IsHostingRoom || m_sessionModule.IsClientInRoom);
+                        m_timeFlow?.Maintain(multiplayerActive, Environment.TickCount64);
+                    }
+                    catch (Exception e) { NoteFrameStepFailure("time-flow", e); }
+
+                    // 主机：Settings / Help / Edit Players 屏会把 GameScreen 移出 Widget 更新层级
+                    // （ScreensManager.SwitchScreen 换 CurrentScreen），于是
+                    // GameScreen.Update → GameManager.UpdateProject 整条链不再执行 —— 权威世界
+                    // 就停了。联机时主机必须保证每帧推进一次。
+                    //
+                    // ⚠️ 判据必须用「CurrentScreen 是不是 GameScreen」，**不能**用帧号去重：
+                    //   Time.FrameIndex 在 Time.AfterFrame() 里才自增（Engine/Engine/Time.cs:142），
+                    //   而本回调（Frame.Update）跑在 AfterFrame 之前 —— 同一帧内 FrameIndex 根本不变，
+                    //   "本帧是否已推进" 这种守卫永远不会拦住重复推进。
+                    //   实机后果（2026-11-06 实测）：GameScreen 正常游玩时本回调也会再 UpdateProject 一次
+                    //   → 主机每帧推进两遍 ⇒ ①游戏速度翻倍 ②SubsystemTerrain.Update / TerrainUpdater
+                    //   跑两遍 ⇒ 刚挖掉的方块被旧状态回填（"挖了又还原"）。
+                    //
+                    // 正确判据的来源是"GameScreen.Update 是否真的会被调用"：
+                    //   · ScreensManager 只在 CurrentScreen 时驱动它，而唯一调用
+                    //     GameManager.UpdateProject() 的地方就是 GameScreen.Update（GameScreen.cs:58）；
+                    //   · 所以 CurrentScreen 是 GameScreen ⇒ 引擎本帧已经推进过，**绝不能再补**；
+                    //   · CurrentScreen 不是 GameScreen（Settings/Help/Players）⇒ 引擎本帧没推进，补一次。
+                    // 旧实现用挂在玩家实体上的 IUpdateable 打标记（ScMultiplayer/Func/Component/
+                    // MultiplayerUiComponent.cs:45 的 NotifyProjectSimulationStep）来达成同一件事；
+                    // 这里用屏判据即可，不需要额外注入一个组件。
+                    //
+                    // 客户端**不补**：客户端本来就不模拟地形（ClientReplica），补了反而多算一遍。
+                    try
+                    {
+                        if (m_sessionModule != null && m_sessionModule.IsHostingRoom &&
+                            GameManager.Project != null &&
+                            // ⚠️ 转场进行中**绝不能**补推进。ScreensManager.SwitchScreen 会先
+                            // 置 RootWidget.IsUpdateEnabled=false，再由 UpdateAnimation 在动画过半时
+                            // 插入新屏并把 IsUpdateEnabled 恢复成 true。这期间 widget 更新整段被跳过，
+                            // ClickableWidget.Update() 不会跑 —— 于是按钮的 IsClicked 保持 true。
+                            // 如果此时旁路调用 GameManager.UpdateProject()，ComponentGui.Update 会被
+                            // 重新执行，再次读到那个陈旧的 IsClicked=true，又调一次 SwitchScreen，
+                            // 把 m_animationData.Factor 重置为 0 ⇒ 动画永远到不了 0.5 ⇒ 死循环
+                            // （实机症状 2026-11-06：点 More→Help 后界面不出现且无法操作，
+                            //   animating 永久 true，HelpScreen 的 Factor 每帧被重置）。
+                            // IsAnimating 就是"ScreensManager 正在转场"的权威信号。
+                            !Game.ScreensManager.IsAnimating &&
+                            !(Game.ScreensManager.CurrentScreen is Game.GameScreen))
+                        {
+                            GameManager.UpdateProject();
+                        }
+                    }
+                    catch (Exception e) { NoteFrameStepFailure("host-project-advance", e); }
+
                     // 编辑玩家屏（PlayerScreen）进入/退出钩子：只比较 ScreensManager.CurrentScreen
                     // 的引用；退出那一帧抓快照并同步名字/皮肤（不轮询玩家资料）。
                     try { m_editWatcher?.Tick(); }
@@ -1294,6 +1380,8 @@ namespace SuMultiplayer
                             (m_voiceMuteTable?.DescribeCounters() ?? "vo=n/a") +
                             " · frameSteps=" + m_frameStepFailureTotal + " [" +
                             DescribeFrameStepCounters() + "]");
+                        // G8 验收证据：联机时进菜单 → pullBacks 增长（世界没被本地界面冻结）。
+                        ModLog.Info("[SuMP] time-flow: " + DescribeTimeFlowCounters());
                     }
                 }
                 catch (Exception e)
@@ -1649,6 +1737,16 @@ namespace SuMultiplayer
         }
 
         /// <summary>帧子步骤失败计数摘要（5 秒状态行用；无失败时就是 0）。</summary>
+        /// <summary>
+        /// 世界时钟维护的计数（G8 实机验收用）：pullBacks 增长 = 联机时确实有菜单把
+        /// 时钟压成 0、而 mod 把它拉了回来（A8/A9 的直接证据）。
+        /// </summary>
+        private string DescribeTimeFlowCounters()
+        {
+            if (m_timeFlow == null) return "no-time-flow";
+            return m_timeFlow.Describe();
+        }
+
         private string DescribeFrameStepCounters()
         {
             if (m_frameStepFailures.Count == 0) return "0";
@@ -1661,12 +1759,34 @@ namespace SuMultiplayer
             return text.ToString();
         }
 
+        /// <summary>
+        /// G10：引擎窗口正在关闭（用户点关闭按钮 / 菜单退出游戏）。
+        /// 此时还来得及向房间里的客户端广播 HostShutdown；广播完就交给进程正常退出。
+        /// </summary>
+        private void HandleWindowClosedForHostShutdown()
+        {
+            try
+            {
+                m_terrainModule?.NotifyHostShuttingDown("host closing the game");
+            }
+            catch (Exception e)
+            {
+                ModLog.Warn("[SuMP][host-shutdown] 广播主机退出通知失败：" +
+                    e.GetType().Name + " " + e.Message);
+            }
+        }
+
         public void OnUnload()
         {
             try
             {
+                global::Engine.Window.Closed -= HandleWindowClosedForHostShutdown;
+            }
+            catch (Exception) { }
+            try
+            {
                 ChatAutomation = null;
-                CircuitSyncDebugAutomation = null;
+                CircuitSyncDebugAutomation = null;
                 m_editWatcher = null;
                 m_chatOverlay?.Dispose();
                 m_chatOverlay = null;

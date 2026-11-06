@@ -78,6 +78,14 @@ namespace SuMultiplayer.Engine
         /// <summary>远端语音的本地播放增益（0..1）。</summary>
         public float VoiceVolume = 1f;
         /// <summary>
+        /// 断线后保持世界并重连的窗口（毫秒）。0 = 关闭该能力，退回"连接失效立刻退出世界"。
+        /// 见 doc/reconnect-and-kick-plan.md G1：网络瞬断不该把玩家踢回主菜单。
+        /// 窗口耗尽必须**立即**停手（主机的地形改动历史只保留 60 秒，拖久了会被明确拒绝重连）。
+        /// </summary>
+        public int ReconnectWindowMs = 30000;
+        /// <summary>重连尝试间隔（毫秒）。只在重连窗口内生效，默认 5 秒。</summary>
+        public int ReconnectIntervalMs = 5000;
+        /// <summary>
         /// 语音编码档位（high / standard / low / ultra）；默认 standard（3-bit ADPCM）。
         /// 见 <see cref="VoiceProfiles"/>：每包 163 / 123 / 83 / 43 字节。
         /// </summary>
@@ -286,6 +294,16 @@ namespace SuMultiplayer.Engine
                     if (float.TryParse(value, NumberStyles.Float, CultureInfo.InvariantCulture,
                             out float voiceVolume))
                         config.VoiceVolume = Math.Max(0f, Math.Min(1f, voiceVolume));
+                    break;
+                case "reconnectwindowms":
+                    if (int.TryParse(value, NumberStyles.Integer, CultureInfo.InvariantCulture,
+                            out int reconnectWindow) && reconnectWindow >= 0)
+                        config.ReconnectWindowMs = Math.Min(reconnectWindow, 300000);
+                    break;
+                case "reconnectintervalms":
+                    if (int.TryParse(value, NumberStyles.Integer, CultureInfo.InvariantCulture,
+                            out int reconnectInterval) && reconnectInterval >= 200)
+                        config.ReconnectIntervalMs = Math.Min(reconnectInterval, 60000);
                     break;
                 case "voicequality":
                 case "voiceprofile":

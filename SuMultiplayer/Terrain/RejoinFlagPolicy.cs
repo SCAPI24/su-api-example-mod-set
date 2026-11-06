@@ -21,6 +21,26 @@ namespace SuMultiplayer.Terrain
     /// 模块（<c>Modules/TerrainSyncModule.cs</c>）把引擎事实与会话事实折算成入参后只调用本方法，
     /// P:\tmp\tsverify 对**同一份源码**做单元断言。
     /// </summary>
+    /// <summary>
+    /// Hello.join_intent 的取值（append-only；见 doc/reconnect-and-kick-plan.md G9）。
+    /// 与 <c>already_has_world</c> 布尔的关系：<c>Rejoin == 2</c> ⇔ <c>already_has_world == true</c>；
+    /// <c>FreshJoin == 1</c> 覆盖 <c>already_has_world == false</c> 的全部情况。
+    /// 新字段的价值在于让主机在「要清理旧连接」这件事上不再靠猜：
+    /// 客户端已退出世界（Project 销毁）但主机侧旧连接尚未判死时，仅看布尔值无法得知
+    /// 「这是同一个人的重新加入、必须先清掉旧连接」。
+    /// </summary>
+    public enum JoinIntent : uint
+    {
+        /// <summary>未声明（旧客户端）→ 主机按 already_has_world 推断（向后兼容）。</summary>
+        Unspecified = 0,
+
+        /// <summary>全新加入（Project 已销毁 / 首次加入）→ 主机必须先清理该身份旧连接再走首次加入。</summary>
+        FreshJoin = 1,
+
+        /// <summary>掉线重连（Project 仍在，重连窗口内）→ 主机踢掉旧连接后继承会话记录并追帧。</summary>
+        Rejoin = 2
+    }
+
     public static class RejoinFlagPolicy
     {
         /// <summary>

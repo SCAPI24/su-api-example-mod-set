@@ -495,6 +495,9 @@ namespace SuMultiplayer.Net
                 try
                 {
                     tcp.NoDelay = true;
+                    // 空闲探测：客户端 WiFi 抖动 / 省电休眠后，没有 KeepAlive 的连接会一直挂在
+                    // "半开"状态（读阻塞、写成功），上层看不出对端已经不可达。见 EnableTcpKeepAlive。
+                    EnableTcpKeepAlive(tcp.Client, "server-accept");
                     var peer = new Peer
                     {
                         Id = Interlocked.Increment(ref m_nextClientId) - 1,
@@ -869,6 +872,54 @@ namespace SuMultiplayer.Net
             return true;
         }
 
+        /// <summary>
+        /// 主机：把一条**主连接**连同它的两条附属连接一起踢掉（G6 / G7）。
+        /// 顺序很重要：先尽力把 <c>Kicked</c> 发出去（让对端知道"别再重连"），
+        /// 再断两条附属通道，最后关主连接。
+        ///
+        /// 为什么不能只关 socket：对端会把"连接被他端关闭"当成网络故障，进入断线重连窗口
+        /// 一遍遍重试，直到窗口耗尽（30 秒白等）。<c>Kicked</c> 是明确的语义信号。
+        /// 发送失败不阻断踢出流程（socket 可能已经死了）—— 那条路径下对端本来也收不到。
+        /// </summary>
+        public virtual void KickPrimaryClient(int clientId, string reason, bool superseded)
+        {
+            if (clientId <= 0) return;
+            Peer peer = null;
+            lock (m_gate)
+            {
+                for (int i = 0; i < m_peers.Count; i++)
+                {
+                    Peer candidate = m_peers[i];
+                    if (candidate.Id != clientId || candidate.IsCircuit || candidate.IsTerrain)
+                        continue;
+                    peer = candidate;
+                    break;
+                }
+            }
+            if (peer != null && peer.Alive)
+            {
+                try
+                {
+                    var message = new SuMultiplayer.Protocol.Kicked
+                    {
+                        Reason = reason ?? string.Empty,
+                        Superseded = superseded
+                    };
+                    TrySend(clientId, MessageType.Kicked, message.ToByteArray());
+                }
+                catch (Exception e)
+                {
+                    global::Engine.Log.Information("[SuMP][net] 踢出信号发送失败（clientId=" +
+                        clientId + "）：" + e.GetType().Name + " " + e.Message +
+                        " → 仍然继续踢出（对端可能已不可达）");
+                }
+            }
+            // 附属两条一起断：孤儿 Peer 会一直挂在 m_terrainPeers / m_circuitPeers 里。
+            DisconnectTerrainClient(clientId, reason ?? "host-kicked");
+            DisconnectCircuitClient(clientId, reason ?? "host-kicked");
+            if (peer != null) Fail(peer, reason ?? "host-kicked");
+        }
+
         private bool Enqueue(Peer peer, MessageType type, byte[] payload)
         {
             if (peer == null || !peer.Alive) return false;
@@ -1141,6 +1192,76 @@ namespace SuMultiplayer.Net
             }
         }
 
+        // ---- TCP KeepAlive ----
+        //
+        // 为什么必须开（2026-11-06 实机问题）：
+        //   · 客户端/服务端都**没有**配置过 KeepAlive，连接空闲时操作系统不发任何探测包；
+        //   · WiFi 抖动 / 省电休眠 / AP 空闲回收 NAT 映射之后，连接会进入"半开"状态：
+        //     读循环一直阻塞、发送仍然"成功"（写进内核缓冲），上层完全看不出对端已经
+        //     不在了 —— 用户看到的就是"没操作时突然 Connection to the host was lost"；
+        //   · 有流量时不会出问题（上行包本身起保活作用），所以症状是"不操作时才断"。
+        // 开启后：空闲超过 KeepAliveTime 就发探测包（保活 + 让 NAT 映射不过期），
+        // 连续 KeepAliveRetryCount 次无响应即由内核判死 → 读循环立刻失败 → 上层按既有
+        // 路径重连 / 退出，而不是无限期挂在半开连接上。
+        private const int KeepAliveTimeSeconds = 30;      // 空闲多久开始探测
+        private const int KeepAliveIntervalSeconds = 5;   // 探测间隔
+        private const int KeepAliveRetryCount = 3;        // 连续几次无响应判死（30+5×3=45s 内）
+
+        /// <summary>
+        /// 给已建立（或刚 accept）的 socket 打开 TCP KeepAlive。
+        ///
+        /// 平台差异（这是本方法必须容错的原因，不是"静默兜底"）：
+        ///   · Windows / Linux 支持 TcpKeepAliveTime / Interval / RetryCount 三个 socket
+        ///     选项，能精确控制空闲时间 / 间隔 / 次数；
+        ///   · Android（Bionic）对这些选项的支持不完整：部分值会被忽略或抛异常，但
+        ///     SocketOptionName.KeepAlive 本身一定可用（退回系统默认：2 小时空闲 +
+        ///     9×75s 探测，只保证"不会永远挂住"，不保证及时）。
+        /// 所以这里：先无条件开 KeepAlive，再尽力设置精细参数；精细参数失败时
+        /// **只记一行**（不刷屏、不当失败），因为开着的 KeepAlive 已达成主要目标。
+        /// </summary>
+        private static void EnableTcpKeepAlive(Socket socket, string role)
+        {
+            if (socket == null) return;
+            try
+            {
+                socket.SetSocketOption(SocketOptionLevel.Socket, SocketOptionName.KeepAlive, true);
+            }
+            catch (Exception e)
+            {
+                // 连 KeepAlive 都开不了才是真问题：明确记下来（不静默）。
+                global::Engine.Log.Warning("[SuMP][net] 打开 TCP KeepAlive 失败（" + role + "）：" +
+                    e.GetType().Name + " " + e.Message + " → 空闲连接可能被中间设备回收");
+                return;
+            }
+            bool fine = true;
+            fine &= TrySetKeepAliveOption(socket, SocketOptionName.TcpKeepAliveTime,
+                KeepAliveTimeSeconds);
+            fine &= TrySetKeepAliveOption(socket, SocketOptionName.TcpKeepAliveInterval,
+                KeepAliveIntervalSeconds);
+            fine &= TrySetKeepAliveOption(socket, SocketOptionName.TcpKeepAliveRetryCount,
+                KeepAliveRetryCount);
+            if (!fine)
+            {
+                global::Engine.Log.Information("[SuMP][net] TCP KeepAlive 已开启，但平台不支持精细参数" +
+                    "（" + role + "）→ 使用系统默认探测节奏；连接不会被无限期挂住");
+            }
+        }
+
+        /// <summary>设置单个 KeepAlive 精细选项；不支持时返回 false（不抛给调用方）。</summary>
+        private static bool TrySetKeepAliveOption(Socket socket, SocketOptionName option, int value)
+        {
+            try
+            {
+                socket.SetSocketOption(SocketOptionLevel.Tcp, option, value);
+                return true;
+            }
+            catch (Exception)
+            {
+                // Android / 旧平台不支持该选项：由 EnableTcpKeepAlive 汇总成一行说明。
+                return false;
+            }
+        }
+
         private static async Task<bool> ReadExactAsync(NetworkStream stream, byte[] buffer, int count)
         {
             int offset = 0;
@@ -1308,6 +1429,18 @@ namespace SuMultiplayer.Net
         public virtual string StateDetail { get; protected set; } = string.Empty;
 
         /// <summary>
+        /// 上一次 Connect 失败的**可读分类**（"连接被拒绝（主机端口没有监听…）" / "网络不可达(HostUnreachable)" /
+        /// "连接超时" …）。**只用于日志与诊断**，不参与任何"要不要退出世界"的决策。
+        ///
+        /// 为什么不做决策依据（2026-11-06 结论）：实机强杀主机时客户端拿到的是「连接超时」
+        /// 而不是 ConnectionRefused —— PC 整体网络不可达（ping 100% 丢包、nc 超时）时 OS
+        /// 根本收不到 RST。而"网络不可达"与"我自己的 WiFi 断了"在网络层完全同形，
+        /// 后者正是要"保持世界并重连"的场景。基于连接错误的快速退出一定会误伤它，
+        /// 所以一切交给 30 秒重连窗口统一收尾。
+        /// </summary>
+        public string LastConnectFailureKind { get; private set; } = string.Empty;
+
+        /// <summary>
         /// 这条连接现在还能不能收发：只有 Connected / Backpressured 算活着。
         /// 收循环或发循环一旦失败（<see cref="SetState"/> → Failed）它就是 false。
         /// 上层**绝不能**拿"客户端对象还在"当"连接还在"（实机故障：对端掉线后位置快照一直往
@@ -1324,6 +1457,7 @@ namespace SuMultiplayer.Net
         private bool ConnectInternal(int timeoutMs, bool circuitMode, int primaryClientId,
             SecondaryChannelKind secondaryKind)
         {
+            LastConnectFailureKind = string.Empty;
             m_circuitMode = false;
             m_secondaryKind = secondaryKind;
             m_circuitAttached = false;
@@ -1363,14 +1497,34 @@ namespace SuMultiplayer.Net
                     m_tcp = new TcpClient { NoDelay = true };
                     TransportDiagnostics.OnSocketOpened();
                     m_socketCounted = true;
-                    if (!m_tcp.ConnectAsync(m_host, m_port).Wait(timeoutMs))
+                    // Wait(timeout) 抛 AggregateException 时内层才是真实的 SocketException：
+                    // 把它交给 ClassifyConnectFailure 判定"主机确实不在"还是"本端网络问题"。
+                    Task connectTask = m_tcp.ConnectAsync(m_host, m_port);
+                    bool completed;
+                    try
+                    {
+                        completed = connectTask.Wait(timeoutMs);
+                    }
+                    catch (AggregateException ae)
                     {
                         CloseSocket();
-                        SetState(ChannelState.Failed, "连接超时");
+                        string kind = DescribeConnectFailure(FindSocketException(ae));
+                        LastConnectFailureKind = kind;
+                        SetState(ChannelState.Failed, kind);
+                        return false;
+                    }
+                    if (!completed)
+                    {
+                        CloseSocket();
+                        LastConnectFailureKind = "连接超时（" + timeoutMs + " ms 内未建立）";
+                        SetState(ChannelState.Failed, LastConnectFailureKind);
                         return false;
                     }
                 }
                 m_stream = m_tcp.GetStream();
+                // 空闲探测：不操作时 WiFi 进入省电 / AP 回收 NAT 映射后连接会静默半开，
+                // 上层看不到对端已经不在，直到某个时机才突然报错并退出房间。见 EnableTcpKeepAlive。
+                EnableTcpKeepAlive(m_tcp.Client, "client-connect");
                 // Set the transport mode before starting ReceiveLoopAsync. The server can
                 // reply with CircuitAttached immediately after the attach frame; if the
                 // receive loop starts in normal mode it rejects that frame and loses the
@@ -1389,6 +1543,50 @@ namespace SuMultiplayer.Net
                 CloseSocket();
                 SetState(ChannelState.Failed, e.GetType().Name);
                 return false;
+            }
+        }
+
+        /// <summary>从 AggregateException 里取出第一个 SocketException（可能嵌套多层）。</summary>
+        private static SocketException FindSocketException(AggregateException aggregate)
+        {
+            if (aggregate == null) return null;
+            foreach (Exception inner in aggregate.Flatten().InnerExceptions)
+            {
+                if (inner is SocketException socket) return socket;
+            }
+            return aggregate.InnerException as SocketException;
+        }
+
+        /// <summary>
+        /// 把连接失败归类成可读原因，并指出它是否**说明主机进程真的不在了**（G10）。
+        ///
+        /// <paramref name="refused"/> = true 仅当 <c>SocketError.ConnectionRefused</c>：
+        /// TCP 握手被 RST ⇒ 主机在线但端口无人监听 ⇒ 主机游戏已退出，重连没有意义。
+        /// 其它（HostUnreachable / NetworkUnreachable / TimedOut / 代理失败 …）一律算
+        /// "可能是本端网络问题"，值得留在重连窗口里继续等。
+        /// </summary>
+        /// <summary>
+        /// 把连接失败翻译成**可读原因**（只用于日志 / StateDetail，不参与任何退出决策）。
+        ///
+        /// 保留完整的 <see cref="SocketError"/> 名字：实机排障时"连接超时"和
+        /// "ConnectionRefused"是完全不同的两件事，日志里必须能分辨。
+        /// </summary>
+        private static string DescribeConnectFailure(SocketException socketError)
+        {
+            if (socketError == null) return "连接失败（无底层错误码）";
+            switch (socketError.SocketErrorCode)
+            {
+                case SocketError.ConnectionRefused:
+                    return "连接被拒绝 ConnectionRefused（目标端口无人监听）";
+                case SocketError.HostUnreachable:
+                case SocketError.NetworkUnreachable:
+                case SocketError.HostDown:
+                case SocketError.NetworkDown:
+                case SocketError.TimedOut:
+                case SocketError.TryAgain:
+                    return "网络不可达 " + socketError.SocketErrorCode;
+                default:
+                    return "连接失败 " + socketError.SocketErrorCode;
             }
         }
 
@@ -1617,6 +1815,65 @@ namespace SuMultiplayer.Net
                 }
             }
             catch (Exception e) { SetState(ChannelState.Failed, e.GetType().Name); }
+        }
+
+        // ---- TCP KeepAlive（客户端侧）----
+        //
+        // 与服务端 TcpTerrainServer 里的同名实现保持一致性：两个类各自独立，
+        // 私有静态方法不跨界共享，所以两边各留一份（逻辑与注释同源，改一处必须同改另一处）。
+        //
+        // 客户端更需要它：手机 WiFi 在"不操作"时会进入省电 / 被 AP 回收 NAT 映射，
+        // 没有 KeepAlive 的连接会静默半开（读阻塞、写成功），上层看不出主机已经不可达，
+        // 直到某个时机才突然报错并直接退出房间。
+        private const int KeepAliveTimeSeconds = 30;      // 空闲多久开始探测
+        private const int KeepAliveIntervalSeconds = 5;   // 探测间隔
+        private const int KeepAliveRetryCount = 3;        // 连续几次无响应判死（30+5×3=45s 内）
+
+        /// <summary>
+        /// 给已建立的 socket 打开 TCP KeepAlive（客户端版）。
+        /// 平台差异：Windows / Linux 支持 TcpKeepAliveTime / Interval / RetryCount 精确参数；
+        /// Android 对精细选项支持不完整（可能忽略或抛异常），但 KeepAlive 本身可用
+        /// （退回系统默认节奏）。精细参数失败只记一行，因为开着的 KeepAlive 已达成主要目标。
+        /// </summary>
+        private static void EnableTcpKeepAlive(Socket socket, string role)
+        {
+            if (socket == null) return;
+            try
+            {
+                socket.SetSocketOption(SocketOptionLevel.Socket, SocketOptionName.KeepAlive, true);
+            }
+            catch (Exception e)
+            {
+                global::Engine.Log.Warning("[SuMP][net] 打开 TCP KeepAlive 失败（" + role + "）：" +
+                    e.GetType().Name + " " + e.Message + " → 空闲连接可能被中间设备回收");
+                return;
+            }
+            bool fine = true;
+            fine &= TrySetKeepAliveOption(socket, SocketOptionName.TcpKeepAliveTime,
+                KeepAliveTimeSeconds);
+            fine &= TrySetKeepAliveOption(socket, SocketOptionName.TcpKeepAliveInterval,
+                KeepAliveIntervalSeconds);
+            fine &= TrySetKeepAliveOption(socket, SocketOptionName.TcpKeepAliveRetryCount,
+                KeepAliveRetryCount);
+            if (!fine)
+            {
+                global::Engine.Log.Information("[SuMP][net] TCP KeepAlive 已开启，但平台不支持精细参数" +
+                    "（" + role + "）→ 使用系统默认探测节奏；连接不会被无限期挂住");
+            }
+        }
+
+        /// <summary>设置单个 KeepAlive 精细选项；不支持时返回 false（不抛给调用方）。</summary>
+        private static bool TrySetKeepAliveOption(Socket socket, SocketOptionName option, int value)
+        {
+            try
+            {
+                socket.SetSocketOption(SocketOptionLevel.Tcp, option, value);
+                return true;
+            }
+            catch (Exception)
+            {
+                return false;
+            }
         }
 
         private static async Task<bool> ReadExactAsync(NetworkStream stream, byte[] buffer, int count)

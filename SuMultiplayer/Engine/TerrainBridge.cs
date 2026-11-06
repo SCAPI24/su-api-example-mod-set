@@ -9,6 +9,7 @@ using System.Threading;
 using Engine;
 using Game;
 using SuMultiplayer.Net;
+using SuMultiplayer.Protocol;
 using SuMultiplayer.Terrain;
 
 namespace SuMultiplayer.Engine
@@ -30,6 +31,34 @@ namespace SuMultiplayer.Engine
         ITopLayerTrimTerrainWriter
     {
         private readonly ConcurrentQueue<ReceivedFrame> m_inbox = new ConcurrentQueue<ReceivedFrame>();
+        /// <summary>
+        /// m_inbox 的容量上限（待主线程处理的网络帧条数）。
+        ///
+        /// **只丢"无序号语义"的帧，带序号连续性的关键帧一律不丢。**
+        /// 这条区分至关重要（2026-11-06 修正）：
+        ///
+        /// · 带序号的帧（CellChange / CatchUp / ChunkResync / TopLayerFix / ChunkVerdict /
+        ///   HelloAck / Kicked / HostShutdown …）**绝不能丢**。客户端对 CellChange 做
+        ///   `prev == 上一条` 连续性校验，丢一条 ⇒ NoteDeliveryGap ⇒
+        ///   <c>QueueAllMemoryVerifications()</c> 把**全部内存块**（实测 201 块）排进强制核对，
+        ///   而核对预算是每秒几条 —— 追平要一秒以上，且核对本身加重主线程负担，
+        ///   于是"积压 → 丢帧 → 核对暴增 → 更积压"形成正反馈雪崩。
+        /// · 无序号语义的帧（Ping/Pong、LiveMap 遥测、运行时遥测等）丢了只是少一次观测，
+        ///   下一轮自然会再来，没有任何一致性代价。
+        ///
+        /// 所以积压时优先丢后者；如果队列里全是关键帧，就**不丢**（宁可积压，
+        /// 也不触发雪崩），只在高水位告警里说明情况。
+        ///
+        /// 4096 条的余量：主线程每帧最多消费 <see cref="PumpBudget"/> = 256 条，
+        /// 连续 16 帧完全不消费也不会触顶；实测正常入流只有十几帧/秒。
+        /// </summary>
+        private const int InboxCapacity = 4096;
+        /// <summary>积压丢弃时累计"想丢但因为是关键帧而放弃丢弃"的次数（诊断）。</summary>
+        private long m_inboxCriticalRetained;
+        /// <summary>因超过 <see cref="InboxCapacity"/> 被丢弃的帧数（诊断；非零 = 发生过积压）。</summary>
+        private long m_inboxDropped;
+        /// <summary>过去上限告警的限流时刻（最多 10 秒一行，避免刷屏）。</summary>
+        private long m_lastInboxWarnMs;
         /// <summary>
         /// 内存 / 常驻 / 上报集合与"超时未定稿"的唯一状态机（纯托管，见 <see cref="ChunkResidencyTracker"/>）。
         /// 曾经这里是 <c>Dictionary&lt;ChunkKey, TerrainChunk&gt; m_resident</c> + <c>HashSet m_memory</c>
@@ -248,8 +277,90 @@ namespace SuMultiplayer.Engine
         private const long HostMissLogIntervalMs = 10000;
 
         // ---- 网络线程 → 主线程 ----
-        /// <summary>网络线程调用：只入队（不能用 in 参数，否则匹配不上 Action&lt;ReceivedFrame&gt;）。</summary>
-        public void PostFrame(ReceivedFrame frame) => m_inbox.Enqueue(frame);
+        /// <summary>
+        /// 网络线程调用：入队交给主线程处理（不能用 in 参数，否则匹配不上 Action&lt;ReceivedFrame&gt;）。
+        ///
+        /// 超过 <see cref="InboxCapacity"/> 时**丢新帧**并计数：丢失会被客户端的序号连续性
+        /// 校验识别为缺口，从而触发既有的强制核对 / 整块回传恢复（见字段注释）。
+        /// 选择丢"新到的"而不是"最旧的"：保留已经在队列里的较早帧，主线程下一步就能
+        /// 立刻发现序列断点，恢复动作最早发生。
+        /// </summary>
+        public void PostFrame(ReceivedFrame frame)
+        {
+            if (m_inbox.Count >= InboxCapacity)
+            {
+                if (IsDroppableWhenCongested(frame.Type))
+                {
+                    m_inboxDropped++;
+                    long nowMs = Environment.TickCount64;
+                    if (m_lastInboxWarnMs == 0 || nowMs - m_lastInboxWarnMs >= 10000)
+                    {
+                        m_lastInboxWarnMs = nowMs;
+                        global::Engine.Log.Warning("[SuMP][terrain] 网络帧积压超过上限 " +
+                            InboxCapacity + " 条 → 丢弃**无序号语义**的帧（" + frame.Type + " seq=" +
+                            frame.Sequence + "）；已累计丢弃 " + m_inboxDropped +
+                            " 帧、因是关键帧而保留 " + m_inboxCriticalRetained +
+                            " 次。持续出现说明主线程消费跟不上网络入流");
+                    }
+                    return;
+                }
+                // 关键帧（带序号连续性）：**不丢**。宁可让它继续积压也不触发
+                // "丢帧 → 全部内存块强制核对" 的正反馈雪崩（见 InboxCapacity 注释）。
+                m_inboxCriticalRetained++;
+                long retainedNow = Environment.TickCount64;
+                if (m_lastInboxWarnMs == 0 || retainedNow - m_lastInboxWarnMs >= 10000)
+                {
+                    m_lastInboxWarnMs = retainedNow;
+                    global::Engine.Log.Warning("[SuMP][terrain] 网络帧积压超过上限 " +
+                        InboxCapacity + " 条，但到的是**关键帧**（" + frame.Type + " seq=" +
+                        frame.Sequence + "）→ 保留不丢（丢它会触发全部内存块强制核对，" +
+                        "反而加重同步压力）。当前队列 " + m_inbox.Count +
+                        " 条，累计已保留 " + m_inboxCriticalRetained +
+                        " 次。持续出现需排查主线程单帧处理耗时");
+                }
+            }
+            m_inbox.Enqueue(frame);
+        }
+
+        /// <summary>
+        /// 积压时该帧能否安全丢弃。
+        ///
+        /// **只允许丢"无序号语义"的帧**：丢一次少一次观测，下一轮自然重来，没有一致性代价。
+        /// 带序号连续性的关键帧返回 false —— 丢它们会让客户端判定"缺口"并把全部内存块
+        /// 排进强制核对（QueueAllMemoryVerifications），那会把积压变成雪崩。
+        ///
+        /// 采用**白名单**而不是黑名单：新增消息类型默认按"关键帧"处理（保留不丢），
+        /// 这样将来加了新的序号型消息也不会因为漏登记而被丢掉。
+        /// </summary>
+        private static bool IsDroppableWhenCongested(MessageType type)
+        {
+            switch (type)
+            {
+                // 心跳：丢了下一拍就有，零代价。
+                case MessageType.Ping:
+                case MessageType.Pong:
+                // 诊断 / 遥测：纯观测数据，丢一次只影响那一拍的可视化。
+                case MessageType.LiveMapTelemetry:
+                case MessageType.ClientRuntimeTelemetry:
+                // 运行时统计的增量快照：下一次快照会带上完整状态。
+                case MessageType.PlayerStatsDelta:
+                case MessageType.PlayerStatsSnapshot:
+                    return true;
+                default:
+                    // 其余一律当关键帧（含 CellChange / CatchUp / ChunkResync / TopLayerFix /
+                    // ChunkVerdict / HelloAck / Kicked / HostShutdown / 语音 / 位置等）。
+                    return false;
+            }
+        }
+
+        /// <summary>因是关键帧而在积压时被保留的次数（诊断；非零表示积压时到达过关键帧）。</summary>
+        public long InboxCriticalRetained => m_inboxCriticalRetained;
+
+        /// <summary>累计丢弃的网络帧数（诊断用；非零表示发生过积压）。</summary>
+        public long InboxDroppedFrames => m_inboxDropped;
+
+        /// <summary>当前待处理网络帧数（诊断用）。</summary>
+        public int InboxCount => m_inbox.Count;
 
         // ---- ITerrainWorld：全部在主线程被调用 ----
         public bool HasContents(ChunkKey key)

@@ -523,6 +523,19 @@ enum MessageType {
   // Low-rate performance reporting and LiveMap telemetry. Diagnostic only.
   CLIENT_RUNTIME_TELEMETRY = 145;
   LIVE_MAP_TELEMETRY = 146;
+
+  // 主机 → 客户端：主机主动把这条连接 / 这个身份踢出房间（不是审批拒绝、
+  // 不是重连拒绝）。客户端收到后**必须直接退出世界**，不得进入断线重连窗口。
+  // 用途：同一身份在新连接上重新加入（旧连接被顶替）、主机管理操作（踢出）。
+  // 见 doc/reconnect-and-kick-plan.md G6。
+  KICKED = 149;
+
+  // 主机 -> 客户端：主机正在**正常退出游戏**（用户点了关闭 / 菜单退出），
+  // 不是网络故障。客户端收到后必须立即退出世界，不要进入断线重连窗口。
+  // 强杀进程无法发送这条消息（那时没有任何代码能执行），那种情况由客户端的
+  // "连接被拒绝(ECONNREFUSED) 即判定主机真的不在"来快速收尾。
+  // 见 doc/reconnect-and-kick-plan.md G10。
+  HOST_SHUTDOWN = 155;
 }
 
 // 主机 / 客户端：一格方块被破坏时的纯表现事件。
@@ -547,6 +560,26 @@ message Ping {
 // 主机 -> 客户端：原样带回 nonce；客户端用本地发送时刻算 RTT。
 message Pong {
   uint64 nonce = 1;
+}
+
+// 主机 -> 客户端：主机主动把这条连接 / 这个身份踢出房间。
+// 与 HelloAck.kicked 的区别：那条只能覆盖握手期，这条覆盖**已连接状态**下的踢出。
+// 客户端收到后必须**直接退出世界**，不得进入断线重连窗口。
+// 见 doc/reconnect-and-kick-plan.md G6。
+message Kicked {
+  // 主机给的原因（写日志；UI 只显示英文固定文案）。空 = 主机未说明。
+  string reason = 1;
+  // true => 同一身份在别处重新加入，旧连接被顶替（不是管理操作）。
+  // 客户端处理一致（都是直接退出），仅用于日志与 UI 措辞区分。
+  bool superseded = 2;
+}
+
+// 主机 -> 客户端：主机正在正常退出游戏（不是网络故障）。
+// 客户端收到后立即退出世界，不进入断线重连窗口。
+// 见 doc/reconnect-and-kick-plan.md G10。
+message HostShutdown {
+  // 主机给的原因（写日志用）。空 = 未说明。
+  string reason = 1;
 }
 
 // Logical envelope metadata.  The current single-message transport puts these
@@ -603,6 +636,15 @@ message Hello {
   uint32 multiplayer_protocol_version = 13;
   string multiplayer_protocol_hash = 14;
   string multiplayer_build_fingerprint = 15;
+  // 客户端加入意图，让主机区分"全新加入"与"掉线重连"，避免只靠布尔 already_has_world
+  // 推断出错误结论（客户端已退出世界但主机侧旧连接尚未判死时，两者语义完全不同）。
+  //   0 = 未声明（旧客户端）→ 主机按 already_has_world 推断（向后兼容）
+  //   1 = 全新加入（Project 已销毁 / 首次加入）
+  //       → 主机必须先清理该身份旧连接，再走首次加入并下发整图
+  //   2 = 掉线重连（Project 仍在，30 秒重连窗口内）
+  //       → 主机踢掉旧连接后继承会话记录，按 last_applied_sequence 追帧
+  // 见 doc/reconnect-and-kick-plan.md G9。
+  uint32 join_intent = 16;
 
   // Third-party extension points: see doc/message-protocol.md.
   bytes ext = 100;
@@ -674,6 +716,12 @@ message HelloAck {
   // One-time ticket for the separately queued terrain TCP socket. Empty means
   // the host declined or could not issue a terrain channel ticket.
   bytes terrain_ticket = 26;
+  // true => 主机主动把这条连接 / 这个身份踢出房间（不是审批拒绝 rejected、也不是
+  // 重连拒绝）。客户端必须**直接退出世界**，不得进入断线重连窗口。
+  // 见 doc/reconnect-and-kick-plan.md G6。
+  bool kicked = 27;
+  // 踢出原因（写日志；UI 只显示英文固定文案）。空 = 主机未说明。
+  string kick_reason = 28;
 
   bytes ext = 100;
   google.protobuf.Any custom = 101;

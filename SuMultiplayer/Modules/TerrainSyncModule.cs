@@ -145,6 +145,32 @@ namespace SuMultiplayer.Modules
         private bool m_wantClient;
         /// <summary>主机丢失退出端口（组合根注册；null 时维持旧的按间隔重连语义）。</summary>
         private IClientSessionExitPort m_clientExit;
+        /// <summary>G6：已被主机踢出 → 禁止任何"连接失效后自动重连"（一次性，重连成功/换房时清）。</summary>
+        private bool m_clientKicked;
+        /// <summary>G10：主机退出通知是否已发过（幂等；Window.Closed 与 OnUnload 都可能触发）。</summary>
+        private bool m_hostShutdownSent;
+        /// <summary>
+        /// 后台连接尝试（G11）。连接必须在**后台线程**做：实测 ConnectAsync().Wait(3000)
+        /// 在 Android 上即使目标端口被拒绝也要约 2 秒才返回，而重连窗口内会重试多次 ——
+        /// 同步做会把主线程连续冻结十几秒，Android 看门狗直接 SIGABRT
+        /// （实机 2026-11-06：'Cannot transition thread from RUNNING with DONE_BLOCKING'）。
+        ///
+        /// 状态机：null = 空闲；非 null = 有一次尝试在跑（主线程只轮询结果，从不等待）。
+        /// </summary>
+        private System.Threading.Tasks.Task<ClientConnectAttempt> m_connectAttempt;
+        /// <summary>后台连接用的 host / port（发起那一刻固定下来，避免中途被改）。</summary>
+        private string m_connectAttemptHost;
+        private int m_connectAttemptPort;
+
+
+        /// <summary>
+        /// G1：断线重连窗口的截止时刻（单调毫秒）。0 = 不在窗口内。
+        /// 连接失效时若世界还在（Project 加载中 + GameScreen + 非死亡复活 + worldLoaded），
+        /// 就进入这个窗口重试，而不是立刻退出世界。窗口到点**立即**退出（5.1.1 硬性要求）。
+        /// </summary>
+        private long m_reconnectWindowUntilMs;
+        /// <summary>本次重连窗口内的尝试次数（诊断 / 日志）。</summary>
+        private int m_reconnectWindowAttempts;
         /// <summary>显式退房 BYE 已发 / 发送失败（实测退房清理链路用）。</summary>
         private long m_byeSent;
         private long m_byeSendFailures;
@@ -1156,6 +1182,39 @@ namespace SuMultiplayer.Modules
             return true;
         }
 
+        /// <summary>
+        /// 一次后台连接尝试的产物（G11）。**构造与连接都在后台线程完成**，
+        /// 主线程只负责：①发起 ②轮询 IsCompleted ③成功时装配 m_clientSync。
+        ///
+        /// 为什么把 TerrainSyncClient 的装配留到主线程：它要订阅 bridge 事件、读引擎状态，
+        /// 这些必须在主线程；而纯 socket 连接（阻塞 2~3 秒）留在后台。
+        /// </summary>
+        private sealed class ClientConnectAttempt
+        {
+            public TcpTerrainClient Client;
+            public string Host;
+            public int Port;
+            public bool Connected;
+            public string FailureReason;
+            /// <summary>底层失败的**真实分类**（"连接被拒绝(主机端口无监听)" / "网络不可达(HostUnreachable)" / "连接超时" …）。
+            /// 之前日志只写 State 枚举名（新建对象初始值就是 "Failed"），分不清失败类型，排障时等于没有信息。</summary>
+            public string Detail;
+        }
+
+        /// <summary>
+        /// 发起一次加入（G11 改造后**连接在后台**完成，本方法只负责"发起"）。
+        ///
+        /// 返回值语义（重要，曾被改错过）：= **"加入流程已成功发起"**，而不是"此刻已连上"。
+        /// 连接结果由后续的 <see cref="PollConnectAttempt"/> 在每帧轮询里交付。
+        ///
+        /// 为什么必须这样：调用方 <see cref="Modules.SessionModule.TryBeginJoin"/> 用
+        /// <c>!ConnectTo(...) ⇒ 弹 "Cannot join ..." 对话框</c> 来终止加入流程。
+        /// 异步化之后如果仍按"本轮是否已连上"返回 false，**每次点加入都会立刻弹一次
+        /// "Cannot join"，但连接其实正在后台正常建立**（实机 2026-11-06 复现：
+        /// 提示多了一条"加入失败"，而随后照样进了世界）。
+        ///
+        /// 只有"连发起都不可能"时才返回 false（已有连接 / 已有尝试在跑）。
+        /// </summary>
         private bool ConnectTo(string host, int port, out string reason)
         {
             reason = null;
@@ -1163,31 +1222,114 @@ namespace SuMultiplayer.Modules
             m_wantHost = host;
             m_wantPort = port;
             m_reconnectAttempts = 0;
-            if (m_client != null) return true;
-            return StartClientOnce(out reason);
+            if (m_client != null) return true;                 // 已经连上
+            if (m_connectAttempt != null) return true;         // 已有尝试在跑 = 已发起
+            // StartClientOnce 返回 false 有两种含义，必须区分：
+            //   · 已成功发起后台连接 → 对调用方来说是**成功**（加入流程继续）；
+            //   · 连发起都没做到（异常）→ 才是失败。
+            bool started = StartClientOnce(out string startReason);
+            if (started) return true;
+            if (m_connectAttempt != null) return true;         // 后台尝试已挂上 = 已发起
+            reason = startReason;
+            return false;
         }
 
+        /// <summary>
+        /// 发起一次客户端连接（G11 改造：**连接本身在后台线程**，主线程不阻塞）。
+        ///
+        /// 返回 true = 本帧就成功并已装配好（极少见，通常要等下一帧）；
+        /// false = 已发起、尚无结果，或已明确失败（看 out reason 与非 null 的 m_connectAttempt）。
+        ///
+        /// 为什么必须异步：实测 `ConnectAsync().Wait(3000)` 在 Android 上即使目标端口
+        /// **立即拒绝**也要约 2 秒返回；重连窗口内每 5 秒重试一次，同步做会把主线程
+        /// 连续冻结 → 看门狗 SIGABRT（实机 2026-11-06 已复现）。
+        /// </summary>
         private bool StartClientOnce(out string reason)
         {
             reason = null;
-            // 新连接开始前清掉上一次加入的 drop 请求。旧实现里如果 JoinRejected 到达时
-            // m_client 已经是 null，DropClientConnection 会提前 return，把
-            // m_clientDropRequested=true 留到下一次加入；新连接一建立就被这个陈旧标志
-            // 立刻拆掉，主机看到的是同一玩家连续两个 clientId（旧审批框 + 新审批框）。
+            // 已经有尝试在跑：不重复发起（调用方应按间隔轮询）。
+            if (m_connectAttempt != null)
+            {
+                reason = "已有连接尝试在进行中";
+                return false;
+            }
+            // 新连接开始前清掉上一次加入的 drop 请求（理由见旧实现注释，保持不变）。
             m_clientDropRequested = false;
             m_clientDropReason = null;
+            // 新连接 = 全新会话：上一次"被踢"的标记不能带到这次。
+            // 注意**不清** m_reconnectWindowUntilMs：窗口是"本次断线"的时间预算。
+            m_clientKicked = false;
             DisposeCircuitClient("primary-reconnect");
             DisposeTerrainClient("primary-reconnect");
+
+            m_connectAttemptHost = m_wantHost;
+            m_connectAttemptPort = m_wantPort;
+            string host = m_connectAttemptHost;
+            int port = m_connectAttemptPort;
+            // 后台线程只做 socket 连接（阻塞在这里没关系，主线程继续跑）。
+            m_connectAttempt = System.Threading.Tasks.Task.Run(() =>
+            {
+                var attempt = new ClientConnectAttempt { Host = host, Port = port };
+                TcpTerrainClient client = null;
+                try
+                {
+                    client = new TcpTerrainClient(host, port);
+                    if (client.Connect(3000))
+                    {
+                        attempt.Client = client;
+                        attempt.Connected = true;
+                        return attempt;
+                    }
+                    attempt.Detail = client.StateDetail;
+                    attempt.FailureReason = "连接 " + host + ":" + port + " 失败（" +
+                        (string.IsNullOrEmpty(client.StateDetail) ? client.State.ToString() : client.StateDetail) + "）";
+                }
+                catch (Exception e)
+                {
+                    attempt.FailureReason = e.GetType().Name + " " + e.Message;
+                }
+                // 失败：连接对象就地回收（它是后台线程创建的，回收也在后台，不碰主线程）。
+                try { client?.Dispose(); } catch (Exception) { }
+                return attempt;
+            });
+            reason = "连接尝试已发起（后台）";
+            return false;
+        }
+
+        /// <summary>
+        /// 主线程每帧轮询后台连接结果（G11）。返回 true = 本帧连接成功并已装配完成。
+        ///
+        /// 装配（TerrainSyncClient、事件订阅）**必须在主线程**：它要读引擎状态、
+        /// 订阅 bridge 事件。socket 连接已经在后台做完，这里只做轻量收尾。
+        /// </summary>
+        private bool PollConnectAttempt(out string reason)
+        {
+            reason = null;
+            System.Threading.Tasks.Task<ClientConnectAttempt> task = m_connectAttempt;
+            if (task == null) return false;
+            if (!task.IsCompleted) return false;
+
+            m_connectAttempt = null;
+            ClientConnectAttempt attempt;
             try
             {
-                m_client = new TcpTerrainClient(m_wantHost, m_wantPort);
-                if (!m_client.Connect(3000))
-                {
-                    reason = "连接 " + m_wantHost + ":" + m_wantPort + " 失败（状态 " + m_client.State + "）";
-                    m_client.Dispose();
-                    m_client = null;
-                    return false;
-                }
+                attempt = task.Result;
+            }
+            catch (Exception e)
+            {
+                reason = "后台连接任务异常：" + e.GetType().Name + " " + e.Message;
+                return false;
+            }
+            if (attempt == null || !attempt.Connected || attempt.Client == null)
+            {
+                reason = attempt?.FailureReason ?? "后台连接失败（无结果）";
+                return false;
+            }
+
+            // ---- 以下在主线程：装配同步客户端 ----
+            try
+            {
+                m_client = attempt.Client;
                 Log("player-primary-connected host=" + m_wantHost + " port=" + m_wantPort);
                 m_client.FrameReceived += m_bridge.PostFrame;
                 m_clientSync = new TerrainSyncClient(m_bridge, m_client, m_options, attachToChannel: false,
@@ -1204,6 +1346,10 @@ namespace SuMultiplayer.Modules
                 m_clientSync.ClientChunkSetFailed += HandleClientChunkSetFailed;
                 // 断线重连：重连判定拒绝 / 追帧拒绝 / 追帧过程日志。拒绝是显式失败（不是静默降级）。
                 m_clientSync.RejoinRejected += HandleClientRejoinRejected;
+                // G6：主机主动踢出（已连接状态下）→ 直接退出世界，绝不进重连窗口。
+                m_clientSync.KickedByHost += HandleClientKickedByHost;
+                // G10：主机正常退出 → 立即退出世界（不等 30 秒重连窗口）。
+                m_clientSync.HostShutdownNotified += HandleClientHostShutdown;
                 // 主机明确拒绝加入（手动审批 Reject / 审批超时）：中止本次加入并提示玩家。
                 m_clientSync.JoinRejected += HandleClientJoinRejected;
                 m_clientSync.CatchUpRejected += HandleClientCatchUpRejected;
@@ -1221,7 +1367,8 @@ namespace SuMultiplayer.Modules
                 // 主机只接受会话一致、序号仍在保留历史内的重连；否则明确按首次加入处理（整图重下）。
                 // 判定只有一条（RejoinFlagPolicy）：在游戏里 + Project + 下载登记 + 会话与主机一致。
                 bool alreadyHasWorld = IsPlayingDownloadedWorld(out string rejoinReason,
-                    out string storedSessionId, out long storedBaseSequence);
+                    out string storedSessionId, out long storedBaseSequence,
+                    out JoinIntent joinIntent);
                 long lastApplied = alreadyHasWorld
                     ? Math.Max(m_clientChangeSequence, storedBaseSequence)
                     : 0L;
@@ -1244,7 +1391,7 @@ namespace SuMultiplayer.Modules
                 m_clientSync.SendHello(helloName, PlayerIdentity.LocalIdentity(),
                     alreadyHasWorld,
                     alreadyHasWorld ? storedSessionId : string.Empty,
-                    lastApplied, localProfile, m_knownRecordScratch);
+                    lastApplied, localProfile, m_knownRecordScratch, (uint)joinIntent);
                 // 新连接 = 新窗口：兴趣中心/半径必须重新上报（否则主机的旧窗口还停在上一轮的位置）。
                 m_hasCenter = false;
                 m_lastRadius = 0;
@@ -1358,6 +1505,9 @@ namespace SuMultiplayer.Modules
             m_server = null;
             m_client = null;
             m_host = null;
+            // G11：通道已停 → 放弃还在跑的后台连接尝试（不等待，它在后台）；
+            // 它完成后因 m_wantClient == false 不会被装配。
+            m_connectAttempt = null;
             SeasonLeavesChange.Notifier = null;   // 断线 / 下线：不再把树叶季相标记交给旧 host
             m_clientSync = null;
             m_hostClientId = 0;
@@ -1728,7 +1878,11 @@ namespace SuMultiplayer.Modules
             // 主机侧的联机角色停在最后一个已应用的位置上一动不动（且两端都不写任何日志）。
             if (m_client != null && !m_client.IsAlive)
             {
+                // G7：主连接失效必须**连带**清掉两条附属 TCP（电路 + 地形）。
+                // 只清电路会让地形连接变成孤儿：它自己的重连/attach 逻辑还在跑，
+                // 于是"主连接已死但地形通道仍显示 Connected"，LiveMap 与状态行都会误导。
                 DisposeCircuitClient("primary-link-lost");
+                DisposeTerrainClient("primary-link-lost");
                 string deadReason = m_client.State + "（" + m_client.StateDetail +
                     "，已收 " + m_client.Stats.FramesReceived + " 帧）";
                 LogWarning("与主机的通道已失效：" + deadReason + " → 拆掉这条连接，按 5s 间隔重连" +
@@ -1762,30 +1916,154 @@ namespace SuMultiplayer.Modules
                     ClientJoinConnectionAborted?.Invoke(deadReason);
                     return;
                 }
-                // 2026-10-26 产品口径：主机掉线 / 重启 → 客户端退出联机房间，绝不带旧状态
-                // 自动连进新房间。只在"已在联机世界里"时退出（端口内判 GameScreen）；
-                // 加入流程中的重试（主机晚建房等）维持原样。
-                if (m_clientExit != null && m_clientExit.TryExitWorldOnHostLost(deadReason))
+                // ---- G1/G3：断线重连窗口 ----
+                //
+                // 2026-10-26 的原口径是"连接一失效就退出世界"，但它无法区分
+                // 「主机真的没了」和「我这边网络抖了一下」——两者在代码里都是 IsAlive=false，
+                // 而 Android 在 WiFi 接口 down 时会**立刻**销毁 socket（不是超时），
+                // 所以 1 秒的瞬断足以触发退出世界（实机问题）。
+                //
+                // 用户 2026-11-06 定：Project 还在（玩家仍在这个世界里）就先留在世界里重连，
+                // 窗口 30 秒；窗口耗尽才退出世界。Project 没了 = 完全重新加入（主机下发整图）。
+                bool worthReconnect = ShouldHoldWorldForReconnect(out string holdReason);
+                bool inReconnectWindow = worthReconnect && m_config.ReconnectWindowMs > 0 &&
+                    !m_clientKicked;
+                if (inReconnectWindow)
                 {
-                    m_wantClient = false;
-                    LogWarning("与主机的通道已失效：" + deadReason +
-                        " → 退出联机房间回到世界列表（不自动重连；重新加入需要再点房间）");
+                    long nowMs = Environment.TickCount64;
+                    if (m_reconnectWindowUntilMs == 0)
+                    {
+                        m_reconnectWindowUntilMs = nowMs + m_config.ReconnectWindowMs;
+                        m_reconnectWindowAttempts = 0;
+                        m_wantClient = true;
+                        LogWarning("与主机的通道已失效：" + deadReason + " → **保持世界并重连**" +
+                            "（窗口 " + (m_config.ReconnectWindowMs / 1000) + " 秒；" + holdReason +
+                            "）。窗口内连不上才退出世界");
+                    }
+                    else
+                    {
+                        // 这里**不自增**尝试计数：本分支只在"连接又断了"时进，
+                        // 真正的重连尝试由下面 StartClientOnce 那段按配置间隔发起并计数
+                        // （m_reconnectWindowAttempts 在那里 +1），否则日志里的次数会虚高。
+                        Log("断线重连窗口内仍然连不上：" + deadReason + " · 剩余 " +
+                            Math.Max(0, (m_reconnectWindowUntilMs - nowMs) / 1000) + " 秒" +
+                            "（已发起 " + m_reconnectWindowAttempts + " 次尝试）");
+                    }
+                    // ⚠️ **不能 return**：这个分支每帧都会进（连接已死 + 世界还在），
+                    // 一 return 就永远走不到下面发起 StartClientOnce 的那段 —— 实机表现是
+                    // "断线重连窗口耗尽（30 秒内重连 0 次仍未成功）"，一次都没试过。
+                    // 这里把下一次尝试时刻设成 now，让本帧的重连分支立刻发起一次。
+                    m_wantClient = true;
+                    // ⚠️ 时间基准必须与下面的重连分支一致：那里用
+                    // `(long)(tick.Now * 1000.0)`（Time.RealTime 基准），而 nowMs 是
+                    // Environment.TickCount64（系统启动毫秒）。两者量级差几个数量级，
+                    // 混用会让 `>= m_nextReconnectMs` 永远为假 —— 实机表现就是
+                    // "窗口耗尽时重连 0 次"，一次都没发起过。
+                    m_nextReconnectMs = (long)(tick.Now * 1000.0);
+                }
+                else
+                {
+                    // 窗口不适用（被踢 / 世界已不在 / 关闭了该能力）：走原来的"立刻退出世界"口径。
+                    if (m_reconnectWindowUntilMs != 0)
+                    {
+                        LogWarning("断线重连窗口结束（" +
+                            (m_clientKicked ? "已被主机踢出" : holdReason) +
+                            "，共尝试 " + m_reconnectWindowAttempts + " 次）→ 退出世界");
+                        m_reconnectWindowUntilMs = 0;
+                        m_reconnectWindowAttempts = 0;
+                    }
+                    // 2026-10-26 产品口径：主机掉线 / 重启 → 客户端退出联机房间，绝不带旧状态
+                    // 自动连进新房间。只在"已在联机世界里"时退出（端口内判 GameScreen）；
+                    // 加入流程中的重试（主机晚建房等）维持原样。
+                    if (m_clientExit != null && m_clientExit.TryExitWorldOnHostLost(deadReason))
+                    {
+                        m_wantClient = false;
+                        LogWarning("与主机的通道已失效：" + deadReason +
+                            " → 退出联机房间回到世界列表（不自动重连；重新加入需要再点房间）");
+                        return;
+                    }
+                    // 这个分支只处理"窗口不适用"的情形，且已经把世界退掉了：
+                    // 直接结束本次 Tick（下面窗口内的重连逻辑不该再跑）。
                     return;
                 }
-                // 立刻尝试一次重连（失败时下面的重连分支按 5s 间隔继续试）：
-                // 恢复越快，主机侧那个角色"停住"的时间越短。
-                m_nextReconnectMs = (long)(tick.Now * 1000.0);
+                // 窗口内：继续往下走，由下面的重连分支在本帧发起 StartClientOnce。
             }
-            if (m_wantClient && m_client == null && (long)(tick.Now * 1000.0) >= m_nextReconnectMs)
+            // G1 硬性要求（5.1.1）：重连窗口到点必须**立即**停手并退出世界。
+            // 不能"再试一次"——主机的改动历史只保留 60 秒，拖到 50 秒再连即使成功也会被
+            // 明确拒绝（rejoin rejected），玩家白等；而且持续重连会让画面一直没反馈。
+            if (m_reconnectWindowUntilMs != 0 && Environment.TickCount64 >= m_reconnectWindowUntilMs)
             {
-                // 玩家已经在加入流程里：主机可能比客户端晚建好房间，按固定间隔重连，
-                // 直到连上或玩家离开（这不是"配置兜底"，是加入流程本身的重试）。
-                m_nextReconnectMs = (long)(tick.Now * 1000.0) + 5000;
+                m_reconnectWindowUntilMs = 0;
+                int attempts = m_reconnectWindowAttempts;
+                m_reconnectWindowAttempts = 0;
+                m_wantClient = false;
+                string windowReason = "断线重连窗口耗尽（" + (m_config.ReconnectWindowMs / 1000) +
+                    " 秒内重连 " + attempts + " 次仍未成功）";
+                LogWarning(windowReason + " → 退出世界回到世界列表" +
+                    "（下次加入按完全重新加入处理，主机将下发整图）");
+                if (m_client != null)
+                {
+                    try { m_client.Dispose(); } catch (Exception) { }
+                    m_client = null;
+                    m_clientSync = null;
+                }
+                DisposeCircuitClient("reconnect-window-exhausted");
+                DisposeTerrainClient("reconnect-window-exhausted");
+                if (m_clientExit != null) m_clientExit.TryExitWorldOnHostLost(windowReason);
+                return;
+            }
+            // G11：先轮询后台连接结果（**每帧都查**，不等重连间隔）。成功就装配并报成功。
+            if (m_connectAttempt != null && m_connectAttempt.IsCompleted)
+            {
+                if (PollConnectAttempt(out string pollReason))
+                {
+                    bool wasWindow = m_reconnectWindowUntilMs != 0;
+                    if (wasWindow)
+                    {
+                        Log("断线重连成功（后台连接完成）→ " + m_wantHost + ":" + m_wantPort +
+                            "；世界保持不动，主机会按断线重连补齐缺失改动");
+                        m_reconnectWindowUntilMs = 0;
+                        m_reconnectWindowAttempts = 0;
+                    }
+                    else
+                    {
+                        Log("重连成功（后台连接完成）→ " + m_wantHost + ":" + m_wantPort);
+                    }
+                }
+                else
+                {
+                    if (m_reconnectAttempts <= 1 || m_reconnectAttempts % 6 == 0)
+                        Log("重连失败（第 " + m_reconnectAttempts + " 次）：" + pollReason);
+                    // 失败后按间隔再试（m_nextReconnectMs 在上面发起时已排好）。
+                    //
+                    // 为什么**不做**"连接被拒即立刻退出"（2026-11-06 定，用户决定取消）：
+                    // 实机强杀主机时客户端拿到的是「连接超时」而非 ConnectionRefused ——
+                    // PC 整体网络不可达（ping 100% 丢包、nc 超时）时，OS 根本收不到 RST。
+                    // 而"网络不可达"与"我自己的 WiFi 断了"在网络层完全同形，无法区分；
+                    // 后者正是要求"保持世界并重连"的场景。任何基于连接错误的快速退出
+                    // 都会误伤它，所以一切交给 30 秒窗口统一收尾。
+                }
+            }
+            // 到点且当前没有在跑的尝试 → 发起新的后台连接（不阻塞主线程）。
+            if (m_wantClient && m_client == null && m_connectAttempt == null &&
+                (long)(tick.Now * 1000.0) >= m_nextReconnectMs)
+            {
+                // 玩家已经在加入流程里：主机可能比客户端晚建好房间，按固定间隔重试。
+                // 重连窗口内用配置间隔，加入流程（主机晚建房）仍用原来的 5 秒。
+                bool inWindow = m_reconnectWindowUntilMs != 0;
+                m_nextReconnectMs = (long)(tick.Now * 1000.0) +
+                    (inWindow ? m_config.ReconnectIntervalMs : 5000);
                 m_reconnectAttempts++;
-                if (StartClientOnce(out string reason))
-                    Log("重连成功（第 " + m_reconnectAttempts + " 次尝试）→ " + m_wantHost + ":" + m_wantPort);
-                else if (m_reconnectAttempts == 1 || m_reconnectAttempts % 6 == 0)
-                    Log("重连失败（第 " + m_reconnectAttempts + " 次）：" + reason);
+                // 窗口内的**真实**尝试次数（窗口耗尽日志用它，必须是真实发起过几次）。
+                if (inWindow) m_reconnectWindowAttempts++;
+                // 发起后台连接；本帧不会有结果（下几帧轮询）。
+                StartClientOnce(out string startReason);
+                if (m_connectAttempt == null)
+                {
+                    // 连"发起"都失败了（例如已经在跑）：记一行，下个间隔再试。
+                    if (m_reconnectAttempts <= 1 || m_reconnectAttempts % 6 == 0)
+                        Log("重连未能发起（第 " + m_reconnectAttempts + " 次）：" + startReason);
+                }
             }
             if (m_clientSync != null)
             {
@@ -2915,10 +3193,38 @@ namespace SuMultiplayer.Modules
         /// 并让联机角色模块清掉它的角色 —— 否则角色实体会停在最后一个已应用的位置上，
         /// 看起来就是"主机的客户端角色卡住不动"，重连后还会多出一个。
         /// </summary>
+        /// <summary>
+        /// G10：主机正常退出游戏时（用户点关闭 / 菜单退出）广播 <c>HostShutdown</c>，
+        /// 让客户端立即退出世界而不是白等 30 秒重连窗口。
+        /// 由组合根在 <c>Engine.Window.Closed</c> 里调用；**幂等**（重复调用只发一次）。
+        /// </summary>
+        internal void NotifyHostShuttingDown(string reason)
+        {
+            if (m_hostShutdownSent) return;
+            TerrainSyncHost host = m_host;
+            if (host == null) return;              // 本来就没建房：无事可做
+            m_hostShutdownSent = true;
+            try
+            {
+                host.BroadcastHostShutdown(reason);
+            }
+            catch (Exception e)
+            {
+                LogWarning("广播 HostShutdown 失败（" + e.GetType().Name + " " + e.Message +
+                    "）→ 客户端只能等重连窗口耗尽后退出（仍会退出，只是慢）");
+            }
+        }
+
         private void HandleHostClientLost(int clientId, string reason)
         {
             if (m_server != null)
+            {
+                // G7：主连接失效 ⇒ **连带**断掉这个 clientId 的两条附属 TCP（电路 + 地形）。
+                // 只断电路会让地形 Peer 变成孤儿：它自己的读循环还阻塞着，m_terrainPeers 里
+                // 一直留着这条死连接，LiveMap 的三通道行数也会多算一行。
                 m_server.DisconnectCircuitClient(clientId, reason ?? "primary-peer-lost");
+                m_server.DisconnectTerrainClient(clientId, reason ?? "primary-peer-lost");
+            }
             HandleCircuitPeerDetached(clientId, reason ?? "primary-peer-lost");
             LogWarning("玩家端 clientId=" + clientId + " 的通道已失效：" + reason +
                 " → 清理它的联机角色（角色不再更新位置）并停止把它算作在线客户端；" +
@@ -3235,7 +3541,8 @@ namespace SuMultiplayer.Modules
             if (m_wantClient && m_client != null && m_clientSync != null)
             {
                 bool alreadyHasWorld = IsPlayingDownloadedWorld(out string rejoinReason,
-                    out string storedSessionId, out long storedBaseSequence);
+                    out string storedSessionId, out long storedBaseSequence,
+                    out JoinIntent joinIntent);
                 long lastApplied = alreadyHasWorld
                     ? Math.Max(m_clientChangeSequence, storedBaseSequence)
                     : 0L;
@@ -3253,7 +3560,7 @@ namespace SuMultiplayer.Modules
                 m_clientSync.SendHello(helloName, PlayerIdentity.LocalIdentity(),
                     alreadyHasWorld,
                     alreadyHasWorld ? storedSessionId : string.Empty,
-                    lastApplied, localProfile, m_knownRecordScratch);
+                    lastApplied, localProfile, m_knownRecordScratch, (uint)joinIntent);
                 Log("角色创建完成 → 在当前连接上重发 Hello（不重连、不重新审批）：" +
                     "名字=" + (localProfile?.Name ?? helloName) +
                     " · 资料=" + (localProfile != null ? "已携带" : "缺失") +
@@ -3304,7 +3611,7 @@ namespace SuMultiplayer.Modules
         /// （= 按首次加入处理：主机会下发整图，不会漏发；这不是静默兜底，原因进握手日志）。
         /// </summary>
         private bool IsPlayingDownloadedWorld(out string reason, out string storedSessionId,
-            out long storedBaseSequence)
+            out long storedBaseSequence, out JoinIntent joinIntent)
         {
             storedSessionId = string.Empty;
             storedBaseSequence = 0L;
@@ -3352,6 +3659,14 @@ namespace SuMultiplayer.Modules
             bool alreadyHasWorld = RejoinFlagPolicy.ShouldSendAlreadyHasWorld(
                 inGame, projectLoaded, directoryKnown, downloaded,
                 storedSessionId, m_lastHostSessionId, out reason);
+            // G9：把"加入意图"显式告诉主机。与 alreadyHasWorld 同源判断（不另起一套规则）：
+            //   重连 ⇒ Rejoin(2)（主机踢旧连接后继承会话记录并追帧）
+            //   否则 ⇒ FreshJoin(1)（主机**先清理**该身份旧连接，再走首次加入、下发整图）
+            // 这个字段解决的是"客户端已退出世界但主机侧旧连接还没判死"的场景：只看布尔值
+            // 主机不知道要清理旧连接，于是旧的世界传输一直阻塞新连接（实机现象 B）。
+            joinIntent = alreadyHasWorld
+                ? JoinIntent.Rejoin
+                : JoinIntent.FreshJoin;
             if (directoryKnown) reason += "（当前世界目录 " + directory + "）";
             return alreadyHasWorld;
         }
@@ -3650,6 +3965,140 @@ namespace SuMultiplayer.Modules
             JoinRejected?.Invoke(text);
         }
 
+        /// <summary>
+        /// G6：主机主动把本端踢出房间（已连接状态下的 Kicked 消息）。
+        /// 必须**直接退出世界**并且**不进重连窗口** —— 重连没有意义（主机明确不要这个连接了），
+        /// 白等 30 秒只会让玩家以为卡住。
+        /// 用户 2026-11-06 口径：主机踢出客户端时要给一个"你被踢"的标志，客户端据此退出。
+        /// </summary>
+        /// <summary>
+        /// G1/G3：连接失效时**是否值得留在世界里重连**（而不是立刻退出世界）。
+        ///
+        /// 判据 = 玩家此刻确实还在这个联机世界里游玩，缺一不可：
+        ///   · Project 已加载（世界还在内存里）；
+        ///   · 当前屏是 GameScreen（在看世界，不是在菜单/世界列表）；
+        ///   · worldLoaded（世界加载已完成 —— 加载中断线时状态不完整，重连容易错乱）；
+        ///   · 不在死亡复活流程里（同上）。
+        /// 用户 2026-11-06 确认：**两种边界都不重连**（正在死亡复活、正在世界加载中），
+        /// 直接退出世界。
+        ///
+        /// 反过来说：Project 已经销毁 ⇒ 这里返回 false ⇒ 走原有"退出世界"路径，
+        /// 下次从世界列表加入就是**完全重新加入**（join_intent=1，主机下发整图）。
+        /// </summary>
+        private bool ShouldHoldWorldForReconnect(out string reason)
+        {
+            if (Game.GameManager.Project == null)
+            {
+                reason = "Project 已销毁（已离开世界）→ 不重连，按完全重新加入处理";
+                return false;
+            }
+            if (!(Game.ScreensManager.CurrentScreen is Game.GameScreen))
+            {
+                reason = "当前不在游戏内（Play 屏 / 世界列表）→ 不重连";
+                return false;
+            }
+            if (m_shell == null || m_shell.Terrain == null)
+            {
+                reason = "地形子系统不可用 → 无法确认世界状态，不重连";
+                return false;
+            }
+            try
+            {
+                Game.SubsystemGameInfo gameInfo =
+                    Game.GameManager.Project.FindSubsystem<Game.SubsystemGameInfo>(false);
+                if (gameInfo == null)
+                {
+                    reason = "读不到 SubsystemGameInfo → 不重连";
+                    return false;
+                }
+            }
+            catch (Exception e)
+            {
+                reason = "检查世界状态时抛异常（" + e.GetType().Name + "）→ 不重连";
+                return false;
+            }
+            // 死亡复活 / 世界加载中：状态不完整，重连后容易错乱（用户明确要求这两处都不重连）。
+            try
+            {
+                IReadOnlyList<Game.ComponentPlayer> players =
+                    Game.GameManager.Project.FindSubsystem<Game.SubsystemPlayers>(false)
+                        ?.ComponentPlayers;
+                if (players == null)
+                {
+                    reason = "读不到玩家表 → 按仍在世界里处理（上面的判据已足够）";
+                    return true;
+                }
+                foreach (Game.ComponentPlayer player in players)
+                {
+                    if (player?.ComponentHealth == null) continue;
+                    if (player.ComponentHealth.Health <= 0f)
+                    {
+                        reason = "本机玩家处于死亡状态 → 不重连";
+                        return false;
+                    }
+                    if (player.ComponentSleep != null && player.ComponentSleep.SleepFactor > 0f)
+                    {
+                        reason = "本机玩家正在睡眠 → 不重连";
+                        return false;
+                    }
+                }
+            }
+            catch (Exception)
+            {
+                // 读不到玩家状态就不做这层判断（上面的 Project/GameScreen 已经够说明"还在世界里"）。
+            }
+            reason = "仍在游戏内且世界已加载 → 保持世界并重连";
+            return true;
+        }
+
+        /// <summary>
+        /// G10：主机正常退出游戏。与"被踢"处理一致 —— 直接退出世界、禁止自动重连。
+        /// 与踢出的区别只在日志措辞与原因文本（主机是关了自己的游戏，不是在踢人）。
+        /// </summary>
+        private void HandleClientHostShutdown(string reason)
+        {
+            string detail = string.IsNullOrEmpty(reason) ? "host shutting down" : reason;
+            LogWarning("主机正常退出游戏（" + detail + "）→ 直接退出世界，" +
+                "**不进入重连窗口**（主机进程已结束，重连没有意义）");
+            m_clientKicked = true;      // 同一语义：禁止"连接失效后自动重连"
+            ExitWorldNow("host-shutdown：" + detail);
+        }
+
+        /// <summary>
+        /// 立刻退出联机世界（踢出 / 主机退出 / 主机确认不在 共用）。
+        /// 先拆连接再走 ClientSessionExit；连接已经死了也照样退出。
+        /// </summary>
+        private void ExitWorldNow(string reason)
+        {
+            m_wantClient = false;
+            m_reconnectWindowUntilMs = 0;
+            m_reconnectWindowAttempts = 0;
+            // G11：放弃还在跑的后台连接尝试。**不等待**它（它在后台，主线程不能阻塞）；
+            // 它完成后发现 m_wantClient == false 会被丢弃 —— 见 PollConnectAttempt 的调用条件。
+            m_connectAttempt = null;
+            if (m_client != null)
+            {
+                try { m_client.Dispose(); } catch (Exception) { }
+                m_client = null;
+                m_clientSync = null;
+            }
+            DisposeCircuitClient(reason);
+            DisposeTerrainClient(reason);
+            if (m_clientExit != null) m_clientExit.TryExitWorldOnHostLost(reason);
+        }
+
+        private void HandleClientKickedByHost(string reason, bool superseded)
+        {
+            string detail = string.IsNullOrEmpty(reason) ? "host-kicked" : reason;
+            LogWarning("主机把本端踢出房间（" + (superseded ? "同一身份在别处重新加入" : "主机操作") +
+                "）：" + detail + " → 直接退出世界，**不进入重连窗口**");
+            // 标记：不允许再自动重连（否则拆连接逻辑会把它当成网络故障去重试）。
+            m_clientKicked = true;
+            // 与"主机退出"共用同一条退出路径：清窗口 → 拆连接/两条附属 → 退出世界。
+            // 不再区分"连接还活着"与"已经断了"：两种情况都要退出，ExitWorldNow 都覆盖。
+            ExitWorldNow("host-kicked：" + detail);
+        }
+
         private void HandleClientRejoinRejected(string reason, bool hostWillSendWorld)
         {
             LogWarning("主机拒绝重连：" + reason + " → 作废下载世界的会话标识" +
@@ -3932,6 +4381,10 @@ namespace SuMultiplayer.Modules
                     "/回传未定稿延后 " + snapshot.ResyncDeferredNotReady +
                     "/上报未定稿延后 " + snapshot.ReportsDeferredNotReady +
                     "/发送时刷新摘要 " + snapshot.ReportHashesRefreshed +
+                    // 网络帧积压（TerrainBridge.m_inbox 上限 4096）：非零 = 主线程消费跟不上入流，
+                    // 已按上限丢帧并靠序号缺口触发重同步。
+                    " · 网络帧积压(丢/待) " + m_bridge.InboxDroppedFrames + "/" +
+                    m_bridge.InboxCount +
                     " · 重排队 " + snapshot.ResidentRequeues + " 次/最近 " +
                     snapshot.LastResidentRequeueCount + " 块（跳过 " + snapshot.ResidentRequeueSkipped +
                     " · 等追帧 " + snapshot.ResidentRequeueDeferred + " 帧 · 换世界清 " +
@@ -3988,6 +4441,8 @@ namespace SuMultiplayer.Modules
                        " memOnly=" + snapshot.CellChangesMemoryOnly +
                        " outsideWindow=" + snapshot.CellChangesOutsideWindow +
                        " repairs=" + snapshot.CellChangeRepairs +
+                       // G5：同身份接管次数（新连接顶掉同身份旧连接；>0 说明发生过闪退/瞬断后重进）
+                       " identityTakeovers=" + snapshot.IdentityTakeovers +
                        " repairUnavailable=" + snapshot.CellChangeRepairUnavailable +
                        " staleVerdicts=" + snapshot.StaleVerdictRefreshRequested +
                        "/" + snapshot.StaleVerdictRefreshed + "/" + snapshot.StaleVerdictCleared +

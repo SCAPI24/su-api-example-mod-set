@@ -886,6 +886,14 @@ namespace SuMultiplayer.Terrain
         /// <summary>自愈扫描的间隔（ms）。遍历内存集合，不能在热路径每帧做。</summary>
         public int ClientStaleHealScanMs { get; set; } = 3000;
 
+        /// <summary>
+        /// 诊断开关（默认关）：握手时若发现"没有同身份旧连接可清理"，也记一行。
+        /// 用来判断同身份接管（KickSupersededClient）在实机中是否会被触发 ——
+        /// 常见情况是旧连接在握手之前就已被 TCP 层判死并移除，接管路径根本不需要跑。
+        /// 只在排障时打开，正常运行留 false（不产生任何输出）。
+        /// </summary>
+        public bool IdentityNoStalePeerProbe { get; set; }
+
         /// <summary>强制核对时块还没有内容 → 下一次重试的最小间隔（毫秒；不丢、也不每帧空转）。</summary>
         public int ClientMemoryVerifyRetryMs { get; set; } = 1000;
 
@@ -1445,6 +1453,8 @@ namespace SuMultiplayer.Terrain
         public long ChangeJournalOldestSequence;
         /// <summary>因为超过时间 / 条数上限被裁掉的改动条数（可审计）。</summary>
         public long ChangeJournalEvictions;
+        /// <summary>同身份接管次数（新连接顶掉同身份的旧连接；G5）。</summary>
+        public long IdentityTakeovers;
         /// <summary>接受的重连次数（会话一致 + 序号仍在历史内）。</summary>
         public long RejoinAccepted;
         /// <summary>拒绝的重连次数（缺会话 / 会话不一致 / 序号越界）。</summary>
@@ -2069,6 +2079,15 @@ namespace SuMultiplayer.Terrain
         private readonly Dictionary<int, CatchUpJob> m_catchUps = new Dictionary<int, CatchUpJob>();
         private long m_changeJournalEvictions;
         private long m_lastChangeJournalEvictionLogMs;
+        /// <summary>同身份接管（新连接顶掉旧连接）的累计次数（诊断）。</summary>
+        private long m_identityTakeovers;
+        /// <summary>
+        /// 诊断开关（默认关）：为 true 时，握手发现"没有同身份旧连接可清理"也会记一行，
+        /// 用来判断 <see cref="KickSupersededClient"/> 到底会不会被触发（旧连接是否总在握手前就死了）。
+        /// 由 options.IdentityNoStalePeerProbe 打开。
+        /// </summary>
+        private bool m_identityNoStalePeerProbe;
+        private long m_identityNoStaleProbeCount;
         private long m_rejoinAccepted;
         private long m_rejoinRejected;
         private long m_catchUpRejected;
@@ -2189,6 +2208,7 @@ namespace SuMultiplayer.Terrain
             m_messages = messages ?? new MessageChannel(new MessageRegistry(),
                 (clientId, type, payload) => clientId > 0 && m_server.TrySend(clientId, type, payload),
                 "terrain-sync-host");
+            m_identityNoStalePeerProbe = m_options.IdentityNoStalePeerProbe;
             m_onDemand = new OnDemandChunkLoads(m_world, m_options.OnDemandLoad);
             m_onDemandStillNeeded = HostStillNeedsOnDemandChunk;
             RegisterMessages();
@@ -2800,6 +2820,7 @@ namespace SuMultiplayer.Terrain
                     ? m_changeJournal.Peek().Sequence
                     : 0L;
                 snapshot.ChangeJournalEvictions = m_changeJournalEvictions;
+                snapshot.IdentityTakeovers = m_identityTakeovers;
                 snapshot.RejoinAccepted = m_rejoinAccepted;
                 snapshot.RejoinRejected = m_rejoinRejected;
                 snapshot.CatchUpRejected = m_catchUpRejected;
@@ -3564,6 +3585,169 @@ namespace SuMultiplayer.Terrain
             m_server.TrySend(state.Id, MessageType.HelloAck, ack.ToByteArray());
         }
 
+        /// <summary>
+        /// 主机：在**握手期**明确把这条连接踢出（G6）。
+        ///
+        /// 与 <see cref="SendJoinRejectedLocked"/> 的区别：
+        ///   · 审批拒绝（rejected）= "这次加入没批准"，客户端回到加入流程、可以换房间重试；
+        ///   · 踢出（kicked）= "主机不要这个连接 / 这个身份了"，客户端必须**直接退出世界**，
+        ///     不得进入 30 秒断线重连窗口（否则白等 30 秒且永远连不上）。
+        ///
+        /// 什么时候会走到这里：同一身份在别处重新加入时，如果旧连接还在**握手当中**
+        /// （还没有走完 Hello → HelloAck），它拿不到后续的 <c>MessageType.Kicked</c>
+        /// （那条要求连接已建立消息通道），只能在它自己的 HelloAck 上带踢出标志。
+        /// </summary>
+        private void SendKickedLocked(State state, string reason)
+        {
+            if (state == null) return;
+            var ack = new HelloAck
+            {
+                Version = 1,
+                ClientId = state.Id,
+                Room = "SuMP-World",
+                Flags = 0,
+                MaxRadius = 20,
+                HostIdentity = Identity ?? string.Empty,
+                HostName = Name ?? string.Empty,
+                Kicked = true,
+                KickReason = reason ?? string.Empty
+            };
+            m_server.TrySend(state.Id, MessageType.HelloAck, ack.ToByteArray());
+        }
+
+        /// <summary>
+        /// 主机：广播「我要正常退出游戏了」（G10）。客户端收到后**立即退出世界**，
+        /// 不进入 30 秒断线重连窗口 —— 主机进程都要没了，重连毫无意义。
+        ///
+        /// 为什么要这条消息：客户端在 TCP 层无法区分「主机正常关窗」和「我家 WiFi 抖了一下」，
+        /// 两者都表现为连接失效；没有这条消息时正常关主机也要让客户端白等 30 秒。
+        ///
+        /// 强杀进程发不出这条（进程被瞬间终止，没有任何代码能执行），那种情况由客户端的
+        /// `ECONNREFUSED ⇒ 主机真的不在` 判定来收尾（见 TerrainSyncModule 的重连窗口逻辑）。
+        ///
+        /// **同步发送并等待一小段时间**：这是进程退出前的最后一件事，异步排队会来不及。
+        /// 每条连接各自 TrySend（底层队列化），失败不影响其它连接。
+        /// </summary>
+        public void BroadcastHostShutdown(string reason)
+        {
+            string text = string.IsNullOrEmpty(reason) ? "host shutting down" : reason;
+            var message = new HostShutdown { Reason = text };
+            byte[] payload;
+            try
+            {
+                payload = message.ToByteArray();
+            }
+            catch (Exception e)
+            {
+                global::Engine.Log.Warning("[SuMP][terrain] 构造 HostShutdown 消息失败：" +
+                    e.GetType().Name + " " + e.Message + " → 客户端只能等重连窗口耗尽（仍会退出）");
+                return;
+            }
+            var targets = new List<int>();
+            lock (m_gate)
+            {
+                foreach (KeyValuePair<int, State> pair in m_clients)
+                {
+                    if (pair.Value != null && pair.Value.Id > 0) targets.Add(pair.Value.Id);
+                }
+            }
+            int sent = 0;
+            for (int i = 0; i < targets.Count; i++)
+            {
+                try
+                {
+                    if (m_server.TrySend(targets[i], MessageType.HostShutdown, payload)) sent++;
+                }
+                catch (Exception e)
+                {
+                    global::Engine.Log.Warning("[SuMP][terrain] HostShutdown 发送失败（clientId=" +
+                        targets[i] + "）：" + e.GetType().Name + " " + e.Message);
+                }
+            }
+            global::Engine.Log.Information("[SuMP][terrain] 主机正常退出 → 已向 " + sent + "/" +
+                targets.Count + " 条连接广播 HostShutdown（" + text + "）；客户端会立即退出世界");
+            SessionTrace?.Invoke("主机正常退出：广播 HostShutdown 给 " + sent + "/" + targets.Count +
+                " 条连接（客户端不做重连）");
+        }
+
+        /// <summary>
+        /// 主机：同一身份的新连接到达 → 踢掉旧连接，并把它的会话记录**交接**给新连接（G5）。
+        ///
+        /// 交接什么（重连需要，不能丢）：
+        ///   · <c>PlayerSessionRecord</c> 本身不重建（它按身份稳定键存），
+        ///     里面的 <c>ReportedLoaded</c> / <c>Verdicts</c> / <c>MemoryChunks</c> 都是
+        ///     "这个玩家"的状态，重连后仍然有效；
+        ///   · 只把 <c>CurrentClientId</c> 改指向新连接（<c>MarkChunkChanged</c> 等处的
+        ///     "同一身份只由当前句柄代表"判断依赖它）。
+        /// 全新加入（join_intent=1 / 非重连）时**不交接**：那一侧的旧记录按"这个人退出了"清掉，
+        /// 由 PlayerAvatarModule 的既有顶替逻辑决定角色怎么处理。
+        /// </summary>
+        private void KickSupersededClient(int supersededClientId, int newClientId, bool handOver)
+        {
+            if (supersededClientId <= 0) return;
+            try
+            {
+                // 交接到新连接（仅重连）：把身份记录指向新句柄，旧句柄的引用随踢出自然失效。
+                if (handOver)
+                {
+                    State superseded = null;
+                    lock (m_gate) m_clients.TryGetValue(supersededClientId, out superseded);
+                    PlayerSessionRecord session = superseded?.Session;
+                    if (session != null)
+                    {
+                        session.CurrentClientId = newClientId;
+                        SessionTrace?.Invoke("同身份接管：身份 " +
+                            PlayerSessionKeys.ShortIdentity(session.Identity) +
+                            "（稳定键 " + session.StableKey + "）的会话记录改由新连接 clientId=" +
+                            newClientId + " 代表（保留已上报 " + session.ReportedLoaded.Count +
+                            " 块 / 裁决 " + session.Verdicts.Count + " 条 / 内存集合 " +
+                            session.MemoryChunks.Count + " 块，供追帧使用）");
+                    }
+                }
+            }
+            catch (Exception e)
+            {
+                // 交接失败不阻断踢出：踢掉死连接本身更重要，日志里如实记原因。
+                global::Engine.Log.Warning("[SuMP][terrain] 同身份接管交接会话记录失败（旧 clientId=" +
+                    supersededClientId + " → 新 clientId=" + newClientId + "）：" +
+                    e.GetType().Name + " " + e.Message + " → 仍继续踢掉旧连接");
+            }
+            // 踢旧连接前先判它走到哪一步了 —— 两种通知通道不同：
+            //   · 已走完握手（已经有身份会话 / 已经拿到加入批准）：用 MessageType.Kicked，
+            //     自定义消息只能在握手完成的连接上送达；
+            //   · 还在握手期（Hello 已收到但 HelloAck 还没发出去，例如正等着审批）：
+            //     对端还在等 HelloAck，收不到自定义消息，只能用它自己的 HelloAck 带
+            //     kicked 标志（G6 的握手期分支）。
+            // 漏掉后者时那种连接会一直等 HelloAck，直到审批超时（30 秒悬着）。
+            string kickReason = "Same identity reconnected on a new connection.";
+            State supersededState = null;
+            lock (m_gate) m_clients.TryGetValue(supersededClientId, out supersededState);
+            // "还没完成握手" = 有 Hello 在手上却还没被批准放行（ApprovalPending / ApprovalHeld），
+            // 或者干脆连 Session 都还没建起来。
+            bool stillHandshaking = supersededState != null &&
+                (supersededState.ApprovalPending || supersededState.ApprovalHeld ||
+                 supersededState.PendingHello != null || supersededState.Session == null);
+            if (stillHandshaking)
+            {
+                try
+                {
+                    lock (m_gate) SendKickedLocked(supersededState, kickReason);
+                    SessionTrace?.Invoke("同身份接管：旧连接 clientId=" + supersededClientId +
+                        " 仍在握手期 → 用 HelloAck.kicked 通知它直接退出（不进重连窗口）");
+                }
+                catch (Exception e)
+                {
+                    global::Engine.Log.Warning("[SuMP][terrain] 握手期踢出通知发送失败（clientId=" +
+                        supersededClientId + "）：" + e.GetType().Name + " " + e.Message +
+                        " → 仍继续踢出");
+                }
+            }
+            // 踢旧连接：发 Kicked（让对端明确退出、不重连）+ 断两条附属 + 关主连接。
+            m_server?.KickPrimaryClient(supersededClientId, kickReason, superseded: true);
+            // 让上层及各模块按"这一端没了"清理（联机角色、世界传输、兴趣窗口等）。
+            ClientLost?.Invoke(supersededClientId, "superseded-by-new-connection");
+        }
+
         private void ContinueHello(State state, Hello hello)
         {
             state.Kind = (ClientKind)(int)hello.Kind;
@@ -3571,8 +3755,76 @@ namespace SuMultiplayer.Terrain
             state.Radius = Clamp(hello.Radius);
             // 对端身份（UserId.dat）：空值 = 身份不可用，走按 clientId 的退化路径并明确报一行。
             state.Identity = (hello.Identity ?? string.Empty).Trim();
-            // 对端是否**此刻正在游玩**这个下载世界（断线重连的声明）。
+            // 对端是否**此刻正在游玩**这个下载世界（断线重连的声明）。先用旧布尔取初值，
+            // 下面若带了 join_intent 则以显式声明的意图覆盖它。
             bool claimedRejoin = hello.AlreadyHasWorld;
+            // G9：客户端的**加入意图**（0=未声明 / 1=全新加入 / 2=掉线重连）。
+            // 0 时按 already_has_world 推断（旧客户端，行为不变）。
+            bool intentDeclared = hello.JoinIntent != 0u;
+            bool intentFreshJoin = hello.JoinIntent == 1u;
+            bool intentRejoin = hello.JoinIntent == 2u;
+            if (intentDeclared)
+            {
+                // 新字段与旧布尔必须自洽；不一致说明对端实现有问题 → 明确记一行并**以新字段为准**
+                // （它是显式声明，信息量更大），同时不要让 claimedRejoin 把流程带偏。
+                if (intentRejoin != claimedRejoin)
+                {
+                    SessionTrace?.Invoke("握手（clientId=" + state.Id + "）：加入意图与 already_has_world 不一致" +
+                        "（join_intent=" + hello.JoinIntent + " alreadyHasWorld=" + claimedRejoin +
+                        "）→ 以 join_intent 为准（" + (intentRejoin ? "掉线重连" : "全新加入") + "）");
+                }
+                claimedRejoin = intentRejoin;
+            }
+            // G5/G9：**先清理该身份的旧连接**，再决定这次按重连还是首次加入走。
+            //
+            // 为什么必须在这里（而不是等 30 秒静默超时）：
+            //   · 旧连接的 Peer 读循环还阻塞着，主机以为它在线，WorldTransferModule 的
+            //     m_activeSendClientId 也还指着它 → 新连接的整图传输永远排在后面（实机现象 B）；
+            //   · PlayerAvatarModule 看到旧角色记录还在，会直接复用它 → "主机已有角色但客户端进不来"。
+            // 清理入口复用 HandleHostClientLost → DisconnectTerrainClient / DisconnectCircuitClient
+            //   → ClientLost 事件 → 各模块（含 PlayerAvatarModule 的同身份顶替）自行清理。
+            // 用户口径（2026-11-06）：主机收到加入请求时，**先清理旧连接**再走全新加入或重连。
+            if (!string.IsNullOrEmpty(state.Identity))
+            {
+                int supersededClientId = 0;
+                lock (m_gate)
+                {
+                    foreach (KeyValuePair<int, State> pair in m_clients)
+                    {
+                        State other = pair.Value;
+                        if (other.Id == state.Id) continue;
+                        if (other.Kind != ClientKind.Player) continue;
+                        if (!string.Equals(other.Identity, state.Identity, StringComparison.Ordinal))
+                            continue;
+                        // 同一身份只可能在同一台设备上（UserId.dat 由引擎 Guid 生成，不共享）。
+                        supersededClientId = other.Id;
+                        break;
+                    }
+                }
+                if (supersededClientId > 0)
+                {
+                    m_identityTakeovers++;
+                    SessionTrace?.Invoke("握手（clientId=" + state.Id + " · " + DisplayName(state) +
+                        "）：同一身份在别处重新加入 → 踢掉旧连接 clientId=" + supersededClientId +
+                        "（join_intent=" + hello.JoinIntent + "，" +
+                        (claimedRejoin ? "掉线重连" : "全新加入") + "）");
+                    // 出锁后踢：KickPrimaryClient 要发 Kicked、断两条附属、关主连接，
+                    // 都不该在 m_gate 里做（连接回调可能回到 Terrain 层）。
+                    KickSupersededClient(supersededClientId, state.Id, claimedRejoin);
+                }
+                else if (m_identityNoStalePeerProbe)
+                {
+                    // 诊断（默认关闭，用 identityNoStalePeerProbe 开）：这次握手是**全新加入**，
+                    // 但 m_clients 里没有同身份的旧连接可踢 —— 说明旧连接在握手之前就已被
+                    // 判死并移除（TCP 层立刻失效，最常见），所以接管路径没被走到。
+                    // 记一行便于确认"是新连接到达得太晚"还是"根本没有旧连接"。
+                    m_identityNoStaleProbeCount++;
+                    SessionTrace?.Invoke("握手（clientId=" + state.Id + " · " + DisplayName(state) +
+                        "）：全新加入，但主机表里没有同身份旧连接可清理（旧连接已在握手前失效并移除）" +
+                        " · join_intent=" + hello.JoinIntent +
+                        " · 累计 " + m_identityNoStaleProbeCount + " 次");
+                }
+            }
             // 下载世界登记的主机会话标识 + 上次应用的改动序号（空会话 ⇒ 不接受重连）。
             state.ClientSessionId = (hello.ClientSessionId ?? string.Empty).Trim();
             state.HelloLastApplied = hello.LastAppliedSequence;
@@ -7519,6 +7771,12 @@ namespace SuMultiplayer.Terrain
                 new DelegateMessageHandler<PT.VerifyChunks>(OnVerifyRequest), MessageOwner);
             registry.Register((int)MessageType.Pong, Pong.Parser,
                 new DelegateMessageHandler<Pong>(OnPong), MessageOwner);
+            // G6：主机主动踢出（已连接状态下）。客户端必须**直接退出世界**，不进重连窗口。
+            registry.Register((int)MessageType.Kicked, Kicked.Parser,
+                new DelegateMessageHandler<Kicked>(OnKicked), MessageOwner);
+            // G10：主机正常退出游戏（不是网络故障）→ 客户端立即退出世界，不进重连窗口。
+            registry.Register((int)MessageType.HostShutdown, HostShutdown.Parser,
+                new DelegateMessageHandler<HostShutdown>(OnHostShutdown), MessageOwner);
             registry.Register((int)MessageType.TerrainDiagnosticControl,
                 TerrainDiagnosticControl.Parser,
                 new DelegateMessageHandler<TerrainDiagnosticControl>(OnTerrainDiagnosticControl),
@@ -7622,6 +7880,48 @@ namespace SuMultiplayer.Terrain
 
         private void OnVerifyRequest(MessageContext context, PT.VerifyChunks message) =>
             HandleVerifyRequest(message);
+
+        /// <summary>
+        /// 客户端：主机主动把这条连接 / 这个身份踢出房间（G6）。
+        /// 与"连接失效"的区别：这是**明确语义**，客户端必须直接退出世界，
+        /// 绝不能进入 30 秒断线重连窗口（否则会白等 30 秒且永远连不上）。
+        /// </summary>
+        public event Action<string, bool> KickedByHost;
+
+        /// <summary>
+        /// 客户端：主机正在正常退出游戏（G10）。这不是网络故障，重连毫无意义，
+        /// 收到就立即退出世界，不进入 30 秒重连窗口。
+        /// </summary>
+        public event Action<string> HostShutdownNotified;
+
+        private long m_hostShutdownCount;
+
+        /// <summary>累计收到的主机退出通知数（诊断）。</summary>
+        public long HostShutdownCount => m_hostShutdownCount;
+
+        private void OnHostShutdown(MessageContext context, HostShutdown message)
+        {
+            m_hostShutdownCount++;
+            string reason = string.IsNullOrEmpty(message?.Reason)
+                ? "host shutting down"
+                : message.Reason;
+            HostShutdownNotified?.Invoke(reason);
+        }
+
+        private void OnKicked(MessageContext context, Kicked message)
+        {
+            if (message == null) return;
+            m_kickedCount++;
+            string reason = string.IsNullOrEmpty(message.Reason)
+                ? "host-kicked"
+                : message.Reason;
+            KickedByHost?.Invoke(reason, message.Superseded);
+        }
+
+        private long m_kickedCount;
+
+        /// <summary>本连接累计收到的主机踢出信号数（诊断）。</summary>
+        public long KickedCount => m_kickedCount;
 
         private void OnPong(MessageContext context, Pong message)
         {
@@ -7859,7 +8159,18 @@ namespace SuMultiplayer.Terrain
         /// </summary>
         public void SendHello(string name, string identity, bool alreadyHasWorld,
             string clientSessionId, long lastAppliedChangeSequence, PlayerProfileSnapshot profile,
-            IReadOnlyList<RecordHashRef> knownRecords)
+            IReadOnlyList<RecordHashRef> knownRecords) =>
+            SendHello(name, identity, alreadyHasWorld, clientSessionId, lastAppliedChangeSequence,
+                profile, knownRecords, 0u);
+
+        /// <summary>
+        /// Hello（完整版：追加 <paramref name="joinIntent"/>，见 doc/reconnect-and-kick-plan.md G9）。
+        /// <paramref name="joinIntent"/>：0 = 未声明（旧客户端）/ 1 = 全新加入 / 2 = 掉线重连。
+        /// 主机据此在「要清理该身份旧连接」这件事上不再靠 already_has_world 布尔推断。
+        /// </summary>
+        public void SendHello(string name, string identity, bool alreadyHasWorld,
+            string clientSessionId, long lastAppliedChangeSequence, PlayerProfileSnapshot profile,
+            IReadOnlyList<RecordHashRef> knownRecords, uint joinIntent)
         {
             var hello = new Hello
             {
@@ -7871,6 +8182,7 @@ namespace SuMultiplayer.Terrain
                 // 本机身份（UserId.dat）：空值也照样写（明确表示"身份不可用"，不是字段缺失）。
                 Identity = identity ?? string.Empty,
                 AlreadyHasWorld = alreadyHasWorld,
+                JoinIntent = joinIntent,
                 MultiplayerModVersion = MultiplayerModVersion ?? string.Empty,
                 MultiplayerProtocolVersion = MultiplayerProtocolVersion,
                 MultiplayerProtocolHash = MultiplayerProtocolHash ?? string.Empty,
@@ -9384,6 +9696,20 @@ namespace SuMultiplayer.Terrain
         private void HandleHelloAck(HelloAck ack)
         {
             // 主机拒绝加入（手动审批 Reject / 审批超时）：明确中止，绝不把这条 Ack 当成握手成功。
+            // G6：主机在**握手期**就把这条连接踢了（同身份接管 / 管理踢出）。
+            // 与 ack.Rejected（审批拒绝）区分开：那条会回到"加入流程"给玩家看原因，
+            // 这条要求客户端**直接退出世界、不进重连窗口**。
+            if (ack.Kicked)
+            {
+                m_kickedCount++;
+                string kickReason = string.IsNullOrEmpty(ack.KickReason)
+                    ? "host-kicked"
+                    : ack.KickReason;
+                global::Engine.Log.Warning("[SuMP][terrain] 主机在握手期踢出本连接：" +
+                    kickReason + " → 直接退出世界，不重连");
+                KickedByHost?.Invoke(kickReason, false);
+                return;
+            }
             if (ack.Rejected)
             {
                 JoinRejected?.Invoke(ack.ClientId, ack.RejectReason ?? string.Empty);
