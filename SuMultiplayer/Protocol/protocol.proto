@@ -292,7 +292,7 @@ enum MessageType {
 
   // Real-time voice chat (voice.proto): managed IMA ADPCM / CVSD, 8 kHz mono,
   // 40 ms packets, VAD gated, configurable quality profile (high/standard/low/
-  // ultra; default low).  Every VoicePacket carries its format id.  A client
+  // ultra; default standard).  Every VoicePacket carries its format id.  A client
   // sends VOICE_PACKET only while talking; the host validates the negotiated
   // profile and relays to every other voice-capable listener that has not
   // muted that speaker.  Append-only: 85..90 are new ids, no existing id is

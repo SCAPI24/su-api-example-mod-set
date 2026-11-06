@@ -211,7 +211,18 @@ namespace SuMultiplayer.Voice
             m_used[slot] = false;
             m_count--;
             m_playSeq++;
-            m_nextPlayMs = nowMs + m_packetMs;
+            // 播放节奏按**计划时刻**累加，不按"本次调用时刻 + 40ms"。
+            //
+            // 为什么必须这样（2026-11-06 修）：旧写法 m_nextPlayMs = nowMs + m_packetMs 里
+            // nowMs 是调用时刻，于是每取一包都把下一包的时点从"此刻"重新推 40 ms。
+            // 游戏帧率与 40 ms 不整除时（60 fps = 16.67 ms/帧），实际取包间隔会变成
+            // ceil(40/16.67)×16.67 = 50 ms —— 每包漂移 10 ms，缓冲持续堆积到
+            // JitterMaxPackets(8) 后 OverflowDropped 丢最旧包，听感就是"一顿一顿"。
+            // 改成在上一次计划时刻上累加，40 ms 节奏由计划决定，与帧率无关。
+            m_nextPlayMs += m_packetMs;
+            // 落后超过一个包时长（长时间卡顿 / 断点调试）→ 重置到当前，避免"永久追赶"
+            // 把后面所有包都急着连播（那会听起来像快进）。追赶最多只追一个包。
+            if (m_nextPlayMs < nowMs - m_packetMs) m_nextPlayMs = nowMs + m_packetMs;
             return true;
         }
 

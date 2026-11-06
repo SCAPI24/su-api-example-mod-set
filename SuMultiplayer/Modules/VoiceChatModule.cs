@@ -39,6 +39,8 @@ namespace SuMultiplayer.Modules
             public VoiceJitterBuffer Jitter;
             public long LastPacketMs;
             public long LastPlayedMs;
+            /// <summary>上一次 PumpPlayback 处理这条流时的时刻（用于按经过时间算取包预算）。</summary>
+            public long LastPumpMs;
             public int Level;
             public long SeenLate;
             public long SeenGap;
@@ -1072,7 +1074,8 @@ namespace SuMultiplayer.Modules
                 StreamId = streamId,
                 Jitter = new VoiceJitterBuffer(),
                 LastPacketMs = m_nowMs,
-                LastPlayedMs = -1000000
+                LastPlayedMs = -1000000,
+                LastPumpMs = 0        // 0 = 这条流还没泵过 → 首帧只取 1 包（见 PumpPlayback）
             };
             m_streams[speakerId] = stream;
             SuMultiplayer.Engine.ModLog.Info("[SuMP][voice] 打开播放流 speaker=" + speakerId + " stream=" +
@@ -1098,8 +1101,28 @@ namespace SuMultiplayer.Modules
             {
                 int key = m_streamKeys[i];
                 if (!m_streams.TryGetValue(key, out SpeakerStream stream)) continue;
-                int guard = 0;
-                while (guard++ < 2 &&
+                // 取包预算**按经过时间算**，不用固定上限。
+                //
+                // 为什么（2026-11-06 修）：旧写法 `guard++ < 2` 每帧最多取 2 包。
+                // 一帧若因地形生成 / GC 耗时 200 ms，本帧需要取 5 包才能追回节奏，
+                // 但被卡在 2 包 → 欠下的 3 包时间只能靠 GapSkipped 跳过（听感 = 语音顿一下）。
+                // 变成"本帧经过了多少个包时长，就允许取几包"，卡顿后能一次追上；
+                // 仍保留硬上限（JitterMaxPackets）防止异常长时间帧把队列一次取空。
+                int budget;
+                if (stream.LastPumpMs <= 0)
+                {
+                    // 这条流第一次泵：只取 1 包，避免把初积压的预灌包一次全倒进 AL。
+                    budget = 1;
+                }
+                else
+                {
+                    long elapsedMs = m_nowMs - stream.LastPumpMs;
+                    if (elapsedMs < 0) elapsedMs = 0;
+                    budget = 1 + (int)(elapsedMs / VoiceFormat.PacketMs);
+                }
+                if (budget > VoiceFormat.JitterMaxPackets) budget = VoiceFormat.JitterMaxPackets;
+                stream.LastPumpMs = m_nowMs;
+                while (budget-- > 0 &&
                        stream.Jitter.TryDequeue(m_nowMs, out short[] pcm, out int samples))
                 {
                     float gain = Math.Max(0f, Math.Min(1f, m_options.PlaybackVolume));

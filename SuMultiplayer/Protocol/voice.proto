@@ -13,7 +13,7 @@ import "google/protobuf/any.proto";
 //   -> 20 ms frames -> one self-contained block per 40 ms packet (320 samples)
 //   -> VoicePacket.
 //
-// Configurable codec profiles (format field, append-only ids; default low):
+// Configurable codec profiles (format field, append-only ids; default standard):
 //   high     = 4-bit IMA/DVI ADPCM, 163 payload bytes / packet (~36.8 kbit/s)
 //   standard = 3-bit IMA ADPCM,     123 payload bytes / packet (~28.8 kbit/s)
 //   low      = 2-bit IMA ADPCM,      83 payload bytes / packet (~20.8 kbit/s)

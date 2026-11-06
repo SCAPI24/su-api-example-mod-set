@@ -78,7 +78,7 @@ namespace SuMultiplayer.Engine
         /// <summary>远端语音的本地播放增益（0..1）。</summary>
         public float VoiceVolume = 1f;
         /// <summary>
-        /// 语音编码档位（high / standard / low / ultra）；默认 low（2-bit ADPCM）。
+        /// 语音编码档位（high / standard / low / ultra）；默认 standard（3-bit ADPCM）。
         /// 见 <see cref="VoiceProfiles"/>：每包 163 / 123 / 83 / 43 字节。
         /// </summary>
         public VoiceQuality VoiceQuality = VoiceProfiles.Default;

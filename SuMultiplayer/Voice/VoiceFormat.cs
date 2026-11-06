@@ -9,7 +9,7 @@ namespace SuMultiplayer.Voice
     /// 量化位数由 <see cref="VoiceQuality"/> 决定（4/3/2/1 bit）：
     ///   high     163 B / 40 ms   标准 4-bit IMA ADPCM（原档位）
     ///   standard 123 B / 40 ms   3-bit IMA ADPCM
-    ///   low       83 B / 40 ms   2-bit IMA ADPCM（**默认**）
+    ///   low       83 B / 40 ms   2-bit IMA ADPCM
     ///   ultra     43 B / 40 ms   1-bit CVSD
     /// 每包自带 3 字节块头（int16 predictor + uint8 index/step），丢包 / 乱序 /
     /// 中途加入都不会让解码器状态永久错位；代价只有每 40 ms 3 字节。
@@ -41,10 +41,21 @@ namespace SuMultiplayer.Voice
         /// <summary>TCP 帧头（Net/TerrainNet.cs:TerrainFrame.HeaderBytes）。计入带宽口径。</summary>
         public const int WireHeaderBytes = 16;
 
-        /// <summary>Jitter 缓冲默认预灌 2 包（80 ms）：首包不等待，抖动 1 包内可吸收。</summary>
-        public const int JitterPrefillPackets = 2;
+        /// <summary>
+        /// Jitter 缓冲默认预灌 4 包（160 ms）。
+        /// 2026-11-06 由 2 包（80 ms）提到 4 包：2 包只能吸收 1 个包的抖动，
+        /// 公网 / 弱网下常出现"刚到 2 包就开始播、下一包还没到"的饥饿（听感为断续）。
+        /// 4 包把可吸收抖动提高到 3 个包宽（120 ms），代价是固定 +80 ms 延迟。
+        /// 语音通常常开（不是频繁按键），这个延迟换稳定是划算的。
+        /// </summary>
+        public const int JitterPrefillPackets = 4;
         public const int JitterMaxPackets = 8;     // 320 ms 上限
-        public const int JitterGapWaitMs = 70;     // 缺包最多等 70 ms 再跳过
+        /// <summary>
+        /// 缺包最多等一个包时长（40 ms）再跳过。
+        /// 2026-11-06 由 70 ms 降到 40 ms：等 70 ms 等于白等近两个包时长，
+        /// 每次缺包都产生可听见的停顿；一个包时长够覆盖普通乱序，超时就跳。
+        /// </summary>
+        public const int JitterGapWaitMs = 40;
         public const int JitterStartWaitMs = 80;   // 只有 1 包时最多等 80 ms 就开始播
         public const int JitterIdleResetMs = 500;  // 断流 500 ms 复位
 

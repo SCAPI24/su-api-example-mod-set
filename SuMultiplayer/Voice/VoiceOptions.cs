@@ -25,7 +25,7 @@ namespace SuMultiplayer.Voice
         public bool RelayEnabled = true;
 
         /// <summary>
-        /// 编码档位（默认 <see cref="VoiceProfiles.Default"/> = low，2-bit ADPCM）。
+        /// 编码档位（默认 <see cref="VoiceProfiles.Default"/> = standard，3-bit ADPCM）。
         /// 运行期改这个值即可切换：下一包按新档位编码并带上新的 format 字节，
         /// 接收端逐包解码，不需要重新握手。
         /// </summary>

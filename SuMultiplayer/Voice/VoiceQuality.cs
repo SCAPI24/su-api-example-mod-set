@@ -45,8 +45,13 @@ namespace SuMultiplayer.Voice
     /// </summary>
     public static class VoiceProfiles
     {
-        /// <summary>默认档位：low（2-bit ADPCM）。任务要求默认降到这一档。</summary>
-        public const VoiceQuality Default = VoiceQuality.Low;
+        /// <summary>
+        /// 默认档位：standard（3-bit ADPCM）。
+        /// 2026-11-06 由 low（2-bit）提到 standard：2-bit 每样本只有 4 个量化级，
+        /// 实机听感是"发闷 / 像低采样率"（高频细节全丢），用户明确要求改善音质。
+        /// standard 每包 123 B（low 是 83 B），25 包/秒下约 +1 KB/s，局域网/宽带下可忽略。
+        /// </summary>
+        public const VoiceQuality Default = VoiceQuality.Standard;
 
         /// <summary>全部合法档位（由高到低），供配置解析 / HUD / 自检遍历。</summary>
         public static readonly VoiceQuality[] All =
