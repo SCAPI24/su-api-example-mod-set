@@ -671,6 +671,9 @@ message HelloAck {
   // One-time ticket for the separately queued circuit TCP socket. Empty means
   // the host declined or could not issue a circuit channel ticket.
   bytes circuit_ticket = 25;
+  // One-time ticket for the separately queued terrain TCP socket. Empty means
+  // the host declined or could not issue a terrain channel ticket.
+  bytes terrain_ticket = 26;
 
   bytes ext = 100;
   google.protobuf.Any custom = 101;

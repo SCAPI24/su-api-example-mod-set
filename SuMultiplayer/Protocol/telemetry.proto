@@ -70,6 +70,8 @@ message PeerSample {
   // 该玩家端自报的地形同步计数（含顶层摘要校验效果 / 第 6/8 步拦截量）。
   // 客户端侧没有 host 的 resyncBytes 等字段，那些留 0（不伪造）。
   TerrainSyncSample terrain = 11;
+  // 该玩家端的独立地形 TCP 通道统计。
+  ChannelSample terrain_channel = 12;
 }
 
 message CircuitSyncSample {

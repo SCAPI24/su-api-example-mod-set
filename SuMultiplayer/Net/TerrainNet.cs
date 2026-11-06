@@ -22,6 +22,13 @@ namespace SuMultiplayer.Net
         Debug = 1
     }
 
+    /// <summary>主连接之外的可靠 TCP 通道种类。</summary>
+    public enum SecondaryChannelKind : uint
+    {
+        Circuit = 0,
+        Terrain = 1
+    }
+
     public static class TerrainFrame
     {
         public const int HeaderBytes = 16;
@@ -363,6 +370,7 @@ namespace SuMultiplayer.Net
         private sealed class CircuitTicket
         {
             public int PrimaryClientId;
+            public SecondaryChannelKind Kind;
             public long ExpiresAtMs;
         }
 
@@ -394,6 +402,7 @@ namespace SuMultiplayer.Net
             public long LastReceivedSequence = -1;
             public bool ConnectionClosed;
             public bool IsCircuit;
+            public bool IsTerrain;
             public int PrimaryClientId;
         }
 
@@ -403,7 +412,10 @@ namespace SuMultiplayer.Net
         private readonly Dictionary<string, CircuitTicket> m_circuitTickets =
             new Dictionary<string, CircuitTicket>(StringComparer.Ordinal);
         private readonly Dictionary<int, Peer> m_circuitPeers = new Dictionary<int, Peer>();
+        private readonly Dictionary<int, Peer> m_terrainPeers = new Dictionary<int, Peer>();
         private readonly ConcurrentQueue<Action> m_circuitCallbacks =
+            new ConcurrentQueue<Action>();
+        private readonly ConcurrentQueue<Action> m_terrainCallbacks =
             new ConcurrentQueue<Action>();
         private readonly int m_queueCapacity;
         private int m_nextClientId = 1;
@@ -439,6 +451,10 @@ namespace SuMultiplayer.Net
         public event Action<int> CircuitPeerAttached;
         public event Action<int, string> CircuitPeerDetached;
         public event Action<int, ChannelState, string> CircuitPeerStateChanged;
+        public event Action<int, ReceivedFrame> TerrainFrameReceived;
+        public event Action<int> TerrainPeerAttached;
+        public event Action<int, string> TerrainPeerDetached;
+        public event Action<int, ChannelState, string> TerrainPeerStateChanged;
 
         /// <summary>派生传输（自检的内存实现）用它把帧交给订阅者，走的是同一个事件契约。</summary>
         protected void RaiseFrameReceived(ReceivedFrame frame) => FrameReceived?.Invoke(frame);
@@ -523,7 +539,7 @@ namespace SuMultiplayer.Net
                     }
                     peer.Stats.RecordReceived(type, TerrainFrame.HeaderBytes + len);
                     peer.LastReceivedSequence = seq;
-                    if (peer.IsCircuit)
+                    if (peer.IsCircuit || peer.IsTerrain)
                     {
                         if (type == MessageType.CircuitAttach || type == MessageType.CircuitAttached)
                         {
@@ -534,13 +550,16 @@ namespace SuMultiplayer.Net
                         int primaryClientId = peer.PrimaryClientId;
                         ReceivedFrame received = new ReceivedFrame(primaryClientId,
                             seq, type, payload);
-                        m_circuitCallbacks.Enqueue(() =>
-                            CircuitFrameReceived?.Invoke(primaryClientId, received));
+                        if (peer.IsTerrain)
+                            m_terrainCallbacks.Enqueue(() =>
+                                TerrainFrameReceived?.Invoke(primaryClientId, received));
+                        else
+                            m_circuitCallbacks.Enqueue(() =>
+                                CircuitFrameReceived?.Invoke(primaryClientId, received));
                     }
                     else if (peer.LastReceivedSequence == seq &&
                         peer.Stats.ReadFramesReceived() == 1 && type == MessageType.CircuitAttach)
                     {
-                        peer.IsCircuit = true;
                         if (!await TryAttachCircuitAsync(peer, seq, payload).ConfigureAwait(false))
                             return;
                     }
@@ -565,10 +584,13 @@ namespace SuMultiplayer.Net
             int primaryClientId = 0;
             bool accepted = false;
             string reason = string.Empty;
+            SecondaryChannelKind kind = SecondaryChannelKind.Circuit;
             try
             {
                 CircuitAttach request = CircuitAttach.Parser.ParseFrom(payload ?? Array.Empty<byte>());
                 primaryClientId = request.PrimaryClientId;
+                kind = request.ChannelKind == (uint)SecondaryChannelKind.Terrain
+                    ? SecondaryChannelKind.Terrain : SecondaryChannelKind.Circuit;
                 if (primaryClientId <= 0 || request.Ticket == null || request.Ticket.IsEmpty)
                 {
                     reason = "invalid-attach";
@@ -587,19 +609,26 @@ namespace SuMultiplayer.Net
                         {
                             m_circuitTickets.Remove(ticketKey);
                             Peer primary = FindLocked(primaryClientId);
-                            if (ticket.PrimaryClientId != primaryClientId)
+                            if (ticket.PrimaryClientId != primaryClientId || ticket.Kind != kind)
                                 reason = "ticket-client-mismatch";
-                            else if (primary == null || !primary.Alive || primary.IsCircuit ||
-                                primary.Kind != ClientKind.Player)
+                            else if (primary == null || !primary.Alive || primary.IsCircuit || primary.IsTerrain ||
+                                (primary.Kind != ClientKind.Player &&
+                                 !(kind == SecondaryChannelKind.Terrain && primary.Kind == ClientKind.Debug)))
                                 reason = "primary-player-unavailable";
-                            else if (m_circuitPeers.ContainsKey(primaryClientId))
+                            else if (kind == SecondaryChannelKind.Circuit && m_circuitPeers.ContainsKey(primaryClientId))
                                 reason = "circuit-channel-already-attached";
+                            else if (kind == SecondaryChannelKind.Terrain && m_terrainPeers.ContainsKey(primaryClientId))
+                                reason = "terrain-channel-already-attached";
                             else
                             {
                                 accepted = true;
-                                peer.IsCircuit = true;
+                                peer.IsCircuit = kind == SecondaryChannelKind.Circuit;
+                                peer.IsTerrain = kind == SecondaryChannelKind.Terrain;
                                 peer.PrimaryClientId = primaryClientId;
-                                m_circuitPeers.Add(primaryClientId, peer);
+                                if (kind == SecondaryChannelKind.Circuit)
+                                    m_circuitPeers.Add(primaryClientId, peer);
+                                else
+                                    m_terrainPeers.Add(primaryClientId, peer);
                             }
                         }
                     }
@@ -614,7 +643,8 @@ namespace SuMultiplayer.Net
             {
                 PrimaryClientId = primaryClientId,
                 Accepted = accepted,
-                Reason = reason
+                Reason = reason,
+                ChannelKind = (uint)kind
             };
             byte[] responsePayload = response.ToByteArray();
             byte[] frame = TerrainFrame.Encode(sequence, MessageType.CircuitAttached, responsePayload);
@@ -625,16 +655,19 @@ namespace SuMultiplayer.Net
             }
             catch (Exception e)
             {
-                Fail(peer, "电路附属握手回执发送失败:" + e.GetType().Name);
+                Fail(peer, "附属 TCP 握手回执发送失败:" + e.GetType().Name);
                 return false;
             }
 
             if (!accepted)
             {
-                Fail(peer, "电路附属握手拒绝:" + reason);
+                Fail(peer, "附属 TCP 握手拒绝:" + reason);
                 return false;
             }
-            m_circuitCallbacks.Enqueue(() => CircuitPeerAttached?.Invoke(primaryClientId));
+            if (kind == SecondaryChannelKind.Circuit)
+                m_circuitCallbacks.Enqueue(() => CircuitPeerAttached?.Invoke(primaryClientId));
+            else
+                m_terrainCallbacks.Enqueue(() => TerrainPeerAttached?.Invoke(primaryClientId));
             return true;
         }
 
@@ -735,12 +768,23 @@ namespace SuMultiplayer.Net
 
         public virtual byte[] CreateCircuitTicket(int primaryClientId)
         {
+            return CreateSecondaryTicket(primaryClientId, SecondaryChannelKind.Circuit);
+        }
+
+        public virtual byte[] CreateTerrainTicket(int primaryClientId)
+        {
+            return CreateSecondaryTicket(primaryClientId, SecondaryChannelKind.Terrain);
+        }
+
+        private byte[] CreateSecondaryTicket(int primaryClientId, SecondaryChannelKind kind)
+        {
             lock (m_gate)
             {
                 Peer primary = FindLocked(primaryClientId);
-                if (primary == null || !primary.Alive || primary.IsCircuit ||
-                    primary.Kind != ClientKind.Player)
-                    throw new InvalidOperationException("无法为不存在或非玩家主连接签发电路 ticket");
+                if (primary == null || !primary.Alive || primary.IsCircuit || primary.IsTerrain ||
+                    (primary.Kind != ClientKind.Player &&
+                     !(kind == SecondaryChannelKind.Terrain && primary.Kind == ClientKind.Debug)))
+                    throw new InvalidOperationException("无法为不存在或非玩家主连接签发附属 ticket");
                 RemoveExpiredCircuitTicketsLocked(Environment.TickCount64);
                 byte[] bytes = new byte[32];
                 using (RandomNumberGenerator rng = RandomNumberGenerator.Create())
@@ -749,6 +793,7 @@ namespace SuMultiplayer.Net
                 m_circuitTickets.Add(ticket, new CircuitTicket
                 {
                     PrimaryClientId = primaryClientId,
+                    Kind = kind,
                     ExpiresAtMs = Environment.TickCount64 + 30000
                 });
                 return bytes;
@@ -760,6 +805,11 @@ namespace SuMultiplayer.Net
             while (m_circuitCallbacks.TryDequeue(out Action callback)) callback();
         }
 
+        public void PumpTerrainEvents()
+        {
+            while (m_terrainCallbacks.TryDequeue(out Action callback)) callback();
+        }
+
         public virtual bool TrySendCircuit(int primaryClientId, MessageType type, byte[] payload)
         {
             Peer peer;
@@ -769,11 +819,26 @@ namespace SuMultiplayer.Net
             return Enqueue(peer, type, payload);
         }
 
+        public virtual bool TrySendTerrain(int primaryClientId, MessageType type, byte[] payload)
+        {
+            Peer peer;
+            lock (m_gate) m_terrainPeers.TryGetValue(primaryClientId, out peer);
+            if (peer == null || !peer.Alive || !peer.IsTerrain) return false;
+            return Enqueue(peer, type, payload);
+        }
+
         public virtual bool IsCircuitAttached(int primaryClientId)
         {
             lock (m_gate)
                 return m_circuitPeers.TryGetValue(primaryClientId, out Peer peer) &&
                     peer.Alive && peer.IsCircuit;
+        }
+
+        public virtual bool IsTerrainAttached(int primaryClientId)
+        {
+            lock (m_gate)
+                return m_terrainPeers.TryGetValue(primaryClientId, out Peer peer) &&
+                    peer.Alive && peer.IsTerrain;
         }
 
         public virtual bool DisconnectCircuitClient(int primaryClientId, string reason)
@@ -785,6 +850,20 @@ namespace SuMultiplayer.Net
                 m_circuitPeers.Remove(primaryClientId);
             }
             m_circuitCallbacks.Enqueue(() => CircuitPeerDetached?.Invoke(primaryClientId,
+                reason ?? "host-disconnected"));
+            Fail(peer, reason ?? "host-disconnected");
+            return true;
+        }
+
+        public virtual bool DisconnectTerrainClient(int primaryClientId, string reason)
+        {
+            Peer peer;
+            lock (m_gate)
+            {
+                if (!m_terrainPeers.TryGetValue(primaryClientId, out peer)) return false;
+                m_terrainPeers.Remove(primaryClientId);
+            }
+            m_terrainCallbacks.Enqueue(() => TerrainPeerDetached?.Invoke(primaryClientId,
                 reason ?? "host-disconnected"));
             Fail(peer, reason ?? "host-disconnected");
             return true;
@@ -839,7 +918,10 @@ namespace SuMultiplayer.Net
                 {
                     Peer p = m_peers[i];
                     if (!p.IsCircuit)
+                    {
+                        if (!p.IsTerrain)
                         list.Add(new PeerInfo(p.Id, p.Kind, p.Name, p.State, p.Alive, p.Stats));
+                    }
                 }
                 return list.ToArray();
             }
@@ -854,11 +936,25 @@ namespace SuMultiplayer.Net
                     peer.Alive && peer.IsCircuit ? peer.Stats : null;
         }
 
+        public virtual ChannelStats TerrainStatsOf(int primaryClientId)
+        {
+            lock (m_gate)
+                return m_terrainPeers.TryGetValue(primaryClientId, out Peer peer) &&
+                    peer.Alive && peer.IsTerrain ? peer.Stats : null;
+        }
+
         public virtual ChannelState CircuitStateOf(int primaryClientId)
         {
             lock (m_gate)
                 return m_circuitPeers.TryGetValue(primaryClientId, out Peer peer) &&
                     peer.Alive && peer.IsCircuit ? peer.State : ChannelState.Disconnected;
+        }
+
+        public virtual ChannelState TerrainStateOf(int primaryClientId)
+        {
+            lock (m_gate)
+                return m_terrainPeers.TryGetValue(primaryClientId, out Peer peer) &&
+                    peer.Alive && peer.IsTerrain ? peer.State : ChannelState.Disconnected;
         }
 
         public virtual ClientKind? KindOf(int clientId) => Find(clientId)?.Kind;
@@ -933,16 +1029,24 @@ namespace SuMultiplayer.Net
         private void CloseCircuitForPrimary(int primaryClientId, string reason)
         {
             Peer circuit = null;
+            Peer terrain = null;
             lock (m_gate)
             {
                 m_circuitPeers.TryGetValue(primaryClientId, out circuit);
                 if (circuit != null) m_circuitPeers.Remove(primaryClientId);
+                m_terrainPeers.TryGetValue(primaryClientId, out terrain);
+                if (terrain != null) m_terrainPeers.Remove(primaryClientId);
                 RemoveTicketsForPrimaryLocked(primaryClientId);
             }
             if (circuit != null)
             {
                 m_circuitCallbacks.Enqueue(() => CircuitPeerDetached?.Invoke(primaryClientId, reason));
                 Fail(circuit, reason);
+            }
+            if (terrain != null)
+            {
+                m_terrainCallbacks.Enqueue(() => TerrainPeerDetached?.Invoke(primaryClientId, reason));
+                Fail(terrain, reason);
             }
         }
 
@@ -964,11 +1068,15 @@ namespace SuMultiplayer.Net
         {
             if (peer.State == state) return;
             peer.State = state;
-            if (peer.IsCircuit)
+            if (peer.IsCircuit || peer.IsTerrain)
             {
                 int primaryClientId = peer.PrimaryClientId;
-                m_circuitCallbacks.Enqueue(() => CircuitPeerStateChanged?.Invoke(
-                    primaryClientId, state, detail));
+                if (peer.IsTerrain)
+                    m_terrainCallbacks.Enqueue(() => TerrainPeerStateChanged?.Invoke(
+                        primaryClientId, state, detail));
+                else
+                    m_circuitCallbacks.Enqueue(() => CircuitPeerStateChanged?.Invoke(
+                        primaryClientId, state, detail));
             }
             else
                 RaisePeerStateChanged(peer.Id, state, detail);
@@ -983,20 +1091,33 @@ namespace SuMultiplayer.Net
             peer.SendSignal.Release();
             DrainSendQueue(peer);
             if (!peer.ConnectionClosed) { peer.ConnectionClosed = true; TransportDiagnostics.OnConnectionClosed(); }
-            if (peer.IsCircuit)
+            if (peer.IsCircuit || peer.IsTerrain)
             {
                 bool removed;
                 lock (m_gate)
                 {
-                    removed = m_circuitPeers.TryGetValue(peer.PrimaryClientId, out Peer current) &&
-                        ReferenceEquals(current, peer);
-                    if (removed) m_circuitPeers.Remove(peer.PrimaryClientId);
+                    if (peer.IsTerrain)
+                    {
+                        removed = m_terrainPeers.TryGetValue(peer.PrimaryClientId, out Peer current) &&
+                            ReferenceEquals(current, peer);
+                        if (removed) m_terrainPeers.Remove(peer.PrimaryClientId);
+                    }
+                    else
+                    {
+                        removed = m_circuitPeers.TryGetValue(peer.PrimaryClientId, out Peer current) &&
+                            ReferenceEquals(current, peer);
+                        if (removed) m_circuitPeers.Remove(peer.PrimaryClientId);
+                    }
                 }
                 if (removed)
                 {
                     int primaryClientId = peer.PrimaryClientId;
-                    m_circuitCallbacks.Enqueue(() =>
-                        CircuitPeerDetached?.Invoke(primaryClientId, detail));
+                    if (peer.IsTerrain)
+                        m_terrainCallbacks.Enqueue(() =>
+                            TerrainPeerDetached?.Invoke(primaryClientId, detail));
+                    else
+                        m_circuitCallbacks.Enqueue(() =>
+                            CircuitPeerDetached?.Invoke(primaryClientId, detail));
                 }
             }
             else
@@ -1080,11 +1201,15 @@ namespace SuMultiplayer.Net
                 peer.SendSignal.Release();
                 DrainSendQueue(peer);
                 if (!peer.ConnectionClosed) { peer.ConnectionClosed = true; TransportDiagnostics.OnConnectionClosed(); }
-                if (peer.IsCircuit)
+                if (peer.IsCircuit || peer.IsTerrain)
                 {
                     int primaryClientId = peer.PrimaryClientId;
-                    m_circuitCallbacks.Enqueue(() => CircuitPeerDetached?.Invoke(
-                        primaryClientId, "server-disposed"));
+                    if (peer.IsTerrain)
+                        m_terrainCallbacks.Enqueue(() => TerrainPeerDetached?.Invoke(
+                            primaryClientId, "server-disposed"));
+                    else
+                        m_circuitCallbacks.Enqueue(() => CircuitPeerDetached?.Invoke(
+                            primaryClientId, "server-disposed"));
                 }
             }
         }
@@ -1122,6 +1247,7 @@ namespace SuMultiplayer.Net
         private bool m_connectionCounted;
         private bool m_socketCounted;
         private volatile bool m_circuitMode;
+        private volatile SecondaryChannelKind m_secondaryKind;
         private volatile bool m_circuitAttached;
         private int m_circuitPrimaryClientId;
         private string m_circuitAttachReason = string.Empty;
@@ -1160,9 +1286,12 @@ namespace SuMultiplayer.Net
         public virtual ChannelState State { get; protected set; } = ChannelState.Disconnected;
         public event Action<ReceivedFrame> FrameReceived;
         public event Action<ReceivedFrame> CircuitFrameReceived;
+        public event Action<ReceivedFrame> TerrainFrameReceived;
         public event Action<ChannelState, string> StateChanged;
         public event Action<bool, string> CircuitAttachCompleted;
+        public event Action<bool, string> TerrainAttachCompleted;
         public bool IsCircuitAttached => m_circuitAttached && IsAlive;
+        public bool IsTerrainAttached => m_circuitAttached && m_secondaryKind == SecondaryChannelKind.Terrain && IsAlive;
         public string CircuitAttachReason => m_circuitAttachReason;
 
         /// <summary>派生传输（自检的内存实现）用它把帧交给订阅者。</summary>
@@ -1189,12 +1318,14 @@ namespace SuMultiplayer.Net
 
         public virtual bool Connect(int timeoutMs = 3000)
         {
-            return ConnectInternal(timeoutMs, false, 0);
+            return ConnectInternal(timeoutMs, false, 0, SecondaryChannelKind.Circuit);
         }
 
-        private bool ConnectInternal(int timeoutMs, bool circuitMode, int primaryClientId)
+        private bool ConnectInternal(int timeoutMs, bool circuitMode, int primaryClientId,
+            SecondaryChannelKind secondaryKind)
         {
             m_circuitMode = false;
+            m_secondaryKind = secondaryKind;
             m_circuitAttached = false;
             m_circuitPrimaryClientId = circuitMode ? primaryClientId : 0;
             m_circuitAttachReason = string.Empty;
@@ -1269,8 +1400,26 @@ namespace SuMultiplayer.Net
                 m_circuitAttachReason = "invalid-primary-or-ticket";
                 return false;
             }
-            if (!ConnectInternal(timeoutMs, true, primaryClientId)) return false;
+            if (!ConnectInternal(timeoutMs, true, primaryClientId, SecondaryChannelKind.Circuit)) return false;
             if (!AttachCircuit(primaryClientId, ticket))
+            {
+                m_circuitAttachReason = "attach-send-failed";
+                Dispose();
+                return false;
+            }
+            return true;
+        }
+
+        public virtual bool ConnectTerrain(int primaryClientId, byte[] ticket,
+            int timeoutMs = 3000)
+        {
+            if (primaryClientId <= 0 || ticket == null || ticket.Length == 0)
+            {
+                m_circuitAttachReason = "invalid-primary-or-ticket";
+                return false;
+            }
+            if (!ConnectInternal(timeoutMs, true, primaryClientId, SecondaryChannelKind.Terrain)) return false;
+            if (!AttachTerrain(primaryClientId, ticket))
             {
                 m_circuitAttachReason = "attach-send-failed";
                 Dispose();
@@ -1293,7 +1442,29 @@ namespace SuMultiplayer.Net
             var request = new CircuitAttach
             {
                 PrimaryClientId = primaryClientId,
-                Ticket = ByteString.CopyFrom(ticket)
+                Ticket = ByteString.CopyFrom(ticket),
+                ChannelKind = (uint)SecondaryChannelKind.Circuit
+            };
+            return TrySend(MessageType.CircuitAttach, request.ToByteArray());
+        }
+
+        public virtual bool AttachTerrain(int primaryClientId, byte[] ticket)
+        {
+            if (!IsAlive || primaryClientId <= 0 || ticket == null || ticket.Length == 0)
+            {
+                m_circuitAttachReason = "not-connected-or-invalid-attach";
+                return false;
+            }
+            m_circuitMode = true;
+            m_secondaryKind = SecondaryChannelKind.Terrain;
+            m_circuitPrimaryClientId = primaryClientId;
+            m_circuitAttached = false;
+            m_circuitAttachReason = string.Empty;
+            var request = new CircuitAttach
+            {
+                PrimaryClientId = primaryClientId,
+                Ticket = ByteString.CopyFrom(ticket),
+                ChannelKind = (uint)SecondaryChannelKind.Terrain
             };
             return TrySend(MessageType.CircuitAttach, request.ToByteArray());
         }
@@ -1349,12 +1520,26 @@ namespace SuMultiplayer.Net
                                 SetState(ChannelState.Failed, m_circuitAttachReason);
                                 return;
                             }
+                            SecondaryChannelKind responseKind = response.ChannelKind ==
+                                (uint)SecondaryChannelKind.Terrain
+                                ? SecondaryChannelKind.Terrain : SecondaryChannelKind.Circuit;
+                            if (responseKind != m_secondaryKind)
+                            {
+                                Stats.RecordProtocolViolation();
+                                m_circuitAttachReason = "attached-channel-kind-mismatch";
+                                SetState(ChannelState.Failed, m_circuitAttachReason);
+                                return;
+                            }
                             m_circuitAttached = response.Accepted;
                             m_circuitAttachReason = response.Reason ?? string.Empty;
                             bool accepted = response.Accepted;
                             string attachReason = m_circuitAttachReason;
-                            m_circuitCallbacks.Enqueue(() =>
-                                CircuitAttachCompleted?.Invoke(accepted, attachReason));
+                            if (m_secondaryKind == SecondaryChannelKind.Terrain)
+                                m_circuitCallbacks.Enqueue(() =>
+                                    TerrainAttachCompleted?.Invoke(accepted, attachReason));
+                            else
+                                m_circuitCallbacks.Enqueue(() =>
+                                    CircuitAttachCompleted?.Invoke(accepted, attachReason));
                             if (!response.Accepted)
                             {
                                 SetState(ChannelState.Failed,
@@ -1371,7 +1556,10 @@ namespace SuMultiplayer.Net
                             return;
                         }
                         ReceivedFrame received = new ReceivedFrame(0, seq, type, payload);
-                        m_circuitCallbacks.Enqueue(() => CircuitFrameReceived?.Invoke(received));
+                        if (m_secondaryKind == SecondaryChannelKind.Terrain)
+                            m_circuitCallbacks.Enqueue(() => TerrainFrameReceived?.Invoke(received));
+                        else
+                            m_circuitCallbacks.Enqueue(() => CircuitFrameReceived?.Invoke(received));
                     }
                     else
                     {
@@ -1490,7 +1678,15 @@ namespace SuMultiplayer.Net
 
         public virtual bool TrySendCircuit(MessageType type, byte[] payload)
         {
-            if (!IsCircuitAttached || type == MessageType.CircuitAttach ||
+            if (!IsCircuitAttached || m_secondaryKind != SecondaryChannelKind.Circuit ||
+                type == MessageType.CircuitAttach ||
+                type == MessageType.CircuitAttached) return false;
+            return TrySendCore(type, payload);
+        }
+
+        public virtual bool TrySendTerrain(MessageType type, byte[] payload)
+        {
+            if (!IsTerrainAttached || type == MessageType.CircuitAttach ||
                 type == MessageType.CircuitAttached) return false;
             return TrySendCore(type, payload);
         }

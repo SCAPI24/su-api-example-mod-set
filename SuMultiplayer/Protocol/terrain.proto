@@ -263,6 +263,8 @@ message VerifyChunks {
 message CircuitAttach {
   int32 primary_client_id = 1;
   bytes ticket = 2;
+  // 0 = circuit (legacy default), 1 = terrain.
+  uint32 channel_kind = 3;
 }
 
 // Host -> client on the secondary circuit socket. The transport consumes this
@@ -271,14 +273,18 @@ message CircuitAttached {
   int32 primary_client_id = 1;
   bool accepted = 2;
   string reason = 3;
+  uint32 channel_kind = 4;
 }
 
 message CircuitTicketRequest {
   uint64 request_id = 1;
+  // 0 = circuit (legacy default), 1 = terrain.
+  uint32 channel_kind = 2;
 }
 
 message CircuitTicketResponse {
   uint64 request_id = 1;
   bytes ticket = 2;
   string error = 3;
+  uint32 channel_kind = 4;
 }

@@ -315,7 +315,7 @@ internal enum DigestKind : byte
 
 完整核验仅针对角色脚下中心 chunk 和四个正交相邻 chunk。客户端与主机分别计算完整 hash，客户端将摘要发给主机比较。每块完成一次最终核验后，以该客户端本次内存驻留代记录为已处理；离开该五块范围再进入不重复，只有 chunk 卸载并重新加载后才重新核验。若最终核验不匹配，主机按权威整块快照修复；权威修复完成后也将该驻留代记为已处理，不再用完整 hash 重复检查。
 
-**实现状态**：阶段 1 和阶段 2 已落地上述流程。`TerrainBridge` 捕获真实天气/季节写入并记录 `Season` / `Content` 三态；树叶真实写入通过 `NoteLeavesMutation` 按客户端记录 `Leaves`。新块首报只进入顶层摘要池，树叶段/顶层补丁落地后通过带用途的顶层确认闭环；完整摘要只进入客户端与主机的脚下五块最终核验池。阶段 3 的独立地形 TCP 通道尚未接线，当前所有地形消息仍使用现有主连接；不能把三通道隔离描述成已完成。`TsVerify` 已废弃，不能用旧验证套件验收这套新协议。
+**实现状态**：阶段 1、阶段 2 和阶段 3 已落地上述流程。`TerrainBridge` 捕获真实天气/季节写入并记录 `Season` / `Content` 三态；树叶真实写入通过 `NoteLeavesMutation` 按客户端记录 `Leaves`。新块首报只进入顶层摘要池，树叶段/顶层补丁落地后通过带用途的顶层确认闭环；完整摘要只进入客户端与主机的脚下五块最终核验池。TCP 传输现在有主连接、电路连接、地形连接三路：地形同步、区块集合、摘要/裁决、顶层补丁、兴趣/位置和 LiveMap 请求/回传走独立地形连接，角色/实体/交互等仍走主连接，电路消息仍走电路连接。LiveMap 先建立只读主连接，再用 HelloAck 的地形 ticket 建立独立地形连接。`TsVerify` 已废弃，不能用旧验证套件验收这套新协议。
 
 ---
 
@@ -356,9 +356,9 @@ internal enum DigestKind : byte
 
 | 已解决的问题 | 现有位置 |
 |---|---|
-| 第二次连接 + 握手（`CircuitAttach` / `CircuitAttached`） | `TerrainNet.cs:526-624` |
-| 主连接 ↔ 副连接绑定（`PrimaryClientId`） | `TerrainNet.cs:592-602` |
-| 副通道独立存活/死亡（`Peer.Alive`、`IsCircuit` 标志） | `TerrainNet.cs:385-398` |
+| 第二、第三次连接 + 握手（`CircuitAttach` / `CircuitAttached` 的 `channel_kind`：Circuit/Terrain） | `TerrainNet.cs:526-624` |
+| 主连接 ↔ 副连接绑定（`PrimaryClientId` + channel kind） | `TerrainNet.cs:592-602` |
+| 副通道独立存活/死亡（`Peer.Alive`、`IsCircuit` / `IsTerrain` 标志） | `TerrainNet.cs:385-398` |
 | 主通道查副通道 | `m_circuitPeers`（`:405`）、`IsCircuitAttached`（`:772`） |
 | 经 SOCKS5 代理连接副通道 | `TerrainNet.cs:1218-1231` |
 
@@ -428,7 +428,7 @@ public bool IsCircuit => Kind == ChannelKind.Circuit;
 |---|---|---|---|
 | **1** | 拆分协议与校验状态：新块只报顶层 hash；标记驱动 `Leaves` / `TopLayerFix` / `ChunkResync`；补丁后顶层确认；脚下五块做一次完整 hash 最终核验 | 中高 | 新块不再逐块做 65536 格摘要；保留深层差异最终检验 |
 | **2** | 并行摘要池（20 顶层 + 4 完整）：紧凑顶层快照 + 五块范围完整快照，客户端与主机都异步计算 | 中 | 限制主线程复制和摘要计算突发 |
-| **3** | TCP 第三路（地形） | 中高 | 待后续单独接线；当前实现仍使用现有主连接 |
+| **3** | TCP 第三路（地形） | 中高 | 已接线：主连接签发 terrain ticket，独立地形连接承载地形与 LiveMap |
 
 **建议按 1 → 2 → 3 顺序**：先让同步语义和完整核验边界正确，再并行化实际需要的两类摘要，最后拆分 TCP 通道。
 

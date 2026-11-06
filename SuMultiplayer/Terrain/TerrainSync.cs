@@ -1865,6 +1865,7 @@ namespace SuMultiplayer.Terrain
         private readonly Dictionary<int, State> m_clients = new Dictionary<int, State>();
         /// <summary>组合根绑定的附属电路 TCP ticket 签发器。</summary>
         public Func<int, byte[]> CircuitTicketProvider { get; set; }
+        public Func<int, byte[]> TerrainTicketProvider { get; set; }
         /// <summary>
         /// 首次加入审批通过后、客户端因"角色资料未创建"重新握手时，允许同一身份免二次审批的时间窗。
         /// key = 身份原值；批准时仅对 profile-required 流程登记一次，第二个 Hello 消费后删除。
@@ -2257,50 +2258,59 @@ namespace SuMultiplayer.Terrain
         private void OnCircuitTicketRequest(MessageContext context,
             PT.CircuitTicketRequest message)
         {
+            bool terrain = message != null && message.ChannelKind ==
+                (uint)SecondaryChannelKind.Terrain;
             State state;
             lock (m_gate)
             {
-                if (message == null || context.ClientId <= 0 || CircuitTicketProvider == null ||
+                if (message == null || context.ClientId <= 0 ||
+                    (terrain ? TerrainTicketProvider : CircuitTicketProvider) == null ||
                     !m_clients.TryGetValue(context.ClientId, out state) ||
                     state.Kind != ClientKind.Player || state.Session == null ||
                     state.ApprovalPending || state.ProfileRequired)
                 {
                     SendCircuitTicketError(context.ClientId, message?.RequestId ?? 0UL,
+                        terrain,
                         "player-primary-session-not-ready");
                     return;
                 }
             }
             try
             {
-                byte[] ticket = CircuitTicketProvider(context.ClientId);
+                Func<int, byte[]> provider = terrain ? TerrainTicketProvider : CircuitTicketProvider;
+                if (provider == null) throw new InvalidOperationException(
+                    terrain ? "地形 ticket provider 未接线" : "电路 ticket provider 未接线");
+                byte[] ticket = provider(context.ClientId);
                 if (ticket == null || ticket.Length != 32)
                     throw new InvalidOperationException("电路 ticket 长度无效");
                 var response = new PT.CircuitTicketResponse
                 {
                     RequestId = message.RequestId,
-                    Ticket = Google.Protobuf.ByteString.CopyFrom(ticket)
+                    Ticket = Google.Protobuf.ByteString.CopyFrom(ticket),
+                    ChannelKind = terrain ? (uint)SecondaryChannelKind.Terrain : 0u
                 };
                 if (!m_server.TrySend(context.ClientId,
                         MessageType.CircuitTicketResponse, response.ToByteArray()))
-                    CircuitTicketProblem?.Invoke("CircuitTicketResponse 发送失败（clientId=" +
+                    CircuitTicketProblem?.Invoke("附属 ticket 回执发送失败（clientId=" +
                         context.ClientId + "）");
             }
             catch (Exception e)
             {
-                SendCircuitTicketError(context.ClientId, message.RequestId,
+                SendCircuitTicketError(context.ClientId, message.RequestId, terrain,
                     e.GetType().Name + ": " + e.Message);
                 CircuitTicketProblem?.Invoke("电路 ticket 签发失败（clientId=" +
                     context.ClientId + "，" + e.GetType().Name + "）");
             }
         }
 
-        private void SendCircuitTicketError(int clientId, ulong requestId, string reason)
+        private void SendCircuitTicketError(int clientId, ulong requestId, bool terrain, string reason)
         {
             if (clientId <= 0) return;
             var response = new PT.CircuitTicketResponse
             {
                 RequestId = requestId,
-                Error = reason ?? "unknown-ticket-error"
+                Error = reason ?? "unknown-ticket-error",
+                ChannelKind = terrain ? (uint)SecondaryChannelKind.Terrain : 0u
             };
             m_server.TrySend(clientId, MessageType.CircuitTicketResponse,
                 response.ToByteArray());
@@ -3753,6 +3763,21 @@ namespace SuMultiplayer.Terrain
                 catch (Exception e)
                 {
                     CircuitTicketProblem?.Invoke("HelloAck 电路 ticket 签发失败（clientId=" +
+                        state.Id + "，" + e.GetType().Name + "）");
+                }
+            }
+            if (!state.ProfileRequired && TerrainTicketProvider != null)
+            {
+                try
+                {
+                    byte[] ticket = TerrainTicketProvider(state.Id);
+                    if (ticket == null || ticket.Length != 32)
+                        throw new InvalidOperationException("地形 ticket 长度无效");
+                    ack.TerrainTicket = Google.Protobuf.ByteString.CopyFrom(ticket);
+                }
+                catch (Exception e)
+                {
+                    CircuitTicketProblem?.Invoke("HelloAck 地形 ticket 签发失败（clientId=" +
                         state.Id + "，" + e.GetType().Name + "）");
                 }
             }
@@ -7114,6 +7139,7 @@ namespace SuMultiplayer.Terrain
         /// <summary>本连接内整集序号（从 1 递增；主机按它拼分片）。</summary>
         private int m_clientChunkFullSetId;
         private ulong m_circuitTicketRequestId;
+        private ulong m_terrainTicketRequestId;
         /// <summary>每条消息复用的一批条目（避免每帧分配）。</summary>
         private readonly List<ClientChunkEntry> m_clientChunkEntryBuffer =
             new List<ClientChunkEntry>(ClientChunkSetCodec.MaxEntriesPerMessage);
@@ -7448,22 +7474,24 @@ namespace SuMultiplayer.Terrain
         private void OnCircuitTicketResponse(MessageContext context,
             PT.CircuitTicketResponse message)
         {
-            if (message == null || message.RequestId == 0 ||
-                message.RequestId != m_circuitTicketRequestId) return;
+            if (message == null || message.RequestId == 0) return;
+            bool terrain = message.ChannelKind == (uint)SecondaryChannelKind.Terrain;
+            ulong expected = terrain ? m_terrainTicketRequestId : m_circuitTicketRequestId;
+            if (message.RequestId != expected) return;
             if (!string.IsNullOrEmpty(message.Error))
             {
-                CircuitTicketError = message.Error;
-                CircuitTicket = Array.Empty<byte>();
+                if (terrain) { TerrainTicketError = message.Error; TerrainTicket = Array.Empty<byte>(); }
+                else { CircuitTicketError = message.Error; CircuitTicket = Array.Empty<byte>(); }
                 return;
             }
             if (message.Ticket == null || message.Ticket.Length != 32)
             {
-                CircuitTicketError = "host-returned-invalid-circuit-ticket";
-                CircuitTicket = Array.Empty<byte>();
+                if (terrain) { TerrainTicketError = "host-returned-invalid-terrain-ticket"; TerrainTicket = Array.Empty<byte>(); }
+                else { CircuitTicketError = "host-returned-invalid-circuit-ticket"; CircuitTicket = Array.Empty<byte>(); }
                 return;
             }
-            CircuitTicket = message.Ticket.ToByteArray();
-            CircuitTicketError = string.Empty;
+            if (terrain) { TerrainTicket = message.Ticket.ToByteArray(); TerrainTicketError = string.Empty; }
+            else { CircuitTicket = message.Ticket.ToByteArray(); CircuitTicketError = string.Empty; }
         }
 
         private void OnVerdict(MessageContext context, PT.ChunkVerdict message) => HandleVerdict(message);
@@ -7548,6 +7576,8 @@ namespace SuMultiplayer.Terrain
 
         public byte[] CircuitTicket { get; private set; } = Array.Empty<byte>();
         public string CircuitTicketError { get; private set; } = string.Empty;
+        public byte[] TerrainTicket { get; private set; } = Array.Empty<byte>();
+        public string TerrainTicketError { get; private set; } = string.Empty;
 
         public bool RequestCircuitTicket()
         {
@@ -7558,7 +7588,24 @@ namespace SuMultiplayer.Terrain
             CircuitTicketError = string.Empty;
             var request = new PT.CircuitTicketRequest
             {
-                RequestId = m_circuitTicketRequestId
+                RequestId = m_circuitTicketRequestId,
+                ChannelKind = 0u
+            };
+            return m_channel.TrySend(MessageType.CircuitTicketRequest,
+                request.ToByteArray());
+        }
+
+        public bool RequestTerrainTicket()
+        {
+            if (!Handshaken || !m_channel.IsAlive) return false;
+            m_terrainTicketRequestId++;
+            if (m_terrainTicketRequestId == 0) m_terrainTicketRequestId = 1;
+            TerrainTicket = Array.Empty<byte>();
+            TerrainTicketError = string.Empty;
+            var request = new PT.CircuitTicketRequest
+            {
+                RequestId = m_terrainTicketRequestId,
+                ChannelKind = (uint)SecondaryChannelKind.Terrain
             };
             return m_channel.TrySend(MessageType.CircuitTicketRequest,
                 request.ToByteArray());
@@ -9282,6 +9329,12 @@ namespace SuMultiplayer.Terrain
                 : Array.Empty<byte>();
             CircuitTicketError = CircuitTicket.Length == 0
                 ? "host-did-not-issue-circuit-ticket"
+                : string.Empty;
+            TerrainTicket = ack.TerrainTicket != null && ack.TerrainTicket.Length == 32
+                ? ack.TerrainTicket.ToByteArray()
+                : Array.Empty<byte>();
+            TerrainTicketError = TerrainTicket.Length == 0
+                ? "host-did-not-issue-terrain-ticket"
                 : string.Empty;
             HostIdentity = ack.HostIdentity ?? string.Empty;
             HostName = ack.HostName ?? string.Empty;

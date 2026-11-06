@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Globalization;
 using System.IO;
 using System.Net;
+using System.Net.NetworkInformation;
 using System.Text;
 using System.Threading;
 using Google.Protobuf;
@@ -21,7 +22,8 @@ namespace SuMPLiveMap
     /// 这个连的是真实游戏 —— 网页上看到的每一格都是引擎里的真实地形，
     /// 主机没加载的 chunk 根本不会出现在数据里，所以网页上那片区域不会被填色。
     ///
-    /// 用法：SuMPLiveMap [--host 127.0.0.1] [--port 26760] [--http 8738] [--window] [--radius 2]
+    /// 用法：SuMPLiveMap [--host 127.0.0.1] [--port room-port] [--http 8738] [--window] [--radius 2]
+    /// 本机不传 --port 时会探测唯一的房间 TCP 监听端口；远程主机必须显式传端口。
     /// 演示页标记：MAP02。
     /// </summary>
     internal static class Program
@@ -58,10 +60,12 @@ namespace SuMPLiveMap
         /// </summary>
         private static string s_selectedCenterKey = LiveMapCodec.HostKey;
         private static string s_host = "127.0.0.1";
-        private static int s_port = 26760;
+        private static int s_port;
+        private static bool s_portExplicit;
         private static int s_httpPort = 8738;
         private static int s_radius = 2;
         private static bool s_all = true;                // 默认：主机整片已加载区域
+        private static TcpTerrainClient s_primary;
         private static TcpTerrainClient s_client;
 
         private static void Log(string message)
@@ -79,7 +83,12 @@ namespace SuMPLiveMap
                         if (i + 1 < args.Length) s_host = args[++i];
                         break;
                     case "--port":
-                        if (i + 1 < args.Length) int.TryParse(args[++i], out s_port);
+                        if (i + 1 < args.Length)
+                        {
+                            if (!int.TryParse(args[++i], out s_port) || s_port <= 0 || s_port > 65535)
+                                throw new ArgumentException("--port 必须是 1..65535");
+                            s_portExplicit = true;
+                        }
                         break;
                     case "--http":
                         if (i + 1 < args.Length) int.TryParse(args[++i], out s_httpPort);
@@ -94,7 +103,7 @@ namespace SuMPLiveMap
             }
             s_radius = LiveMapCodec.ClampRadius(s_radius <= 0 ? 2 : s_radius);
 
-            Log("目标房间 " + s_host + ":" + s_port + " · " +
+            Log("目标房间 " + s_host + ":" + (s_portExplicit ? s_port.ToString() : "auto") + " · " +
                 (s_all ? "整片已加载区域" : "窗口半径 " + s_radius + " 块") + " · HTTP 端口 " + s_httpPort);
 
             var http = new HttpListener();
@@ -124,10 +133,19 @@ namespace SuMPLiveMap
             long nextSendMs = 0;
             while (true)
             {
-                if (s_client == null || s_client.State != ChannelState.Connected)
+                s_client?.PumpCircuitEvents();
+                if (s_client != null && !s_client.IsAlive)
                 {
-                    TryConnect();
-                    if (s_client == null)
+                    try { s_client.Dispose(); } catch (Exception) { }
+                    s_client = null;
+                    try { s_primary?.Dispose(); } catch (Exception) { }
+                    s_primary = null;
+                }
+                if (s_client == null || !s_client.IsTerrainAttached)
+                {
+                    if (s_primary == null || !s_primary.IsAlive)
+                        TryConnect();
+                    if (s_client == null || !s_client.IsTerrainAttached)
                     {
                         Thread.Sleep(2000);
                         continue;
@@ -145,16 +163,19 @@ namespace SuMPLiveMap
 
         private static void TryConnect()
         {
+            if (!TryResolvePort(out int port)) return;
             try { s_client?.Dispose(); } catch (Exception) { }
+            try { s_primary?.Dispose(); } catch (Exception) { }
             s_client = null;
-            var client = new TcpTerrainClient(s_host, s_port, 4096);
-            if (!client.Connect(3000))
+            s_primary = null;
+            var primary = new TcpTerrainClient(s_host, port, 4096);
+            if (!primary.Connect(3000))
             {
-                try { client.Dispose(); } catch (Exception) { }
+                try { primary.Dispose(); } catch (Exception) { }
                 Log("连接房间失败（主机还没按 CR 建房？）");
                 return;
             }
-            client.FrameReceived += OnFrame;
+            primary.FrameReceived += OnPrimaryFrame;
             var hello = new Hello
             {
                 Kind = (uint)ClientKind.Debug,
@@ -163,9 +184,101 @@ namespace SuMPLiveMap
                 ProtocolRevision = 1,
                 Radius = s_radius
             };
-            client.TrySend(MessageType.Hello, hello.ToByteArray());
-            s_client = client;
-            Log("已连上房间 " + s_host + ":" + s_port + "（kind=Debug，只读）");
+            if (!primary.TrySend(MessageType.Hello, hello.ToByteArray()))
+            {
+                primary.Dispose();
+                Log("LiveMap 主连接 Hello 发送失败");
+                return;
+            }
+            s_primary = primary;
+            Log("已连上房间主连接 " + s_host + ":" + port + "（kind=Debug，只读，等待地形分流连接）");
+        }
+
+        private static bool TryResolvePort(out int port)
+        {
+            if (s_portExplicit)
+            {
+                port = s_port;
+                return true;
+            }
+            bool local = string.Equals(s_host, "localhost", StringComparison.OrdinalIgnoreCase) ||
+                (IPAddress.TryParse(s_host, out IPAddress address) && IPAddress.IsLoopback(address));
+            if (!local)
+            {
+                port = 0;
+                Log("目标不是本机且未指定 --port → 明确停止连接探测");
+                return false;
+            }
+            var candidates = new List<int>();
+            IPGlobalProperties properties = IPGlobalProperties.GetIPGlobalProperties();
+            IPEndPoint[] listeners = properties.GetActiveTcpListeners();
+            for (int i = 0; i < listeners.Length; i++)
+            {
+                int candidate = listeners[i].Port;
+                if (candidate <= 0 || candidate == 26751 || candidate == s_httpPort) continue;
+                if (!candidates.Contains(candidate)) candidates.Add(candidate);
+            }
+            if (candidates.Count != 1)
+            {
+                port = 0;
+                Log(candidates.Count == 0
+                    ? "本机没有发现房间 TCP 监听端口 → 等待建房"
+                    : "本机发现多个 TCP 监听端口（" + string.Join(",", candidates) +
+                      "），必须使用 --port 明确指定房间端口");
+                return false;
+            }
+            port = candidates[0];
+            return true;
+        }
+
+        private static void OnPrimaryFrame(ReceivedFrame frame)
+        {
+            if (frame.Type != MessageType.HelloAck) return;
+            HelloAck ack;
+            try { ack = HelloAck.Parser.ParseFrom(frame.Payload); }
+            catch (Exception error)
+            {
+                Log("LiveMap HelloAck 解码失败：" + error.Message);
+                return;
+            }
+            if (ack.Rejected || ack.ClientId <= 0 || ack.TerrainTicket == null ||
+                ack.TerrainTicket.Length != 32)
+            {
+                Log("主机没有提供可用地形 TCP ticket：" +
+                    (ack.Rejected ? ack.RejectReason : "terrain_ticket_missing"));
+                try { s_primary?.Dispose(); } catch (Exception) { }
+                s_primary = null;
+                return;
+            }
+            if (s_client != null && s_client.IsTerrainAttached) return;
+            var terrain = new TcpTerrainClient(s_host, s_port, 4096);
+            terrain.TerrainFrameReceived += OnFrame;
+            terrain.TerrainAttachCompleted += OnTerrainAttachCompleted;
+            if (!terrain.ConnectTerrain(ack.ClientId, ack.TerrainTicket.ToByteArray(), 3000))
+            {
+                terrain.TerrainFrameReceived -= OnFrame;
+                terrain.TerrainAttachCompleted -= OnTerrainAttachCompleted;
+                terrain.Dispose();
+                Log("LiveMap 地形 TCP 连接失败：" + terrain.State + " (" + terrain.StateDetail + ")");
+                try { s_primary?.Dispose(); } catch (Exception) { }
+                s_primary = null;
+                return;
+            }
+            s_client = terrain;
+        }
+
+        private static void OnTerrainAttachCompleted(bool accepted, string reason)
+        {
+            if (accepted)
+            {
+                Log("LiveMap 已切换到独立地形 TCP 通道");
+                return;
+            }
+            Log("LiveMap 地形 TCP attach 被拒绝：" + (reason ?? string.Empty));
+            try { s_client?.Dispose(); } catch (Exception) { }
+            s_client = null;
+            try { s_primary?.Dispose(); } catch (Exception) { }
+            s_primary = null;
         }
 
         private static void OnFrame(ReceivedFrame frame)
@@ -253,7 +366,7 @@ namespace SuMPLiveMap
         private static void SendMapRequest()
         {
             TcpTerrainClient client = s_client;
-            if (client == null) return;
+            if (client == null || !client.IsTerrainAttached) return;
             int centerChunkX = 0, centerChunkZ = 0;
             bool hasCenter = false;
             lock (s_gate)
@@ -272,7 +385,7 @@ namespace SuMPLiveMap
                     }
                 }
             }
-            client.TrySend(MessageType.MapRequest,
+            client.TrySendTerrain(MessageType.MapRequest,
                 LiveMapCodec.EncodeRequest(s_radius, s_all, hasCenter, centerChunkX, centerChunkZ));
         }
 

@@ -194,6 +194,7 @@ footer{margin-top:20px;padding-top:12px;border-top:1px solid var(--line);font-si
       <thead><tr><th>怎么跑起来</th></tr></thead>
       <tbody>
         <tr><td>先建房并加入房间，再启动 LiveMap 工具；页面默认轮询 <span class="mono">http://127.0.0.1:8738/state</span>，约 700 ms 一次（<span class="mono">cache:"no-store"</span>）</td></tr>
+        <tr><td>LiveMap 工具先用主连接握手，再切到独立 Terrain TCP；房间端口由建房时决定，建议使用 <span class="mono">SuMPLiveMap.exe --port &lt;room-port&gt;</span>（本机自动探测只有一个监听端口时可省略；多个监听端口时必须显式指定）</td></tr>
         <tr><td>换地址：<span class="mono">?url=http://127.0.0.1:8738/state</span>；预选居中角色：<span class="mono">?center=&lt;key&gt;</span>（key = 身份稳定键，重连不变；旧写法 <span class="mono">?center=&lt;id&gt;</span> 也认，只在第一个样本上生效一次，之后完全由工具栏的「居中角色」下拉框决定）；初始比例：<span class="mono">?scale=6</span>；<span class="mono">?verify</span> 是旧参数（仍接受但<b>已忽略</b>：主机侧不再画任何框，无需开关）</td></tr>
         <tr><td><span class="mono">view</span> = <span class="mono">"all"</span>（整个已加载区域，<span class="mono">radius</span> 为 0）或 <span class="mono">"window"</span>（旧的“角色周围 N×N 区块”窗口，用 <span class="mono">radius</span>）；两者都只画 <span class="mono">chunks</span> 里列出的区块</td></tr>
         <tr><td><b>当前视图 = 「居中角色」的选择</b>（图例与统计面板都逐字写明，只有一处代码决定这件事）：选 <b>Host（房主）</b> → <b>地形填充只有主机 <span class="mono">chunks[]</span></b>（主机真正加载的区域），<b>每个</b>完整客户端的 <span class="mono">clients[].chunks</span> 都画成<b>按状态着色的线框</b>，并画出<b>全部</b>角色的标记；选<b>某个客户端</b> → <b>只画它自己的线框</b>（不画其它客户端），地形仍只来自主机 <span class="mono">chunks[]</span> 且只限落在它区块集合内的那些块（别处的主机地形也不画），也只画<b>它自己</b>的标记。客户端区块没有地形载荷（<span class="mono">d</span>），所以它们<b>永远不填地形</b>——只画线框，绝不会被画成"已加载的地面"</td></tr>
@@ -210,7 +211,7 @@ footer{margin-top:20px;padding-top:12px;border-top:1px solid var(--line);font-si
         <tr><td><span class="mono">animals[]</span> = <span class="mono">[{ x, y, z }, …]</span>（v9）：<b>仅主机端生物、仅位置</b>（没有名字 / id / 状态）。页面把每只画成一个<b>黑色实心圆点</b>（半径约 2–3 px、随缩放轻微变化）：<b>不显示名字、不显示坐标、不响应选中、不画标签 / 连线</b>，与角色标记（彩色 + 名字/坐标）明确区分；客户端不贡献动物。<span class="mono">counts.animals</span> = 主机端动物数量（页面只做对照，以 <span class="mono">animals[]</span> 条数为准）；缺字段 → 不画动物并在图例里明说；条目的 x / z 不是有限数 → 该条不画并计数报警（绝不猜坐标）</td></tr>
         <tr><td><span class="mono">payloadVersion</span> = <span class="mono">10</span>：LiveMap 线上的载荷版本（只追加字段，不重排旧字段）。页面按 v10 读字段（<b>v10 = 新增 <span class="mono">players[]</span> 逐角色槽位清单（<span class="mono">key</span>=clientId:slot / <span class="mono">slot</span> / <span class="mono">stableKey</span> / <span class="mono">host</span>），于是主机槽位 0..3 与每个联机化身的 (clientId,slot) 都能画出来</b>；v8 = 每个客户端头部 <span class="mono">currentLoaded</span> 且 <span class="mono">clients[].chunks</span> = 客户端当前内存区块；<b>v9 = 新增 <span class="mono">animals[]</span>（主机端动物位置，仅 x/y/z）与 <span class="mono">counts.animals</span></b>；v9 = 新增 <span class="mono">animals[]</span>；v5 = 每个 <span class="mono">chunks[]</span> 记录末尾追加 <span class="mono">n</span>；v6 = watched / players / clients 条目追加 <span class="mono">key</span>；v7 = 每条 <span class="mono">clients[].chunks</span> 条目末尾追加 <span class="mono">s</span>，页面输出为 <span class="mono">[cx,cz,s]</span>；v8 = <b>每个客户端头部记录末尾追加 <span class="mono">currentLoaded</span></b>，且 <span class="mono">clients[].chunks</span> 的含义改为<b>客户端当前内存区块</b>（卸载即消失））；版本不符 / <span class="mono">decodeFailures &gt; 0</span> 时在图例与统计面板里明确报警，不猜字段含义。<b>缺字段（旧版主机/工具）时页面明说不画</b>：没有 <span class="mono">players</span> → 坐标一栏写「未知」；没有 <span class="mono">clients</span> → 不画客户端线框；<span class="mono">clients[].chunks</span> 的条目没有第三项 <span class="mono">s</span> → 这些块不画线框（不猜状态）；没有 <span class="mono">currentLoaded</span>（旧版 v7 feed）→ 完整性退回按 <span class="mono">reported</span> 判定并在图例里明说；没有 <span class="mono">chunks[].n</span> → 不画数字；没有 <span class="mono">key</span> → 选角退回 <span class="mono">id</span>（旧版行为）；没有 <span class="mono">animals</span> → 不画动物并在图例里说明</td></tr>
         <tr><td><span class="mono">counts</span> = 工具统计：<span class="mono">chunks / columns / players（= 角色槽位数，v10）/ hostPlayers（主机自己的槽位数）/ clientChunks</span> 之外还有 <span class="mono">pendingMarks</span>（<span class="mono">chunks[].n &gt; 0</span> 的区块数）与 <span class="mono">pendingClients</span>（各块 <span class="mono">n</span> 之和）；页面只做对照，不据此画地形</td></tr>
-        <tr><td><span class="mono">telemetry</span>（附加诊断对象，不属于冻结的地图载荷）：含 <span class="mono">sampleId / sampledAtMs</span>、主机与客户端 <span class="mono">hostRuntime / peers[].clientRuntime</span>（CPU、游戏更新率、帧时间、模块 calls/totalMs/maxMs）、<span class="mono">circuit</span> / <span class="mono">terrain</span> 累计计数（电路含哈希不一致、修复入队、各快照原因与捕获失败）、逐客户端 <span class="mono">peers[].clientCircuit</span> 电路捕获 / 请求 / 应用计数、<span class="mono">peers[].primary / circuit</span> TCP 计数与 <span class="mono">messageTypes[]</span>，以及工具连接 <span class="mono">monitorTransport</span>。页面根据两个有效采样时间的累计计数差计算 /s；首个样本显示「等待下一采样」，计数回退时重新建立基线；字段缺失、采样时间无效或没有在线客户端时明确显示「不可用」，不估算</td></tr>
+        <tr><td><span class="mono">telemetry</span>（附加诊断对象，不属于冻结的地图载荷）：含 <span class="mono">sampleId / sampledAtMs</span>、主机与客户端 <span class="mono">hostRuntime / peers[].clientRuntime</span>（CPU、游戏更新率、帧时间、模块 calls/totalMs/maxMs）、<span class="mono">circuit</span> / <span class="mono">terrain</span> 累计计数（电路含哈希不一致、修复入队、各快照原因与捕获失败）、逐客户端 <span class="mono">peers[].clientCircuit</span> 电路捕获 / 请求 / 应用计数、<span class="mono">peers[].primary / circuit / terrainChannel</span> 三路 TCP 计数与 <span class="mono">messageTypes[]</span>，以及工具连接 <span class="mono">monitorTransport</span>。页面根据两个有效采样时间的累计计数差计算 /s；首个样本显示「等待下一采样」，计数回退时重新建立基线；字段缺失、采样时间无效或没有在线客户端时明确显示「不可用」，不估算</td></tr>
         <tr><td>覆盖范围 = <span class="mono">bounds</span> ∪ <span class="mono">chunks</span> ∪ <span class="mono">clients[].chunks</span> ∪ <span class="mono">players[].cell</span> —— 但每一项都先按<b>当前视图作用域</b>裁剪：主机视图取主机 ∪ 全部完整客户端的并集与全部角色位置（于是能看到分开的区域块），客户端视图只取该客户端自己的区块与它自己的位置（<span class="mono">bounds</span> 与其它角色都不并进来）</td></tr>
         <tr><td><span class="mono">center.cell</span> 缺失（null）时，退回到所选角色的区块中心 <span class="mono">chunk*16 + 8</span>（并在图例与统计里标注「坐标未知，按区块中心画」）</td></tr>
         <tr><td>颜色表按<b>游戏方块 id</b>（<span class="mono">Survivalcraft/Game/*Block.cs</span> 的 <span class="mono">Index</span>）校正，覆盖常见方块；<b>未收录的 id 一律中性灰</b>并在图例里标「未知方块 id」（<b>不再用哈希色相兜底</b> —— 那会把雪原画成青色、把未知方块冒充成水）。水（id 18）另有独立的「水域」色阶。整片区域可能上万列，因此按 <span class="mono">(id, 高度档)</span> 批量填充、不做逐列描边，一次样本只画一次（不跟动画帧）</td></tr>
@@ -2309,17 +2310,20 @@ footer{margin-top:20px;padding-top:12px;border-top:1px solid var(--line);font-si
     }
 
     if (peers && peers.length) {
-      var playerPrimary = [], playerCircuit = [], playerAll = [];
+      var playerPrimary = [], playerCircuit = [], playerTerrain = [], playerAll = [];
       peers.forEach(function (peer) {
         if (peer.primary) { playerPrimary.push(peer.primary); playerAll.push(peer.primary); }
         if (peer.circuit) { playerCircuit.push(peer.circuit); playerAll.push(peer.circuit); }
+        if (peer.terrainChannel) { playerTerrain.push(peer.terrainChannel); playerAll.push(peer.terrainChannel); }
       });
       var primaryTotal = aggregateChannels(playerPrimary);
       var circuitTotal = aggregateChannels(playerCircuit);
+      var terrainTotal = aggregateChannels(playerTerrain);
       var playerTotal = aggregateChannels(playerAll);
-      if (playerTotal) appendAggregateChannel("主机玩家连接合计（主连接+电路）", playerTotal, "host:player-total");
+      if (playerTotal) appendAggregateChannel("主机玩家连接合计（三路）", playerTotal, "host:player-total");
       if (primaryTotal) appendAggregateChannel("主机玩家主连接合计", primaryTotal, "host:primary-total");
       if (circuitTotal) appendAggregateChannel("主机玩家电路连接合计", circuitTotal, "host:circuit-total");
+      if (terrainTotal) appendAggregateChannel("主机玩家地形连接合计", terrainTotal, "host:terrain-total");
     }
     if (peers) {
       peers.forEach(function (peer) {
@@ -2329,6 +2333,7 @@ footer{margin-top:20px;padding-top:12px;border-top:1px solid var(--line);font-si
           "</td><td class='num'>" + (finiteMetric(peer.runtimeAgeMs) ? esc(String(peer.runtimeAgeMs)) + " ms" : "不可用") + "</td></tr>");
         appendPeerChannel(peer, peer.primary, "主连接");
         appendPeerChannel(peer, peer.circuit, "电路连接");
+        appendPeerChannel(peer, peer.terrainChannel, "地形连接");
         var clientCircuit = peer.clientCircuit;
         var clientCircuitLabel = peer.name || peer.key || ("clientId=" + peer.clientId);
         if (clientCircuit && typeof clientCircuit === "object") {

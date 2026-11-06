@@ -84,6 +84,7 @@ namespace SuMultiplayer.Modules
         private TcpTerrainServer m_server;
         private TcpTerrainClient m_client;
         private TcpTerrainClient m_circuitClient;
+        private TcpTerrainClient m_terrainClient;
         private readonly HashSet<int> m_circuitPeerIds = new HashSet<int>();
         private Action<int, ReceivedFrame> m_circuitFrameArrived;
         private Action<int> m_circuitPeerAttached;
@@ -91,6 +92,7 @@ namespace SuMultiplayer.Modules
         private long m_nextCircuitConnectMs;
         private bool m_circuitTicketRequested;
         private long m_circuitTicketRequestSentMs;
+        private long m_nextTerrainConnectMs;
         private TerrainSyncHost m_host;
         private TerrainSyncClient m_clientSync;
         private readonly HashSet<ChunkKey> m_footprintVerifiedResidency = new HashSet<ChunkKey>();
@@ -534,6 +536,16 @@ namespace SuMultiplayer.Modules
 
         private bool SendFromMessageLayer(int clientId, MessageType type, byte[] payload)
         {
+            if (IsTerrainMessage(type))
+            {
+                if (m_server != null)
+                {
+                    if (!IsClientSendable(clientId)) return false;
+                    return m_server.TrySendTerrain(clientId, type, payload);
+                }
+                return m_terrainClient != null && m_terrainClient.IsTerrainAttached &&
+                    m_terrainClient.TrySendTerrain(type, payload);
+            }
             if (m_server != null)
             {
                 // 主机：目标必须显式（不猜"最后加入的那个"）。
@@ -545,6 +557,36 @@ namespace SuMultiplayer.Modules
                 return clientId == 0 && m_client.IsAlive && m_client.TrySend(type, payload);
             }
             return false;
+        }
+
+        private static bool IsTerrainMessage(MessageType type)
+        {
+            switch (type)
+            {
+                case MessageType.InterestUpdate:
+                case MessageType.ChunkDigestReport:
+                case MessageType.ChunkVerdict:
+                case MessageType.ChunkResync:
+                case MessageType.CellChange:
+                case MessageType.MapRequest:
+                case MessageType.MapState:
+                case MessageType.PlayerPosition:
+                case MessageType.PlayerPositions:
+                case MessageType.ClientChunks:
+                case MessageType.CatchUp:
+                case MessageType.VerifyChunks:
+                case MessageType.TopLayerDigestReport:
+                case MessageType.TopLayerDigestVerdict:
+                case MessageType.TopLayerMismatchReport:
+                case MessageType.TopLayerFix:
+                case MessageType.TerrainDiagnosticControl:
+                case MessageType.TerrainDiagnosticReport:
+                case MessageType.ClientRuntimeTelemetry:
+                case MessageType.LiveMapTelemetry:
+                    return true;
+                default:
+                    return false;
+            }
         }
 
         private void OnInterestMessage(MessageContext context, InterestUpdate message)
@@ -794,7 +836,9 @@ namespace SuMultiplayer.Modules
                         Primary = BuildChannelSample(m_server.StatsOf(client.Id),
                             m_server.StateOf(client.Id)),
                         Circuit = BuildChannelSample(m_server.CircuitStatsOf(client.Id),
-                            m_server.CircuitStateOf(client.Id))
+                            m_server.CircuitStateOf(client.Id)),
+                        TerrainChannel = BuildChannelSample(m_server.TerrainStatsOf(client.Id),
+                            m_server.TerrainStateOf(client.Id))
                     };
                     if (m_peerRuntimeSamples.TryGetValue(client.Id,
                             out PeerRuntimeRecord runtime))
@@ -915,7 +959,7 @@ namespace SuMultiplayer.Modules
             foreach (PeerInfo peer in m_server.ListPeers())
             {
                 if (peer.Kind != ClientKind.Player ||
-                    m_server.TrySend(peer.Id, MessageType.TerrainDiagnosticControl, payload)) continue;
+                    TrySendPeerMessage(peer.Id, MessageType.TerrainDiagnosticControl, payload)) continue;
                 LogRateLimited("terrain-diagnostic-control-send:" + peer.Id,
                     "区块重同步诊断调度信号发送失败（clientId=" + peer.Id + "，主连接背压或已失效）",
                     5000);
@@ -999,6 +1043,9 @@ namespace SuMultiplayer.Modules
                 m_server.CircuitFrameReceived += HandleCircuitFrame;
                 m_server.CircuitPeerAttached += HandleCircuitPeerAttached;
                 m_server.CircuitPeerDetached += HandleCircuitPeerDetached;
+                m_server.TerrainFrameReceived += HandleTerrainFrame;
+                m_server.TerrainPeerAttached += HandleTerrainPeerAttached;
+                m_server.TerrainPeerDetached += HandleTerrainPeerDetached;
                 m_server.Start();
                 m_hostPort = m_server.Port;
                 Log("room-host-listening-success mapPort=" + m_hostPort +
@@ -1015,6 +1062,7 @@ namespace SuMultiplayer.Modules
                 TerrainSyncHost leavesHost = m_host;
                 SeasonLeavesChange.Notifier = leavesHost.NoteLeavesMutation;
                 m_host.CircuitTicketProvider = m_server.CreateCircuitTicket;
+                m_host.TerrainTicketProvider = m_server.CreateTerrainTicket;
                 m_host.CircuitTicketProblem += HandleCircuitTicketProblem;
                 m_host.WorldDownloadPauseFilter = IsClientDownloading;
                 // 资料闸门（联机角色模块）：Hello 时决定"有没有角色记录 / 要不要先建角色"。
@@ -1081,6 +1129,9 @@ namespace SuMultiplayer.Modules
                         m_server.CircuitFrameReceived -= HandleCircuitFrame;
                         m_server.CircuitPeerAttached -= HandleCircuitPeerAttached;
                         m_server.CircuitPeerDetached -= HandleCircuitPeerDetached;
+                        m_server.TerrainFrameReceived -= HandleTerrainFrame;
+                        m_server.TerrainPeerAttached -= HandleTerrainPeerAttached;
+                        m_server.TerrainPeerDetached -= HandleTerrainPeerDetached;
                         m_server.Dispose();
                     }
                 }
@@ -1126,6 +1177,7 @@ namespace SuMultiplayer.Modules
             m_clientDropRequested = false;
             m_clientDropReason = null;
             DisposeCircuitClient("primary-reconnect");
+            DisposeTerrainClient("primary-reconnect");
             try
             {
                 m_client = new TcpTerrainClient(m_wantHost, m_wantPort);
@@ -1270,7 +1322,11 @@ namespace SuMultiplayer.Modules
             try { if (m_server != null) m_server.CircuitFrameReceived -= HandleCircuitFrame; } catch (Exception) { }
             try { if (m_server != null) m_server.CircuitPeerAttached -= HandleCircuitPeerAttached; } catch (Exception) { }
             try { if (m_server != null) m_server.CircuitPeerDetached -= HandleCircuitPeerDetached; } catch (Exception) { }
+            try { if (m_server != null) m_server.TerrainFrameReceived -= HandleTerrainFrame; } catch (Exception) { }
+            try { if (m_server != null) m_server.TerrainPeerAttached -= HandleTerrainPeerAttached; } catch (Exception) { }
+            try { if (m_server != null) m_server.TerrainPeerDetached -= HandleTerrainPeerDetached; } catch (Exception) { }
             try { if (m_client != null) m_client.FrameReceived -= m_bridge.PostFrame; } catch (Exception) { }
+            DisposeTerrainClient("channel-stopped");
             try { if (m_clientSync != null) m_clientSync.Saturated -= HandleClientQueueSaturated; } catch (Exception) { }
             try { if (m_clientSync != null) m_clientSync.DecodeFailed -= HandleClientDecodeFailed; } catch (Exception) { }
             try { if (m_clientSync != null) m_clientSync.ClientChunkSetFailed -= HandleClientChunkSetFailed; } catch (Exception) { }
@@ -1355,7 +1411,7 @@ namespace SuMultiplayer.Modules
                 if (!peer.Alive || peer.Kind != ClientKind.Player) continue;
                 if (IsClientDownloading(peer.Id)) continue;
                 if (peer.State != ChannelState.Connected && peer.State != ChannelState.Backpressured) continue;
-                if (m_server.TrySend(peer.Id, type, payload)) sent++;
+                if (TrySendPeerMessage(peer.Id, type, payload)) sent++;
             }
             return sent;
         }
@@ -1378,7 +1434,7 @@ namespace SuMultiplayer.Modules
                 if (!peer.Alive || peer.Kind != ClientKind.Player) continue;
                 if (IsClientDownloading(peer.Id)) continue;
                 if (peer.State != ChannelState.Connected && peer.State != ChannelState.Backpressured) continue;
-                if (m_server.TrySend(peer.Id, type, payload)) sent++;
+                if (TrySendPeerMessage(peer.Id, type, payload)) sent++;
             }
             return sent;
         }
@@ -1436,7 +1492,7 @@ namespace SuMultiplayer.Modules
                 int clientId = roster[i].ClientId;
                 if (IsClientDownloading(clientId)) continue;
                 if (!IsConnectedPlayerPeer(peers, clientId)) continue;
-                if (!m_server.TrySend(clientId, type, payload)) continue;
+                if (!TrySendPeerMessage(clientId, type, payload)) continue;
                 deliveredMask |= bit;
                 sent++;
             }
@@ -1484,7 +1540,7 @@ namespace SuMultiplayer.Modules
                 candidates++;
                 if (!EntityInterestWindowDiff.InWindow(chunkX, chunkZ, centerX, centerZ,
                         radius + chunkMargin)) continue;
-                if (!m_server.TrySend(peer.Id, type, payload)) continue;
+                if (!TrySendPeerMessage(peer.Id, type, payload)) continue;
                 sent++;
             }
             return sent;
@@ -1526,7 +1582,7 @@ namespace SuMultiplayer.Modules
             if (m_server == null || payload == null) return false;
             PeerInfo[] peers = m_server.ListPeers();
             if (!IsConnectedPlayerPeer(peers, clientId)) return false;
-            return m_server.TrySend(clientId, type, payload);
+            return TrySendPeerMessage(clientId, type, payload);
         }
 
         /// <summary>
@@ -1574,7 +1630,7 @@ namespace SuMultiplayer.Modules
                 if (peer.Id == avatarClientId)
                 {
                     // 自己的状态必须到：不依赖它是否已上报窗口。
-                    if (m_server.TrySend(peer.Id, type, payload)) sent++;
+                    if (TrySendPeerMessage(peer.Id, type, payload)) sent++;
                     continue;
                 }
                 if (!hasCell) continue;   // 位置未知：观察者一个都不发（绝不改发全体）
@@ -1583,7 +1639,7 @@ namespace SuMultiplayer.Modules
                 candidates++;
                 if (!EntityInterestWindowDiff.InWindow(chunkX, chunkZ, centerX, centerZ,
                         radius + chunkMargin)) continue;
-                if (!m_server.TrySend(peer.Id, type, payload)) continue;
+                if (!TrySendPeerMessage(peer.Id, type, payload)) continue;
                 sent++;
             }
             return sent;
@@ -1649,6 +1705,8 @@ namespace SuMultiplayer.Modules
             // 附属电路连接在它自己的网络队列上收帧；只在这里把事件派发到同步模块。
             m_server?.PumpCircuitEvents();
             m_circuitClient?.PumpCircuitEvents();
+            m_server?.PumpTerrainEvents();
+            m_terrainClient?.PumpCircuitEvents();
             // 架构决定：**主机唯一权威，客户端是副本**。角色一变就同步到桥与引擎外壳：
             //   · 客户端（m_client != null）：引擎侧停止所有会改地形的世界模拟，
             //     并把本地写入捕获成编辑请求（见 Engine/ClientReplicaSubsystems.cs）；
@@ -1751,6 +1809,7 @@ namespace SuMultiplayer.Modules
                 // 兴趣上报（含"握手前重发"）统一在 UpdateInterest 里做，这里不再另发一份。
             }
             UpdateCircuitClientConnection(tick.Now);
+            UpdateTerrainClientConnection(tick.Now);
             UpdatePlayerPositionSync(tick);
             Report(tick.Now);
         }
@@ -2409,11 +2468,11 @@ namespace SuMultiplayer.Modules
             if (isDebugPeer)
             {
                 LiveTelemetry telemetry = BuildLiveTelemetry(clientId);
-                m_server.TrySend(clientId, MessageType.LiveMapTelemetry, telemetry.ToByteArray());
+                TrySendPeerMessage(clientId, MessageType.LiveMapTelemetry, telemetry.ToByteArray());
             }
             for (int i = 0; i < m_liveMapBatches.Count; i++)
             {
-                if (m_server.TrySend(clientId, MessageType.MapState, m_liveMapBatches[i])) continue;
+                if (TrySendPeerMessage(clientId, MessageType.MapState, m_liveMapBatches[i])) continue;
                 Log("实时地图回包发送失败（目标客户端 " + clientId + "，第 " + (i + 1) + "/" +
                     m_liveMapBatches.Count + " 批）");
                 return;
@@ -2737,6 +2796,16 @@ namespace SuMultiplayer.Modules
         /// <summary>端口转发用：把消息发到本模块持有的连接上。</summary>
         internal bool SendThroughChannel(MessageType type, byte[] payload)
         {
+            if (IsTerrainMessage(type))
+            {
+                if (m_server != null)
+                {
+                    if (!IsClientSendable(m_hostClientId)) return false;
+                    return m_server.TrySendTerrain(m_hostClientId, type, payload);
+                }
+                return m_terrainClient != null && m_terrainClient.IsTerrainAttached &&
+                    m_terrainClient.TrySendTerrain(type, payload);
+            }
             if (m_server != null)
             {
                 // 目标必须是**当前连着的**玩家端：只用"最后加入的 id"会在这个连接失效后
@@ -2772,6 +2841,14 @@ namespace SuMultiplayer.Modules
             return state == ChannelState.Connected || state == ChannelState.Backpressured;
         }
 
+        private bool TrySendPeerMessage(int clientId, MessageType type, byte[] payload)
+        {
+            if (m_server == null || !IsClientSendable(clientId)) return false;
+            return IsTerrainMessage(type)
+                ? m_server.TrySendTerrain(clientId, type, payload)
+                : m_server.TrySend(clientId, type, payload);
+        }
+
         /// <summary>
         /// 端口转发用：把消息发给**指定**的玩家端（世界传输按 clientId 分开发送）。
         /// 不是主机 / 目标不可达 ⇒ false（明确失败，绝不改投别的客户端）。
@@ -2785,7 +2862,9 @@ namespace SuMultiplayer.Modules
                 m_pausedBroadcastDrops++;
                 return false;
             }
-            return m_server.TrySend(clientId, type, payload);
+            return IsTerrainMessage(type)
+                ? m_server.TrySendTerrain(clientId, type, payload)
+                : m_server.TrySend(clientId, type, payload);
         }
 
         private int PickSendableClient()
@@ -2877,6 +2956,21 @@ namespace SuMultiplayer.Modules
             }
         }
 
+        private void HandleClientTerrainAttachCompleted(bool accepted, string reason)
+        {
+            if (accepted)
+            {
+                Log("附属地形 TCP 已通过 ticket 绑定；地形同步已从主连接分流");
+                return;
+            }
+            LogWarning("附属地形 TCP 被主机拒绝（" +
+                (string.IsNullOrEmpty(reason) ? "未说明原因" : reason) +
+                ") → 请求新 ticket 后重连");
+            DisposeTerrainClient("attach-rejected:" + reason);
+            m_nextTerrainConnectMs = 0L;
+            m_clientSync?.RequestTerrainTicket();
+        }
+
         private void HandleCircuitTicketProblem(string reason) =>
             LogWarning(reason ?? "电路 ticket 处理失败");
 
@@ -2963,6 +3057,87 @@ namespace SuMultiplayer.Modules
             }
             m_circuitClient = circuit;
             m_nextCircuitConnectMs = nowMs + 1000;
+        }
+
+        private void UpdateTerrainClientConnection(double now)
+        {
+            if (m_client == null || m_clientSync == null || !m_client.IsAlive ||
+                !m_clientSync.Handshaken)
+            {
+                if (m_terrainClient != null) DisposeTerrainClient("primary-not-ready");
+                return;
+            }
+            long nowMs = (long)(now * 1000.0);
+            if (m_terrainClient != null && !m_terrainClient.IsAlive)
+            {
+                string failure = m_terrainClient.State + " (" + m_terrainClient.StateDetail + ")";
+                DisposeTerrainClient("terrain-link-lost:" + failure);
+                LogWarning("附属地形 TCP 失效（" + failure + "）→ 通过主连接申请新 ticket 后重连");
+                m_nextTerrainConnectMs = nowMs + 1000;
+                m_clientSync.RequestTerrainTicket();
+                return;
+            }
+            if (m_terrainClient != null) return;
+            if (nowMs < m_nextTerrainConnectMs) return;
+            byte[] ticket = m_clientSync.TerrainTicket;
+            if (ticket == null || ticket.Length != 32)
+            {
+                if (string.IsNullOrEmpty(m_clientSync.TerrainTicketError))
+                {
+                    if (m_clientSync.RequestTerrainTicket()) m_nextTerrainConnectMs = nowMs + 1000;
+                }
+                else
+                {
+                    LogOnce("terrain-ticket-missing", "主机没有签发地形 TCP ticket → 地形分流不可用（不改走主连接）");
+                    m_nextTerrainConnectMs = nowMs + 5000;
+                }
+                return;
+            }
+            var terrain = new TcpTerrainClient(m_wantHost, m_wantPort);
+            terrain.TerrainFrameReceived += HandleClientTerrainFrame;
+            terrain.TerrainAttachCompleted += HandleClientTerrainAttachCompleted;
+            if (!terrain.ConnectTerrain(m_clientSync.LocalClientId, ticket, 3000))
+            {
+                string failure = terrain.State + " (" + terrain.StateDetail + ")";
+                terrain.TerrainFrameReceived -= HandleClientTerrainFrame;
+                terrain.TerrainAttachCompleted -= HandleClientTerrainAttachCompleted;
+                terrain.Dispose();
+                m_nextTerrainConnectMs = nowMs + 1000;
+                LogWarning("附属地形 TCP 连接失败（" + failure + "）→ 下一拍重试");
+                return;
+            }
+            m_terrainClient = terrain;
+            m_nextTerrainConnectMs = nowMs + 1000;
+        }
+
+        private void HandleClientTerrainFrame(ReceivedFrame frame) => m_bridge.PostFrame(frame);
+
+        private void HandleTerrainFrame(int clientId, ReceivedFrame frame) => m_bridge.PostFrame(frame);
+
+        private void HandleTerrainPeerAttached(int clientId)
+        {
+            if (clientId > 0) Log("terrain-peer-attached clientId=" + clientId);
+        }
+
+        private void HandleTerrainPeerDetached(int clientId, string reason)
+        {
+            if (clientId > 0) LogWarning("terrain-peer-detached clientId=" + clientId +
+                " reason=" + (reason ?? string.Empty));
+        }
+
+        private void DisposeTerrainClient(string reason)
+        {
+            TcpTerrainClient client = m_terrainClient;
+            m_terrainClient = null;
+            if (client == null) return;
+            client.TerrainFrameReceived -= HandleClientTerrainFrame;
+            client.TerrainAttachCompleted -= HandleClientTerrainAttachCompleted;
+            try { client.Dispose(); }
+            catch (Exception e)
+            {
+                LogWarning("关闭附属地形 TCP 失败（" + (reason ?? string.Empty) + "，" +
+                    e.GetType().Name + "）");
+            }
         }
 
         private void RequestFreshCircuitTicket(long nowMs)

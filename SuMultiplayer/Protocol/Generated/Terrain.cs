@@ -93,27 +93,29 @@ namespace SuMultiplayer.Protocol.Terrain {
             "Lmdvb2dsZS5wcm90b2J1Zi5BbnkaLQoFRW50cnkSCQoBeBgBIAEoERIJCgF6",
             "GAIgASgREg4KBmxvYWRlZBgDIAEoCCJpCgxWZXJpZnlDaHVua3MSJgoGY2h1",
             "bmtzGAEgAygLMhYuc3VtcC50ZXJyYWluLkNodW5rS2V5EgsKA2V4dBhkIAEo",
-            "DBIkCgZjdXN0b20YZSABKAsyFC5nb29nbGUucHJvdG9idWYuQW55IjoKDUNp",
+            "DBIkCgZjdXN0b20YZSABKAsyFC5nb29nbGUucHJvdG9idWYuQW55IlAKDUNp",
             "cmN1aXRBdHRhY2gSGQoRcHJpbWFyeV9jbGllbnRfaWQYASABKAUSDgoGdGlj",
-            "a2V0GAIgASgMIk4KD0NpcmN1aXRBdHRhY2hlZBIZChFwcmltYXJ5X2NsaWVu",
-            "dF9pZBgBIAEoBRIQCghhY2NlcHRlZBgCIAEoCBIOCgZyZWFzb24YAyABKAki",
-            "KgoUQ2lyY3VpdFRpY2tldFJlcXVlc3QSEgoKcmVxdWVzdF9pZBgBIAEoBCJK",
-            "ChVDaXJjdWl0VGlja2V0UmVzcG9uc2USEgoKcmVxdWVzdF9pZBgBIAEoBBIO",
-            "CgZ0aWNrZXQYAiABKAwSDQoFZXJyb3IYAyABKAkqewoSQ2h1bmtEaWdlc3RW",
-            "ZXJkaWN0EiIKHkNIVU5LX0RJR0VTVF9WRVJESUNUX05PVF9SRUFEWRAAEh4K",
-            "GkNIVU5LX0RJR0VTVF9WRVJESUNUX01BVENIEAESIQodQ0hVTktfRElHRVNU",
-            "X1ZFUkRJQ1RfTUlTTUFUQ0gQAipfChJUb3BMYXllckRpZ2VzdEtpbmQSIQod",
-            "VE9QX0xBWUVSX0RJR0VTVF9LSU5EX0lOSVRJQUwQABImCiJUT1BfTEFZRVJf",
-            "RElHRVNUX0tJTkRfQ09ORklSTUFUSU9OEAEqiQEKFFRvcExheWVyRGlnZXN0",
-            "U3RhdHVzEiMKH1RPUF9MQVlFUl9ESUdFU1RfU1RBVFVTX1BFTkRJTkcQABIl",
-            "CiFUT1BfTEFZRVJfRElHRVNUX1NUQVRVU19DT05GSVJNRUQQARIlCiFUT1Bf",
-            "TEFZRVJfRElHRVNUX1NUQVRVU19OT1RfUkVBRFkQAiqZAQoMQ2F0Y2hVcFBo",
-            "YXNlEhoKFkNBVENIX1VQX1BIQVNFX1JFUVVFU1QQABIYChRDQVRDSF9VUF9Q",
-            "SEFTRV9CRUdJThABEhoKFkNBVENIX1VQX1BIQVNFX0JBUlJJRVIQAhIbChdD",
-            "QVRDSF9VUF9QSEFTRV9SRUpFQ1RFRBADEhoKFkNBVENIX1VQX1BIQVNFX0FQ",
-            "UExJRUQQBCpFCgxDaHVua1NldE1vZGUSGAoUQ0hVTktfU0VUX01PREVfREVM",
-            "VEEQABIbChdDSFVOS19TRVRfTU9ERV9GVUxMX1NFVBABQiNIAaoCHlN1TXVs",
-            "dGlwbGF5ZXIuUHJvdG9jb2wuVGVycmFpbmIGcHJvdG8z"));
+            "a2V0GAIgASgMEhQKDGNoYW5uZWxfa2luZBgDIAEoDSJkCg9DaXJjdWl0QXR0",
+            "YWNoZWQSGQoRcHJpbWFyeV9jbGllbnRfaWQYASABKAUSEAoIYWNjZXB0ZWQY",
+            "AiABKAgSDgoGcmVhc29uGAMgASgJEhQKDGNoYW5uZWxfa2luZBgEIAEoDSJA",
+            "ChRDaXJjdWl0VGlja2V0UmVxdWVzdBISCgpyZXF1ZXN0X2lkGAEgASgEEhQK",
+            "DGNoYW5uZWxfa2luZBgCIAEoDSJgChVDaXJjdWl0VGlja2V0UmVzcG9uc2US",
+            "EgoKcmVxdWVzdF9pZBgBIAEoBBIOCgZ0aWNrZXQYAiABKAwSDQoFZXJyb3IY",
+            "AyABKAkSFAoMY2hhbm5lbF9raW5kGAQgASgNKnsKEkNodW5rRGlnZXN0VmVy",
+            "ZGljdBIiCh5DSFVOS19ESUdFU1RfVkVSRElDVF9OT1RfUkVBRFkQABIeChpD",
+            "SFVOS19ESUdFU1RfVkVSRElDVF9NQVRDSBABEiEKHUNIVU5LX0RJR0VTVF9W",
+            "RVJESUNUX01JU01BVENIEAIqXwoSVG9wTGF5ZXJEaWdlc3RLaW5kEiEKHVRP",
+            "UF9MQVlFUl9ESUdFU1RfS0lORF9JTklUSUFMEAASJgoiVE9QX0xBWUVSX0RJ",
+            "R0VTVF9LSU5EX0NPTkZJUk1BVElPThABKokBChRUb3BMYXllckRpZ2VzdFN0",
+            "YXR1cxIjCh9UT1BfTEFZRVJfRElHRVNUX1NUQVRVU19QRU5ESU5HEAASJQoh",
+            "VE9QX0xBWUVSX0RJR0VTVF9TVEFUVVNfQ09ORklSTUVEEAESJQohVE9QX0xB",
+            "WUVSX0RJR0VTVF9TVEFUVVNfTk9UX1JFQURZEAIqmQEKDENhdGNoVXBQaGFz",
+            "ZRIaChZDQVRDSF9VUF9QSEFTRV9SRVFVRVNUEAASGAoUQ0FUQ0hfVVBfUEhB",
+            "U0VfQkVHSU4QARIaChZDQVRDSF9VUF9QSEFTRV9CQVJSSUVSEAISGwoXQ0FU",
+            "Q0hfVVBfUEhBU0VfUkVKRUNURUQQAxIaChZDQVRDSF9VUF9QSEFTRV9BUFBM",
+            "SUVEEAQqRQoMQ2h1bmtTZXRNb2RlEhgKFENIVU5LX1NFVF9NT0RFX0RFTFRB",
+            "EAASGwoXQ0hVTktfU0VUX01PREVfRlVMTF9TRVQQAUIjSAGqAh5TdU11bHRp",
+            "cGxheWVyLlByb3RvY29sLlRlcnJhaW5iBnByb3RvMw=="));
       descriptor = pbr::FileDescriptor.FromGeneratedCode(descriptorData,
           new pbr::FileDescriptor[] { global::Google.Protobuf.WellKnownTypes.AnyReflection.Descriptor, },
           new pbr::GeneratedClrTypeInfo(new[] {typeof(global::SuMultiplayer.Protocol.Terrain.ChunkDigestVerdict), typeof(global::SuMultiplayer.Protocol.Terrain.TopLayerDigestKind), typeof(global::SuMultiplayer.Protocol.Terrain.TopLayerDigestStatus), typeof(global::SuMultiplayer.Protocol.Terrain.CatchUpPhase), typeof(global::SuMultiplayer.Protocol.Terrain.ChunkSetMode), }, null, new pbr::GeneratedClrTypeInfo[] {
@@ -130,10 +132,10 @@ namespace SuMultiplayer.Protocol.Terrain {
             new pbr::GeneratedClrTypeInfo(typeof(global::SuMultiplayer.Protocol.Terrain.CatchUp), global::SuMultiplayer.Protocol.Terrain.CatchUp.Parser, new[]{ "Phase", "LastApplied", "Head", "FirstRetained", "ChangeCount", "Reason", "Ext", "Custom" }, null, null, null, null),
             new pbr::GeneratedClrTypeInfo(typeof(global::SuMultiplayer.Protocol.Terrain.ClientChunks), global::SuMultiplayer.Protocol.Terrain.ClientChunks.Parser, new[]{ "Mode", "FullSetId", "PartIndex", "PartCount", "Entries", "Version", "Ext", "Custom" }, null, null, null, new pbr::GeneratedClrTypeInfo[] { new pbr::GeneratedClrTypeInfo(typeof(global::SuMultiplayer.Protocol.Terrain.ClientChunks.Types.Entry), global::SuMultiplayer.Protocol.Terrain.ClientChunks.Types.Entry.Parser, new[]{ "X", "Z", "Loaded" }, null, null, null, null)}),
             new pbr::GeneratedClrTypeInfo(typeof(global::SuMultiplayer.Protocol.Terrain.VerifyChunks), global::SuMultiplayer.Protocol.Terrain.VerifyChunks.Parser, new[]{ "Chunks", "Ext", "Custom" }, null, null, null, null),
-            new pbr::GeneratedClrTypeInfo(typeof(global::SuMultiplayer.Protocol.Terrain.CircuitAttach), global::SuMultiplayer.Protocol.Terrain.CircuitAttach.Parser, new[]{ "PrimaryClientId", "Ticket" }, null, null, null, null),
-            new pbr::GeneratedClrTypeInfo(typeof(global::SuMultiplayer.Protocol.Terrain.CircuitAttached), global::SuMultiplayer.Protocol.Terrain.CircuitAttached.Parser, new[]{ "PrimaryClientId", "Accepted", "Reason" }, null, null, null, null),
-            new pbr::GeneratedClrTypeInfo(typeof(global::SuMultiplayer.Protocol.Terrain.CircuitTicketRequest), global::SuMultiplayer.Protocol.Terrain.CircuitTicketRequest.Parser, new[]{ "RequestId" }, null, null, null, null),
-            new pbr::GeneratedClrTypeInfo(typeof(global::SuMultiplayer.Protocol.Terrain.CircuitTicketResponse), global::SuMultiplayer.Protocol.Terrain.CircuitTicketResponse.Parser, new[]{ "RequestId", "Ticket", "Error" }, null, null, null, null)
+            new pbr::GeneratedClrTypeInfo(typeof(global::SuMultiplayer.Protocol.Terrain.CircuitAttach), global::SuMultiplayer.Protocol.Terrain.CircuitAttach.Parser, new[]{ "PrimaryClientId", "Ticket", "ChannelKind" }, null, null, null, null),
+            new pbr::GeneratedClrTypeInfo(typeof(global::SuMultiplayer.Protocol.Terrain.CircuitAttached), global::SuMultiplayer.Protocol.Terrain.CircuitAttached.Parser, new[]{ "PrimaryClientId", "Accepted", "Reason", "ChannelKind" }, null, null, null, null),
+            new pbr::GeneratedClrTypeInfo(typeof(global::SuMultiplayer.Protocol.Terrain.CircuitTicketRequest), global::SuMultiplayer.Protocol.Terrain.CircuitTicketRequest.Parser, new[]{ "RequestId", "ChannelKind" }, null, null, null, null),
+            new pbr::GeneratedClrTypeInfo(typeof(global::SuMultiplayer.Protocol.Terrain.CircuitTicketResponse), global::SuMultiplayer.Protocol.Terrain.CircuitTicketResponse.Parser, new[]{ "RequestId", "Ticket", "Error", "ChannelKind" }, null, null, null, null)
           }));
     }
     #endregion
@@ -7267,6 +7269,7 @@ namespace SuMultiplayer.Protocol.Terrain {
     public CircuitAttach(CircuitAttach other) : this() {
       primaryClientId_ = other.primaryClientId_;
       ticket_ = other.ticket_;
+      channelKind_ = other.channelKind_;
       _unknownFields = pb::UnknownFieldSet.Clone(other._unknownFields);
     }
 
@@ -7300,6 +7303,21 @@ namespace SuMultiplayer.Protocol.Terrain {
       }
     }
 
+    /// <summary>Field number for the "channel_kind" field.</summary>
+    public const int ChannelKindFieldNumber = 3;
+    private uint channelKind_;
+    /// <summary>
+    /// 0 = circuit (legacy default), 1 = terrain.
+    /// </summary>
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public uint ChannelKind {
+      get { return channelKind_; }
+      set {
+        channelKind_ = value;
+      }
+    }
+
     [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
     [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
     public override bool Equals(object other) {
@@ -7317,6 +7335,7 @@ namespace SuMultiplayer.Protocol.Terrain {
       }
       if (PrimaryClientId != other.PrimaryClientId) return false;
       if (Ticket != other.Ticket) return false;
+      if (ChannelKind != other.ChannelKind) return false;
       return Equals(_unknownFields, other._unknownFields);
     }
 
@@ -7326,6 +7345,7 @@ namespace SuMultiplayer.Protocol.Terrain {
       int hash = 1;
       if (PrimaryClientId != 0) hash ^= PrimaryClientId.GetHashCode();
       if (Ticket.Length != 0) hash ^= Ticket.GetHashCode();
+      if (ChannelKind != 0) hash ^= ChannelKind.GetHashCode();
       if (_unknownFields != null) {
         hash ^= _unknownFields.GetHashCode();
       }
@@ -7352,6 +7372,10 @@ namespace SuMultiplayer.Protocol.Terrain {
         output.WriteRawTag(18);
         output.WriteBytes(Ticket);
       }
+      if (ChannelKind != 0) {
+        output.WriteRawTag(24);
+        output.WriteUInt32(ChannelKind);
+      }
       if (_unknownFields != null) {
         _unknownFields.WriteTo(output);
       }
@@ -7370,6 +7394,10 @@ namespace SuMultiplayer.Protocol.Terrain {
         output.WriteRawTag(18);
         output.WriteBytes(Ticket);
       }
+      if (ChannelKind != 0) {
+        output.WriteRawTag(24);
+        output.WriteUInt32(ChannelKind);
+      }
       if (_unknownFields != null) {
         _unknownFields.WriteTo(ref output);
       }
@@ -7385,6 +7413,9 @@ namespace SuMultiplayer.Protocol.Terrain {
       }
       if (Ticket.Length != 0) {
         size += 1 + pb::CodedOutputStream.ComputeBytesSize(Ticket);
+      }
+      if (ChannelKind != 0) {
+        size += 1 + pb::CodedOutputStream.ComputeUInt32Size(ChannelKind);
       }
       if (_unknownFields != null) {
         size += _unknownFields.CalculateSize();
@@ -7403,6 +7434,9 @@ namespace SuMultiplayer.Protocol.Terrain {
       }
       if (other.Ticket.Length != 0) {
         Ticket = other.Ticket;
+      }
+      if (other.ChannelKind != 0) {
+        ChannelKind = other.ChannelKind;
       }
       _unknownFields = pb::UnknownFieldSet.MergeFrom(_unknownFields, other._unknownFields);
     }
@@ -7431,6 +7465,10 @@ namespace SuMultiplayer.Protocol.Terrain {
             Ticket = input.ReadBytes();
             break;
           }
+          case 24: {
+            ChannelKind = input.ReadUInt32();
+            break;
+          }
         }
       }
     #endif
@@ -7456,6 +7494,10 @@ namespace SuMultiplayer.Protocol.Terrain {
           }
           case 18: {
             Ticket = input.ReadBytes();
+            break;
+          }
+          case 24: {
+            ChannelKind = input.ReadUInt32();
             break;
           }
         }
@@ -7507,6 +7549,7 @@ namespace SuMultiplayer.Protocol.Terrain {
       primaryClientId_ = other.primaryClientId_;
       accepted_ = other.accepted_;
       reason_ = other.reason_;
+      channelKind_ = other.channelKind_;
       _unknownFields = pb::UnknownFieldSet.Clone(other._unknownFields);
     }
 
@@ -7552,6 +7595,18 @@ namespace SuMultiplayer.Protocol.Terrain {
       }
     }
 
+    /// <summary>Field number for the "channel_kind" field.</summary>
+    public const int ChannelKindFieldNumber = 4;
+    private uint channelKind_;
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public uint ChannelKind {
+      get { return channelKind_; }
+      set {
+        channelKind_ = value;
+      }
+    }
+
     [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
     [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
     public override bool Equals(object other) {
@@ -7570,6 +7625,7 @@ namespace SuMultiplayer.Protocol.Terrain {
       if (PrimaryClientId != other.PrimaryClientId) return false;
       if (Accepted != other.Accepted) return false;
       if (Reason != other.Reason) return false;
+      if (ChannelKind != other.ChannelKind) return false;
       return Equals(_unknownFields, other._unknownFields);
     }
 
@@ -7580,6 +7636,7 @@ namespace SuMultiplayer.Protocol.Terrain {
       if (PrimaryClientId != 0) hash ^= PrimaryClientId.GetHashCode();
       if (Accepted != false) hash ^= Accepted.GetHashCode();
       if (Reason.Length != 0) hash ^= Reason.GetHashCode();
+      if (ChannelKind != 0) hash ^= ChannelKind.GetHashCode();
       if (_unknownFields != null) {
         hash ^= _unknownFields.GetHashCode();
       }
@@ -7610,6 +7667,10 @@ namespace SuMultiplayer.Protocol.Terrain {
         output.WriteRawTag(26);
         output.WriteString(Reason);
       }
+      if (ChannelKind != 0) {
+        output.WriteRawTag(32);
+        output.WriteUInt32(ChannelKind);
+      }
       if (_unknownFields != null) {
         _unknownFields.WriteTo(output);
       }
@@ -7632,6 +7693,10 @@ namespace SuMultiplayer.Protocol.Terrain {
         output.WriteRawTag(26);
         output.WriteString(Reason);
       }
+      if (ChannelKind != 0) {
+        output.WriteRawTag(32);
+        output.WriteUInt32(ChannelKind);
+      }
       if (_unknownFields != null) {
         _unknownFields.WriteTo(ref output);
       }
@@ -7650,6 +7715,9 @@ namespace SuMultiplayer.Protocol.Terrain {
       }
       if (Reason.Length != 0) {
         size += 1 + pb::CodedOutputStream.ComputeStringSize(Reason);
+      }
+      if (ChannelKind != 0) {
+        size += 1 + pb::CodedOutputStream.ComputeUInt32Size(ChannelKind);
       }
       if (_unknownFields != null) {
         size += _unknownFields.CalculateSize();
@@ -7671,6 +7739,9 @@ namespace SuMultiplayer.Protocol.Terrain {
       }
       if (other.Reason.Length != 0) {
         Reason = other.Reason;
+      }
+      if (other.ChannelKind != 0) {
+        ChannelKind = other.ChannelKind;
       }
       _unknownFields = pb::UnknownFieldSet.MergeFrom(_unknownFields, other._unknownFields);
     }
@@ -7703,6 +7774,10 @@ namespace SuMultiplayer.Protocol.Terrain {
             Reason = input.ReadString();
             break;
           }
+          case 32: {
+            ChannelKind = input.ReadUInt32();
+            break;
+          }
         }
       }
     #endif
@@ -7732,6 +7807,10 @@ namespace SuMultiplayer.Protocol.Terrain {
           }
           case 26: {
             Reason = input.ReadString();
+            break;
+          }
+          case 32: {
+            ChannelKind = input.ReadUInt32();
             break;
           }
         }
@@ -7777,6 +7856,7 @@ namespace SuMultiplayer.Protocol.Terrain {
     [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
     public CircuitTicketRequest(CircuitTicketRequest other) : this() {
       requestId_ = other.requestId_;
+      channelKind_ = other.channelKind_;
       _unknownFields = pb::UnknownFieldSet.Clone(other._unknownFields);
     }
 
@@ -7798,6 +7878,21 @@ namespace SuMultiplayer.Protocol.Terrain {
       }
     }
 
+    /// <summary>Field number for the "channel_kind" field.</summary>
+    public const int ChannelKindFieldNumber = 2;
+    private uint channelKind_;
+    /// <summary>
+    /// 0 = circuit (legacy default), 1 = terrain.
+    /// </summary>
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public uint ChannelKind {
+      get { return channelKind_; }
+      set {
+        channelKind_ = value;
+      }
+    }
+
     [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
     [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
     public override bool Equals(object other) {
@@ -7814,6 +7909,7 @@ namespace SuMultiplayer.Protocol.Terrain {
         return true;
       }
       if (RequestId != other.RequestId) return false;
+      if (ChannelKind != other.ChannelKind) return false;
       return Equals(_unknownFields, other._unknownFields);
     }
 
@@ -7822,6 +7918,7 @@ namespace SuMultiplayer.Protocol.Terrain {
     public override int GetHashCode() {
       int hash = 1;
       if (RequestId != 0UL) hash ^= RequestId.GetHashCode();
+      if (ChannelKind != 0) hash ^= ChannelKind.GetHashCode();
       if (_unknownFields != null) {
         hash ^= _unknownFields.GetHashCode();
       }
@@ -7844,6 +7941,10 @@ namespace SuMultiplayer.Protocol.Terrain {
         output.WriteRawTag(8);
         output.WriteUInt64(RequestId);
       }
+      if (ChannelKind != 0) {
+        output.WriteRawTag(16);
+        output.WriteUInt32(ChannelKind);
+      }
       if (_unknownFields != null) {
         _unknownFields.WriteTo(output);
       }
@@ -7858,6 +7959,10 @@ namespace SuMultiplayer.Protocol.Terrain {
         output.WriteRawTag(8);
         output.WriteUInt64(RequestId);
       }
+      if (ChannelKind != 0) {
+        output.WriteRawTag(16);
+        output.WriteUInt32(ChannelKind);
+      }
       if (_unknownFields != null) {
         _unknownFields.WriteTo(ref output);
       }
@@ -7870,6 +7975,9 @@ namespace SuMultiplayer.Protocol.Terrain {
       int size = 0;
       if (RequestId != 0UL) {
         size += 1 + pb::CodedOutputStream.ComputeUInt64Size(RequestId);
+      }
+      if (ChannelKind != 0) {
+        size += 1 + pb::CodedOutputStream.ComputeUInt32Size(ChannelKind);
       }
       if (_unknownFields != null) {
         size += _unknownFields.CalculateSize();
@@ -7885,6 +7993,9 @@ namespace SuMultiplayer.Protocol.Terrain {
       }
       if (other.RequestId != 0UL) {
         RequestId = other.RequestId;
+      }
+      if (other.ChannelKind != 0) {
+        ChannelKind = other.ChannelKind;
       }
       _unknownFields = pb::UnknownFieldSet.MergeFrom(_unknownFields, other._unknownFields);
     }
@@ -7909,6 +8020,10 @@ namespace SuMultiplayer.Protocol.Terrain {
             RequestId = input.ReadUInt64();
             break;
           }
+          case 16: {
+            ChannelKind = input.ReadUInt32();
+            break;
+          }
         }
       }
     #endif
@@ -7930,6 +8045,10 @@ namespace SuMultiplayer.Protocol.Terrain {
             break;
           case 8: {
             RequestId = input.ReadUInt64();
+            break;
+          }
+          case 16: {
+            ChannelKind = input.ReadUInt32();
             break;
           }
         }
@@ -7977,6 +8096,7 @@ namespace SuMultiplayer.Protocol.Terrain {
       requestId_ = other.requestId_;
       ticket_ = other.ticket_;
       error_ = other.error_;
+      channelKind_ = other.channelKind_;
       _unknownFields = pb::UnknownFieldSet.Clone(other._unknownFields);
     }
 
@@ -8022,6 +8142,18 @@ namespace SuMultiplayer.Protocol.Terrain {
       }
     }
 
+    /// <summary>Field number for the "channel_kind" field.</summary>
+    public const int ChannelKindFieldNumber = 4;
+    private uint channelKind_;
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public uint ChannelKind {
+      get { return channelKind_; }
+      set {
+        channelKind_ = value;
+      }
+    }
+
     [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
     [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
     public override bool Equals(object other) {
@@ -8040,6 +8172,7 @@ namespace SuMultiplayer.Protocol.Terrain {
       if (RequestId != other.RequestId) return false;
       if (Ticket != other.Ticket) return false;
       if (Error != other.Error) return false;
+      if (ChannelKind != other.ChannelKind) return false;
       return Equals(_unknownFields, other._unknownFields);
     }
 
@@ -8050,6 +8183,7 @@ namespace SuMultiplayer.Protocol.Terrain {
       if (RequestId != 0UL) hash ^= RequestId.GetHashCode();
       if (Ticket.Length != 0) hash ^= Ticket.GetHashCode();
       if (Error.Length != 0) hash ^= Error.GetHashCode();
+      if (ChannelKind != 0) hash ^= ChannelKind.GetHashCode();
       if (_unknownFields != null) {
         hash ^= _unknownFields.GetHashCode();
       }
@@ -8080,6 +8214,10 @@ namespace SuMultiplayer.Protocol.Terrain {
         output.WriteRawTag(26);
         output.WriteString(Error);
       }
+      if (ChannelKind != 0) {
+        output.WriteRawTag(32);
+        output.WriteUInt32(ChannelKind);
+      }
       if (_unknownFields != null) {
         _unknownFields.WriteTo(output);
       }
@@ -8102,6 +8240,10 @@ namespace SuMultiplayer.Protocol.Terrain {
         output.WriteRawTag(26);
         output.WriteString(Error);
       }
+      if (ChannelKind != 0) {
+        output.WriteRawTag(32);
+        output.WriteUInt32(ChannelKind);
+      }
       if (_unknownFields != null) {
         _unknownFields.WriteTo(ref output);
       }
@@ -8120,6 +8262,9 @@ namespace SuMultiplayer.Protocol.Terrain {
       }
       if (Error.Length != 0) {
         size += 1 + pb::CodedOutputStream.ComputeStringSize(Error);
+      }
+      if (ChannelKind != 0) {
+        size += 1 + pb::CodedOutputStream.ComputeUInt32Size(ChannelKind);
       }
       if (_unknownFields != null) {
         size += _unknownFields.CalculateSize();
@@ -8141,6 +8286,9 @@ namespace SuMultiplayer.Protocol.Terrain {
       }
       if (other.Error.Length != 0) {
         Error = other.Error;
+      }
+      if (other.ChannelKind != 0) {
+        ChannelKind = other.ChannelKind;
       }
       _unknownFields = pb::UnknownFieldSet.MergeFrom(_unknownFields, other._unknownFields);
     }
@@ -8173,6 +8321,10 @@ namespace SuMultiplayer.Protocol.Terrain {
             Error = input.ReadString();
             break;
           }
+          case 32: {
+            ChannelKind = input.ReadUInt32();
+            break;
+          }
         }
       }
     #endif
@@ -8202,6 +8354,10 @@ namespace SuMultiplayer.Protocol.Terrain {
           }
           case 26: {
             Error = input.ReadString();
+            break;
+          }
+          case 32: {
+            ChannelKind = input.ReadUInt32();
             break;
           }
         }
