@@ -3,6 +3,15 @@
 #include <stdlib.h>
 #include <string.h>
 
+/* 跨平台导出宏：Windows 走 HEADLESS_EXPORT，Linux/macOS 走默认可见性。
+ * 这样同一份源码既能编出 libGLESv2-headless.dll 也能编出 libGLESv2-headless.so，
+ * 两个平台的空渲染后端行为完全一致（用户要求：GL 渲染全部置空）。 */
+#if defined(_WIN32) || defined(_WIN64)
+#  define HEADLESS_EXPORT HEADLESS_EXPORT
+#else
+#  define HEADLESS_EXPORT __attribute__((visibility("default")))
+#endif
+
 /* Source: OpenTK/OpenTK.Graphics.ES20/GL.cs:GL.Core
  * Source: Engine/Engine/Graphics/Shader.cs:Shader.CompileShaders
  * This is a no-GPU GLES2 backend for HeadlessRenderingMod. It stores shader
@@ -355,7 +364,7 @@ static void link_program(ProgramRecord *program)
     program->linked = 1;
 }
 
-__declspec(dllexport) const char *glGetString(uint32_t name)
+HEADLESS_EXPORT const char *glGetString(uint32_t name)
 {
     switch (name)
     {
@@ -367,9 +376,9 @@ __declspec(dllexport) const char *glGetString(uint32_t name)
     }
 }
 
-__declspec(dllexport) uint32_t glGetError(void) { return GL_NO_ERROR; }
+HEADLESS_EXPORT uint32_t glGetError(void) { return GL_NO_ERROR; }
 
-__declspec(dllexport) void glGetIntegerv(uint32_t name, int *value)
+HEADLESS_EXPORT void glGetIntegerv(uint32_t name, int *value)
 {
     if (!value) return;
     switch (name)
@@ -384,35 +393,35 @@ __declspec(dllexport) void glGetIntegerv(uint32_t name, int *value)
     }
 }
 
-__declspec(dllexport) void glGenBuffers(int count, uint32_t *buffers)
+HEADLESS_EXPORT void glGenBuffers(int count, uint32_t *buffers)
 {
     int i;
     if (!buffers) return;
     for (i = 0; i < count; ++i) buffers[i] = next_handle();
 }
 
-__declspec(dllexport) void glGenTextures(int count, uint32_t *textures)
+HEADLESS_EXPORT void glGenTextures(int count, uint32_t *textures)
 {
     int i;
     if (!textures) return;
     for (i = 0; i < count; ++i) textures[i] = next_handle();
 }
 
-__declspec(dllexport) void glGenFramebuffers(int count, uint32_t *buffers)
+HEADLESS_EXPORT void glGenFramebuffers(int count, uint32_t *buffers)
 {
     int i;
     if (!buffers) return;
     for (i = 0; i < count; ++i) buffers[i] = next_handle();
 }
 
-__declspec(dllexport) void glGenRenderbuffers(int count, uint32_t *buffers)
+HEADLESS_EXPORT void glGenRenderbuffers(int count, uint32_t *buffers)
 {
     int i;
     if (!buffers) return;
     for (i = 0; i < count; ++i) buffers[i] = next_handle();
 }
 
-__declspec(dllexport) int glCreateShader(uint32_t type)
+HEADLESS_EXPORT int glCreateShader(uint32_t type)
 {
     uint32_t handle = next_handle();
     (void)type;
@@ -420,14 +429,14 @@ __declspec(dllexport) int glCreateShader(uint32_t type)
     return (int)handle;
 }
 
-__declspec(dllexport) int glCreateProgram(void)
+HEADLESS_EXPORT int glCreateProgram(void)
 {
     uint32_t handle = next_handle();
     reserve_program(handle);
     return (int)handle;
 }
 
-__declspec(dllexport) void glShaderSource(uint32_t shader, int count,
+HEADLESS_EXPORT void glShaderSource(uint32_t shader, int count,
     const char **strings, const int *lengths)
 {
     ShaderRecord *record = reserve_shader(shader);
@@ -473,13 +482,13 @@ __declspec(dllexport) void glShaderSource(uint32_t shader, int count,
     record->source[total] = '\0';
 }
 
-__declspec(dllexport) void glGetShaderiv(uint32_t shader, uint32_t name, int *value)
+HEADLESS_EXPORT void glGetShaderiv(uint32_t shader, uint32_t name, int *value)
 {
     (void)shader;
     if (value) *value = (name == GL_COMPILE_STATUS) ? 1 : 0;
 }
 
-__declspec(dllexport) void glGetProgramiv(uint32_t program, uint32_t name, int *value)
+HEADLESS_EXPORT void glGetProgramiv(uint32_t program, uint32_t name, int *value)
 {
     ProgramRecord *record = find_program(program);
     if (!value) return;
@@ -489,14 +498,14 @@ __declspec(dllexport) void glGetProgramiv(uint32_t program, uint32_t name, int *
     else *value = 0;
 }
 
-__declspec(dllexport) void glGetShaderInfoLog(uint32_t shader, int max_length, int *length, char *log)
+HEADLESS_EXPORT void glGetShaderInfoLog(uint32_t shader, int max_length, int *length, char *log)
 {
     (void)shader; (void)max_length;
     if (length) *length = 0;
     if (log) log[0] = '\0';
 }
 
-__declspec(dllexport) void glGetProgramInfoLog(uint32_t program, int max_length, int *length, char *log)
+HEADLESS_EXPORT void glGetProgramInfoLog(uint32_t program, int max_length, int *length, char *log)
 {
     (void)program; (void)max_length;
     if (length) *length = 0;
@@ -514,7 +523,7 @@ static void copy_symbol_name(const char *name, int buffer_size, int *length, cha
     if (length) *length = actual;
 }
 
-__declspec(dllexport) void glGetActiveUniform(uint32_t program, uint32_t index,
+HEADLESS_EXPORT void glGetActiveUniform(uint32_t program, uint32_t index,
     int buffer_size, int *length, int *size, uint32_t *type, char *name)
 {
     ProgramRecord *record = find_program(program);
@@ -531,7 +540,7 @@ __declspec(dllexport) void glGetActiveUniform(uint32_t program, uint32_t index,
     copy_symbol_name(record->uniforms[index].name, buffer_size, length, name);
 }
 
-__declspec(dllexport) void glGetActiveAttrib(uint32_t program, uint32_t index,
+HEADLESS_EXPORT void glGetActiveAttrib(uint32_t program, uint32_t index,
     int buffer_size, int *length, int *size, uint32_t *type, char *name)
 {
     ProgramRecord *record = find_program(program);
@@ -561,19 +570,19 @@ static int find_symbol_location(Symbol *symbols, int count, const char *name)
     return -1;
 }
 
-__declspec(dllexport) int glGetUniformLocation(uint32_t program, const char *name)
+HEADLESS_EXPORT int glGetUniformLocation(uint32_t program, const char *name)
 {
     ProgramRecord *record = find_program(program);
     return record ? find_symbol_location(record->uniforms, record->uniform_count, name) : -1;
 }
 
-__declspec(dllexport) int glGetAttribLocation(uint32_t program, const char *name)
+HEADLESS_EXPORT int glGetAttribLocation(uint32_t program, const char *name)
 {
     ProgramRecord *record = find_program(program);
     return record ? find_symbol_location(record->attributes, record->attribute_count, name) : -1;
 }
 
-__declspec(dllexport) void glAttachShader(uint32_t program, uint32_t shader)
+HEADLESS_EXPORT void glAttachShader(uint32_t program, uint32_t shader)
 {
     ProgramRecord *record = reserve_program(program);
     if (!record) return;
@@ -581,32 +590,32 @@ __declspec(dllexport) void glAttachShader(uint32_t program, uint32_t shader)
     else record->fragment_shader = shader;
 }
 
-__declspec(dllexport) void glLinkProgram(uint32_t program)
+HEADLESS_EXPORT void glLinkProgram(uint32_t program)
 {
     link_program(find_program(program));
 }
 
-__declspec(dllexport) uint32_t glCheckFramebufferStatus(uint32_t target)
+HEADLESS_EXPORT uint32_t glCheckFramebufferStatus(uint32_t target)
 {
     (void)target; return GL_FRAMEBUFFER_COMPLETE;
 }
 
-__declspec(dllexport) unsigned char glIsEnabled(uint32_t cap) { (void)cap; return 0; }
+HEADLESS_EXPORT unsigned char glIsEnabled(uint32_t cap) { (void)cap; return 0; }
 
-__declspec(dllexport) void glGetRenderbufferParameteriv(uint32_t target, uint32_t name, int *value)
+HEADLESS_EXPORT void glGetRenderbufferParameteriv(uint32_t target, uint32_t name, int *value)
 {
     (void)target; (void)name;
     if (value) *value = 0;
 }
 
-__declspec(dllexport) void glDeleteProgram(uint32_t program)
+HEADLESS_EXPORT void glDeleteProgram(uint32_t program)
 {
     ProgramRecord *record = find_program(program);
     if (record)
         memset(record, 0, sizeof(*record));
 }
 
-__declspec(dllexport) void glDeleteShader(uint32_t shader)
+HEADLESS_EXPORT void glDeleteShader(uint32_t shader)
 {
     ShaderRecord *record = find_shader(shader);
     if (record)
@@ -617,7 +626,7 @@ __declspec(dllexport) void glDeleteShader(uint32_t shader)
 }
 
 /* State-changing, upload, draw and deletion entry points intentionally no-op. */
-#define VOID_STUB(name) __declspec(dllexport) void name(void) {}
+#define VOID_STUB(name) HEADLESS_EXPORT void name(void) {}
 VOID_STUB(glActiveTexture)
 VOID_STUB(glBindBuffer)
 VOID_STUB(glBindFramebuffer)

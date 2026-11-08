@@ -1,6 +1,6 @@
 <Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
-    <TargetFramework>net8.0</TargetFramework>
+    <TargetFramework>net10.0</TargetFramework>
     <AssemblyName>HeadlessRenderingMod</AssemblyName>
     <RootNamespace>HeadlessRenderingMod</RootNamespace>
     <ImplicitUsings>disable</ImplicitUsings>
@@ -8,9 +8,14 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <ProjectReference Include="..\..\Engine\Engine\Engine.csproj" />
-    <ProjectReference Include="..\..\EntitySystem\EntitySystem.csproj" />
-    <ProjectReference Include="..\..\Survivalcraft\Survivalcraft.csproj" />
+    <!-- 引擎三件套用项目引用（与 CmdBridgeMod 一致）：ProjectReference 会把
+         Engine.dll / EntitySystem.dll / Survivalcraft.dll 复制到输出目录，
+         而 Obfuscar 的配置要求 $(InPath) 下能找到 EntitySystem.dll（它要一起混淆）。
+         用 PackageReference 时这些依赖不会进输出目录，混淆步骤会直接失败。 -->
+    <PackageReference Include="Engine" Version="0.1.7.0" />
+    <PackageReference Include="EntitySystem" Version="0.1.7.0" />
+    <PackageReference Include="Survivalcraft" Version="0.1.7.0" />
+    <PackageReference Include="SuAPICore" Version="0.1.7.0" />
   </ItemGroup>
 
   <ItemGroup>
@@ -18,6 +23,21 @@
                       LogicalName="HeadlessRenderingMod.Native.libGLESv2.dll" />
     <EmbeddedResource Include="Native\opengl32-headless.dll"
                       LogicalName="HeadlessRenderingMod.Native.opengl32-headless.dll" />
+
+    <!-- Linux 版空壳库（no-GPU）：源码在 Native/null_*.c，编译方式见 Native/linux-x64/README.md。
+         逻辑名用 HeadlessRenderingMod.Native.linux.*，与 Windows 的 .dll 分开，互不干扰。 -->
+    <EmbeddedResource Include="Native\linux-x64\libgbm-headless.so"
+                      LogicalName="HeadlessRenderingMod.Native.linux.libgbm-headless.so" />
+    <EmbeddedResource Include="Native\linux-x64\libdrm-headless.so"
+                      LogicalName="HeadlessRenderingMod.Native.linux.libdrm-headless.so" />
+    <EmbeddedResource Include="Native\linux-x64\libEGL-headless.so"
+                      LogicalName="HeadlessRenderingMod.Native.linux.libEGL-headless.so" />
+    <EmbeddedResource Include="Native\linux-x64\libGLESv2-headless.so"
+                      LogicalName="HeadlessRenderingMod.Native.linux.libGLESv2-headless.so" />
+    <EmbeddedResource Include="Native\linux-x64\libinput-headless.so"
+                      LogicalName="HeadlessRenderingMod.Native.linux.libinput-headless.so" />
+    <EmbeddedResource Include="Native\linux-x64\libc-headless.so"
+                      LogicalName="HeadlessRenderingMod.Native.linux.libc-headless.so" />
   </ItemGroup>
 
   <ItemGroup>
@@ -39,6 +59,20 @@
     <XmlPoke XmlInputPath="$(_ObfuscarConfig)"
              Query="/Obfuscator/Var[@name='OutPath']/@value"
              Value="$(_ObfuscarOutput)" />
+    <!-- 依赖来自 NuGet 包、默认不进输出目录，但 Obfuscar 需要从 $(InPath) 解析它们
+         （只是解析，不混淆）。所以在混淆前把依赖复制进输出目录，混淆完再删掉，
+         这样输出目录保持干净（只留 mod 自己的 DLL），也不必退回 ProjectReference。 -->
+    <ItemGroup>
+      <_ObfuscarDependency Include="$(NuGetPackageRoot)engine/0.1.7/lib/net10.0/Engine.dll" />
+      <_ObfuscarDependency Include="$(NuGetPackageRoot)entitysystem/0.1.7/lib/net10.0/EntitySystem.dll" />
+      <_ObfuscarDependency Include="$(NuGetPackageRoot)survivalcraft/0.1.7/lib/net10.0/Survivalcraft.dll" />
+    </ItemGroup>
+    <Copy SourceFiles="@(_ObfuscarDependency)" DestinationFolder="$(TargetDir)" SkipUnchangedFiles="true" />
     <Exec Command="&quot;$(Obfuscar)&quot; &quot;$(_ObfuscarConfig)&quot;" />
+    <!-- 混淆完把只为解析而复制进来的依赖删掉，输出目录只留 mod 自己的程序集。 -->
+    <ItemGroup>
+      <_ObfuscarCopiedDependency Include="$(TargetDir)Engine.dll;$(TargetDir)EntitySystem.dll;$(TargetDir)Survivalcraft.dll" />
+    </ItemGroup>
+    <Delete Files="@(_ObfuscarCopiedDependency)" ContinueOnError="true" />
   </Target>
 </Project>

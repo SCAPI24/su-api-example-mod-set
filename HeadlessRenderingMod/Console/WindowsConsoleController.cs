@@ -121,16 +121,31 @@ namespace HeadlessRenderingMod
 
         public void SetMultiplayerTelemetry(string value)
         {
+            // 值没变就什么都不做：重绘是有成本的（清屏 + 重写整屏），
+            // 而且没必要为了相同内容闪一下。
+            if (string.Equals(m_multiplayerTelemetry, value, StringComparison.Ordinal))
+                return;
             m_multiplayerTelemetry = value;
             if (!m_running) return;
-            try
+
+            // Windows 用窗口标题栏显示；Linux 终端没有标题栏，改由屏幕内状态栏承载
+            // （DrawStatusBar 每次重绘都会带上它，所以这里只需要请求一次重绘）。
+            if (OperatingSystem.IsWindows())
             {
-                Console.Title = "Survivalcraft Headless Server - " + m_config.InstanceId +
-                    (string.IsNullOrWhiteSpace(value) ? string.Empty : " | " + value);
+                try
+                {
+                    Console.Title = "Survivalcraft Headless Server - " + m_config.InstanceId +
+                        (string.IsNullOrWhiteSpace(value) ? string.Empty : " | " + value);
+                }
+                catch
+                {
+                }
+                return;
             }
-            catch
-            {
-            }
+
+            // 非 Windows：只有在**空闲**时重绘，避免打断正在进行的菜单/输入。
+            if (m_interactive) return;
+            RefreshStatusBar();
         }
 
         public WindowsConsoleController(
@@ -178,7 +193,59 @@ namespace HeadlessRenderingMod
             m_thread = null;
         }
 
+        /// <summary>
+        /// 准备控制台（按平台分支）。
+        ///
+        /// Windows：游戏是 WinExe，从桌面启动时**没有**控制台，需要 AttachConsole/AllocConsole
+        /// 抢一个出来，并把代码页切到 UTF-8（否则中文菜单是乱码）。
+        ///
+        /// Linux：从终端前台执行 `./Survivalcraft` 时标准输入输出本来就在，**不需要也不应该**
+        /// 创建控制台；只把输入输出编码统一成 UTF-8 即可。纯文本终端下
+        /// Console.Clear / ReadKey / ForegroundColor 都能正常工作。
+        /// </summary>
         private bool InitializeConsole()
+        {
+            if (OperatingSystem.IsWindows())
+                return InitializeWindowsConsole();
+            return InitializeUnixConsole();
+        }
+
+        /// <summary>Linux / macOS：直接用调用方的终端，不创建新控制台。</summary>
+        private bool InitializeUnixConsole()
+        {
+            try
+            {
+                Encoding encoding = new UTF8Encoding(false, false);
+                Console.InputEncoding = encoding;
+                Console.OutputEncoding = encoding;
+                Console.SetIn(new StreamReader(
+                    Console.OpenStandardInput(),
+                    encoding,
+                    false,
+                    1024,
+                    true));
+                StreamWriter writer = new StreamWriter(
+                    Console.OpenStandardOutput(),
+                    encoding,
+                    1024,
+                    true)
+                {
+                    AutoFlush = true
+                };
+                Console.SetOut(writer);
+                Console.SetError(writer);
+                return true;
+            }
+            catch (Exception error)
+            {
+                Log.Warning("[HeadlessRenderingMod] Unable to initialize the terminal: " +
+                    error.GetType().Name + ": " + error.Message);
+                return false;
+            }
+        }
+
+        /// <summary>Windows：抢/建一个控制台窗口并切成 UTF-8 代码页（原有逻辑，保持不变）。</summary>
+        private bool InitializeWindowsConsole()
         {
             bool hasConsole = GetConsoleWindow() != IntPtr.Zero;
             if (!hasConsole)
@@ -216,12 +283,87 @@ namespace HeadlessRenderingMod
             Console.SetError(writer);
             try
             {
-            Console.Title = "Survivalcraft Headless Server - " + m_config.InstanceId;
+                Console.Title = "Survivalcraft Headless Server - " + m_config.InstanceId;
             }
             catch
             {
             }
             return true;
+        }
+
+        // ── 纯文本终端屏幕与状态栏 ─────────────────────────────────────
+        //
+        // 终端 UI 全部由"清屏 + 重写整屏文本"构成（vim / less 一类文本界面的做法），
+        // 不依赖光标定位、不依赖窗口尺寸，因此在 Linux 原生终端、SSH、tmux 里表现一致。
+
+        /// <summary>
+        /// 重绘一屏的起点：清屏，并在**最后一行**铺一条常驻状态栏。
+        ///
+        /// 为什么先清屏再把状态栏写到最底：纯文本终端里没有"把光标移到最后一行的稳定办法"
+        /// （窗口一调整就会错位），所以改成"每次重绘时把状态栏写在内容最前面"——
+        /// 屏幕被 Clear 后先输出状态栏，随后菜单/提示依次往下追加，
+        /// 这样每屏都能稳定看到同一处状态（内容长度变化不会让它消失）。
+        /// </summary>
+        private void BeginScreen()
+        {
+            try
+            {
+                Console.Clear();
+            }
+            catch (IOException)
+            {
+                // 某些终端（重定向到管道）不支持清屏，继续往下写即可。
+            }
+            DrawStatusBar();
+        }
+
+        /// <summary>
+        /// 状态栏：实例名 + 实时联机遥测（Clients / UDP OUT / UDP IN / Join）。
+        /// 遥测由 Plug 侧每 5 秒刷新一次 SetMultiplayerTelemetry，
+        /// 没有变化时字符串相同，重绘结果自然不变（不会闪烁）。
+        /// </summary>
+        private void DrawStatusBar()
+        {
+            string instance = string.IsNullOrWhiteSpace(m_config?.InstanceId)
+                ? "SurvivalcraftServer"
+                : m_config.InstanceId;
+            string line = "== " + instance;
+            if (!string.IsNullOrWhiteSpace(m_multiplayerTelemetry))
+                line += " | " + m_multiplayerTelemetry;
+            line += " ==";
+            try
+            {
+                ConsoleColor previous = Console.ForegroundColor;
+                Console.ForegroundColor = ConsoleColor.DarkCyan;
+                Console.WriteLine(line);
+                Console.ForegroundColor = previous;
+            }
+            catch (IOException)
+            {
+                Console.WriteLine(line);
+            }
+            catch (PlatformNotSupportedException)
+            {
+                // 极简终端不支持颜色，退化成无色输出（文本内容一致）。
+                Console.WriteLine(line);
+            }
+        }
+
+        /// <summary>
+        /// 刷新状态栏文本后重绘一屏。
+        /// 旧实现把这段信息塞进 Console.Title（Windows 专有），Linux 终端没有标题栏，
+        /// 所以统一改成屏幕内的状态栏行。
+        /// </summary>
+        private void RefreshStatusBar()
+        {
+            if (!m_running) return;
+            try
+            {
+                BeginScreen();
+            }
+            catch (IOException)
+            {
+            }
         }
 
         private void Run()
@@ -248,73 +390,42 @@ namespace HeadlessRenderingMod
             }
         }
 
+        /// <summary>
+        /// 一级菜单：只放**入口**，具体操作都收在二级菜单里。
+        ///
+        /// 世界相关的 6 个操作（创建/加载/查看/列表/导出/删除）统一收进
+        /// `World-[世界名]` 这个动态项：世界名**每一次重绘都重新读**，
+        /// 加载完世界不用退出菜单再进来就能看到名字变了（旧实现是进菜单前算一次）。
+        /// </summary>
         private void RunMainMenu()
         {
             int selected = 0;
             while (m_running)
             {
-                string[] actions =
-                {
-                    "Create World",
-                    "Load World",
-                    GetCurrentWorldMenuLabel(),
-                    "List Worlds",
-                    "Export World",
-                    "Delete World",
-                    "Create Player",
-                    "Manage Players",
-                    "Multiplayer Hosting",
-                    "Multiplayer Bandwidth",
-                    "Server Status",
-                    "Command Line",
-                    "Shutdown"
-                };
-                selected = Math.Clamp(selected, 0, actions.Length - 1);
                 try
                 {
-                    int? choice = SelectMenu("Server Control", actions, selected);
+                    int? choice = SelectDynamicMenu("Server Control", BuildMainMenuItems, selected);
                     if (!choice.HasValue)
                         continue;
                     selected = choice.Value;
                     switch (selected)
                     {
                         case 0:
-                            CreateWorld();
+                            RunWorldMenu();
                             break;
                         case 1:
-                            JoinWorld();
+                            RunManagePlayersMenu();
                             break;
                         case 2:
-                            ShowCurrentWorld();
+                            RunMultiplayerSettingsMenu();
                             break;
                         case 3:
-                            ShowWorlds();
-                            break;
-                        case 4:
-                            ExportWorld();
-                            break;
-                        case 5:
-                            DeleteWorld();
-                            break;
-                        case 6:
-                            CreatePlayer();
-                            break;
-                        case 7:
-                            ManagePlayers();
-                            break;
-                        case 8:
-                            ConfigureMultiplayerHosting();
-                            break;
-                        case 9:
-                            ConfigureMultiplayerBandwidth();
-                            break;
-                        case 10:
                             ShowResponse("status");
                             break;
-                        case 11:
+                        case 4:
                             RunCommandLine();
                             break;
-                        case 12:
+                        case 5:
                             if (PromptBoolean("Shut down Survivalcraft", false))
                             {
                                 PrintResponse(m_server.SubmitLocal("shutdown"));
@@ -332,9 +443,163 @@ namespace HeadlessRenderingMod
             }
         }
 
+        /// <summary>
+        /// 一级菜单文字。**每次重绘都会调用**，所以世界名是实时的。
+        /// 没有加载世界时显示 `World-[]`。
+        /// </summary>
+        private string[] BuildMainMenuItems() => new[]
+        {
+            GetWorldMenuLabel(),
+            "Manage Players",
+            "Multiplayer Settings",
+            "Server Status",
+            "Command Line",
+            "Shutdown"
+        };
+
+        /// <summary>一级菜单的世界入口标签：`World-[世界名]`，未加载时是 `World-[]`。</summary>
+        private string GetWorldMenuLabel()
+        {
+            try
+            {
+                // Source: HeadlessRenderingMod.cs:BuildStatus
+                // status 是已加载世界的权威快照，加载过程中不会去重扫存档目录。
+                Dictionary<string, object> status = GetResult<Dictionary<string, object>>(
+                    m_server.SubmitLocal("status"));
+                bool loaded = status.TryGetValue("worldLoaded", out object loadedValue) &&
+                    loadedValue is bool isLoaded && isLoaded;
+                if (loaded && status.TryGetValue("worldName", out object nameValue) &&
+                    nameValue is string name && !string.IsNullOrWhiteSpace(name))
+                {
+                    return "World-[" + name + "]";
+                }
+                return "World-[]";
+            }
+            catch
+            {
+                return "World-[]";
+            }
+        }
+
+        /// <summary>世界二级菜单：创建 / 加载 / 当前世界 / 列表 / 导出 / 删除。</summary>
+        private void RunWorldMenu()
+        {
+            int selected = 0;
+            while (m_running)
+            {
+                int? choice = SelectDynamicMenu(GetWorldMenuLabel(), () => new[]
+                {
+                    "Create World",
+                    "Load World",
+                    "Current World",
+                    "List Worlds",
+                    "Export World",
+                    "Delete World",
+                    "Back"
+                }, selected);
+                if (!choice.HasValue || choice.Value == 6) return;
+                selected = choice.Value;
+                try
+                {
+                    switch (selected)
+                    {
+                        case 0: CreateWorld(); break;
+                        case 1: JoinWorld(); break;
+                        case 2: ShowCurrentWorld(); break;
+                        case 3: ShowWorlds(); break;
+                        case 4: ExportWorld(); break;
+                        case 5: DeleteWorld(); break;
+                    }
+                }
+                catch (Exception ex)
+                {
+                    Console.WriteLine();
+                    Console.WriteLine("Error: " + ex.Message);
+                    Pause();
+                }
+            }
+        }
+
+        /// <summary>玩家二级菜单：管理玩家（创建玩家已并入这里）。</summary>
+        private void RunManagePlayersMenu()
+        {
+            int selected = 0;
+            while (m_running)
+            {
+                int? choice = SelectMenu("Manage Players", new[]
+                {
+                    "Create Player",
+                    "Manage Existing Players",
+                    "Back"
+                }, selected);
+                if (!choice.HasValue || choice.Value == 2) return;
+                selected = choice.Value;
+                try
+                {
+                    if (selected == 0) CreatePlayer();
+                    else ManagePlayers();
+                }
+                catch (Exception ex)
+                {
+                    Console.WriteLine();
+                    Console.WriteLine("Error: " + ex.Message);
+                    Pause();
+                }
+            }
+        }
+
+        /// <summary>
+        /// 多人设置二级菜单：托管 / 带宽 / 日志模式。
+        /// 日志模式那一项的标签是动态的（显示当前是 Online 还是 Debug）。
+        /// </summary>
+        private void RunMultiplayerSettingsMenu()
+        {
+            int selected = 0;
+            while (m_running)
+            {
+                int? choice = SelectDynamicMenu("Multiplayer Settings", () => new[]
+                {
+                    "Multiplayer Hosting",
+                    "Multiplayer Bandwidth",
+                    "Multiplayer Log Mode: " + DescribeModuleLogMode(),
+                    "Back"
+                }, selected);
+                if (!choice.HasValue || choice.Value == 3) return;
+                selected = choice.Value;
+                try
+                {
+                    switch (selected)
+                    {
+                        case 0: ConfigureMultiplayerHosting(); break;
+                        case 1: ConfigureMultiplayerBandwidth(); break;
+                        case 2: ConfigureMultiplayerLogMode(); break;
+                    }
+                }
+                catch (Exception ex)
+                {
+                    Console.WriteLine();
+                    Console.WriteLine("Error: " + ex.Message);
+                    Pause();
+                }
+            }
+        }
+
+        /// <summary>当前联机日志模式的短标签（读不到就明说，不猜）。</summary>
+        private string DescribeModuleLogMode()
+        {
+            try
+            {
+                return HeadlessSuMultiplayerBridge.ReadModuleLogMode() ? "Debug" : "Online";
+            }
+            catch
+            {
+                return "Unavailable";
+            }
+        }
+
         private void RunCommandLine()
         {
-            Console.Clear();
+            BeginScreen();
             Console.WriteLine("Command mode. Type Help for commands or Menu to return.");
             Interactive(() =>
             {
@@ -414,6 +679,9 @@ namespace HeadlessRenderingMod
                 case "multiplayer.hosting":
                     ConfigureMultiplayerHosting();
                     break;
+                case "verbose":
+                    EvalVerboseCommand(tokens);
+                    break;
                 case "screenlist":
                 case "screen.list":
                     PrintResponse(m_server.SubmitLocal("screen.list"));
@@ -445,11 +713,73 @@ namespace HeadlessRenderingMod
             }
         }
 
+        /// <summary>
+        /// `verbose [true|false]`：切换联机模块的日志模式。
+        ///
+        ///   · `verbose true` / `verbose debug` / `verbose on` → 调试模式（写角色日志）
+        ///   · `verbose false` / `verbose online` / `verbose off` → 上线模式（只进内存、不写盘）
+        ///   · `verbose`（不带参数）→ 打印当前状态，并进入交互式选择菜单
+        ///
+        /// 只有主机端能切换；联机模块对客户端会明确拒绝（客户端由主机调度）。
+        /// </summary>
+        private void EvalVerboseCommand(List<string> tokens)
+        {
+            if (tokens.Count < 2)
+            {
+                // 不带参数：先报当前状态，再让用户用上下键选（同一套 SelectMenu，与主菜单一致）。
+                try
+                {
+                    bool current = HeadlessSuMultiplayerBridge.ReadModuleLogMode();
+                    Console.WriteLine();
+                    Console.WriteLine("Current log mode: " +
+                        (current ? "Debug (persisting)" : "Online (memory only)"));
+                }
+                catch (Exception ex)
+                {
+                    Console.WriteLine();
+                    Console.WriteLine("Cannot read current log mode: " + ex.Message);
+                }
+                ConfigureMultiplayerLogMode();
+                return;
+            }
+
+            string raw = tokens[1].Trim();
+            bool persist;
+            if (string.Equals(raw, "true", StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(raw, "on", StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(raw, "debug", StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(raw, "1", StringComparison.Ordinal))
+            {
+                persist = true;
+            }
+            else if (string.Equals(raw, "false", StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(raw, "off", StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(raw, "online", StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(raw, "0", StringComparison.Ordinal))
+            {
+                persist = false;
+            }
+            else
+            {
+                throw new InvalidOperationException(
+                    "Usage: verbose <true|false>   (true = debug, write role logs; "
+                    + "false = online, memory only)");
+            }
+
+            bool ok = HeadlessSuMultiplayerBridge.TrySetModuleLogMode(persist, out string note);
+            Console.WriteLine();
+            Console.WriteLine(ok
+                ? "Log mode: " + (persist ? "Debug (persisting)" : "Online (memory only)")
+                : "Not switched: " + note);
+            if (ok && !string.IsNullOrEmpty(note)) Console.WriteLine(note);
+        }
+
         private static void PrintHelp()
         {
             Console.WriteLine();
             Console.WriteLine("CreateWorld, WorldList, JoinWorld, SaveWorld, ExportWorld, DeleteWorld, WorldMode");
-            Console.WriteLine("CreatePlayer, ManagePlayers, Multiplayer, Multiplayer.Hosting, Status, ScreenList");
+            Console.WriteLine("CreatePlayer, ManagePlayers, Multiplayer, Multiplayer.Hosting, Multiplayer.LogMode, Status, ScreenList");
+            Console.WriteLine("Verbose <true|false>  (switch SuMultiplayer log mode; no arg = interactive)");
             Console.WriteLine("SwitchScreen <name>, DialogList, SequenceList, Shutdown, Menu");
             Console.WriteLine();
         }
@@ -485,7 +815,7 @@ namespace HeadlessRenderingMod
                     continue;
                 }
                 Dictionary<string, object> values = BuildWorldCreateArguments(draft);
-                Console.Clear();
+                BeginScreen();
                 Console.WriteLine(GetCurrentScreen() + "> Create World > Review");
                 Console.WriteLine(JsonSerializer.Serialize(values, s_jsonOptions));
                 if (!PromptBoolean("Create and load this world", true))
@@ -506,23 +836,37 @@ namespace HeadlessRenderingMod
         private WorldEditorResult EditWorldPage(WorldCreationDraft draft, int page) =>
             Interactive(() => EditWorldPageCore(draft, page));
 
+        /// <summary>
+        /// 世界设置页（**两列并排 + 实时刷新**）。
+        ///
+        /// 渲染约定（用户 2026-11-08 定）：
+        ///   · 每一项是 `[Name: Value]` 一个整体，**方括号内绝不换行**；
+        ///   · 同一行并排放多项，宽度按终端宽度自动折行（折行只在项与项之间）；
+        ///   · 内容没变化时不重绘（只有选中项移动 / 值变了才整屏重画）；
+        ///   · 左右上下键**只移动光标**，不前进也不后退 —— 前进/取消统一用 Enter / Esc。
+        ///
+        /// 参数 <paramref name="page"/> 保留是为了兼容旧调用：现在两页内容合并渲染，
+        /// 0 = 世界基本项，1 = 世界选项（仍分两屏，但都是同样的两列布局）。
+        /// </summary>
         private WorldEditorResult EditWorldPageCore(WorldCreationDraft draft, int page)
         {
             int selected = 0;
+            string lastRendered = null;
             while (m_running)
             {
                 List<WorldEditorItem> items = page == 0
                     ? BuildNewWorldPage(draft)
                     : BuildWorldOptionsPage(draft);
+                if (items.Count == 0)
+                    return WorldEditorResult.Cancel;
                 selected = Math.Clamp(selected, 0, items.Count - 1);
-                Console.Clear();
-                Console.WriteLine(GetCurrentScreen() + "> Create World [" + (page + 1) + "/2]");
-                Console.WriteLine("Up/Down select  Right edit  Left previous  PageUp/PageDown page");
-                Console.WriteLine("For text fields, type the value and press Enter to return.");
-                Console.WriteLine();
-                for (int i = 0; i < items.Count; i++)
+
+                // 只有"画面内容"变了才重绘：光标不动、值没改时完全不刷终端。
+                string frame = BuildWorldEditorFrame(draft, page, items, selected);
+                if (!string.Equals(frame, lastRendered, StringComparison.Ordinal))
                 {
-                    Console.WriteLine((i == selected ? "> " : "  ") + items[i].Label);
+                    RenderWorldEditorFrame(draft, page, items, selected);
+                    lastRendered = frame;
                 }
 
                 ConsoleKey key = Console.ReadKey(true).Key;
@@ -534,22 +878,230 @@ namespace HeadlessRenderingMod
                     selected = 0;
                 else if (key == ConsoleKey.End)
                     selected = items.Count - 1;
-                else if (key == ConsoleKey.PageUp)
+                else if (key == ConsoleKey.Escape)
                     return page > 0 ? WorldEditorResult.PreviousPage : WorldEditorResult.Cancel;
-                else if (key == ConsoleKey.PageDown)
-                    return page < 1 ? WorldEditorResult.NextPage : WorldEditorResult.Submit;
-                else if (key == ConsoleKey.LeftArrow || key == ConsoleKey.Escape)
-                    return page > 0 ? WorldEditorResult.PreviousPage : WorldEditorResult.Cancel;
-                else if (key == ConsoleKey.RightArrow || key == ConsoleKey.Enter)
+                else if (key == ConsoleKey.Enter)
                 {
                     WorldEditorItem item = items[selected];
                     if (item.Result != WorldEditorResult.Stay)
                         return item.Result;
                     item.Edit?.Invoke();
+                    // 编辑完值变了：强制下一帧重绘（lastRendered 已不匹配自然就会重画）。
                 }
             }
             return WorldEditorResult.Cancel;
         }
+
+        /// <summary>项与项之间的水平间距（列间距）。</summary>
+        private const int ColumnGap = 2;
+
+        /// <summary>最少 / 最多列数。</summary>
+        private const int MinimumColumns = 2;
+        private const int MaximumColumns = 4;
+
+        /// <summary>当前选中项的标记：打在 `[]` **后面**，一眼能看出光标在哪。</summary>
+        private const string SelectionMarker = "#";
+
+        /// <summary>网格单元格：显示文本 + 对应 items 下标（-1 = 空格子）。</summary>
+        private readonly struct WorldEditorCell
+        {
+            public WorldEditorCell(string text, int itemIndex)
+            {
+                Text = text;
+                ItemIndex = itemIndex;
+            }
+
+            /// <summary>已补好尾部空格的显示文本（不含选中标记）。</summary>
+            public string Text { get; }
+
+            /// <summary>对应 items 的下标；空格子为 -1。</summary>
+            public int ItemIndex { get; }
+        }
+
+        /// <summary>
+        /// 把菜单项切成**按列对齐**的网格。
+        ///
+        /// 对齐规则（用户 2026-11-08 定）：**每一列用自己那列的最长项定宽**，
+        /// 而不是所有项共用全局最长宽度 —— 否则短列（如 `[Back]`）会把整张表撑得很宽、
+        /// 右侧看起来参差不齐。每列左对齐，列与列之间留 <see cref="ColumnGap"/> 个空格。
+        ///
+        /// 每个格额外预留 <see cref="SelectionMarker"/> 那一格：标记打在 `[]` 后面时
+        /// **不会把同一行后面的列挤歪**（未选中时该格补空格，左边界保持稳定）。
+        /// </summary>
+        private static List<List<WorldEditorCell>> BuildWorldEditorGrid(
+            List<WorldEditorItem> items, out int columns)
+        {
+            var labels = new List<string>(items.Count);
+            foreach (WorldEditorItem item in items)
+                labels.Add('[' + item.Label + ']');
+
+            // 列数：用最长项 + 标记位 + 间距做保守估计，保证这一行放得下。
+            int longest = 0;
+            foreach (string label in labels)
+                longest = Math.Max(longest, DisplayWidth(label));
+            int available = SafeWindowWidth();
+            int estimatedColumn = longest + DisplayWidth(SelectionMarker) + ColumnGap;
+            int fit = estimatedColumn > 0 ? (available + ColumnGap) / estimatedColumn : 1;
+            int maxByCount = Math.Max(1, items.Count);
+            columns = Math.Clamp(fit,
+                Math.Min(MinimumColumns, maxByCount),
+                Math.Min(MaximumColumns, maxByCount));
+            if (columns <= 0) columns = 1;
+
+            // 行优先切行。
+            int rowCount = (items.Count + columns - 1) / columns;
+            var indexRows = new List<int[]>(rowCount);
+            for (int r = 0; r < rowCount; r++)
+            {
+                var row = new int[columns];
+                for (int c = 0; c < columns; c++)
+                {
+                    int index = r * columns + c;
+                    row[c] = index < items.Count ? index : -1;
+                }
+                indexRows.Add(row);
+            }
+
+            // **按列**求宽度（只看这一列实际有项的格）。
+            var columnWidths = new int[columns];
+            for (int c = 0; c < columns; c++)
+            {
+                foreach (int[] row in indexRows)
+                {
+                    if (row[c] < 0) continue;
+                    columnWidths[c] = Math.Max(columnWidths[c], DisplayWidth(labels[row[c]]));
+                }
+            }
+
+            var grid = new List<List<WorldEditorCell>>(rowCount);
+            for (int r = 0; r < rowCount; r++)
+            {
+                var row = new List<WorldEditorCell>(columns);
+                for (int c = 0; c < columns; c++)
+                {
+                    int index = indexRows[r][c];
+                    if (index < 0)
+                    {
+                        row.Add(new WorldEditorCell(string.Empty, -1));
+                        continue;
+                    }
+                    string label = labels[index];
+                    int pad = columnWidths[c] - DisplayWidth(label);
+                    row.Add(new WorldEditorCell(label + new string(' ', pad), index));
+                }
+                grid.Add(row);
+            }
+            return grid;
+        }
+
+        /// <summary>
+        /// 拼一帧的**纯文本**（用于"内容变了没"的比对，不含颜色）。
+        /// 选中标记也算进帧里，所以移动光标同样会触发重绘。
+        /// </summary>
+        private string BuildWorldEditorFrame(WorldCreationDraft draft, int page,
+            List<WorldEditorItem> items, int selected)
+        {
+            List<List<WorldEditorCell>> grid = BuildWorldEditorGrid(items, out int columns);
+            var sb = new StringBuilder();
+            sb.Append(GetCurrentScreen()).Append("> Create World [")
+              .Append(page + 1).Append("/2]").Append("  (")
+              .Append(columns).Append(" columns)").Append(Environment.NewLine);
+            sb.Append("Arrows move  Enter edit  Esc back").Append(Environment.NewLine);
+            sb.Append(Environment.NewLine);
+            foreach (List<WorldEditorCell> row in grid)
+            {
+                for (int c = 0; c < row.Count; c++)
+                {
+                    if (c > 0) sb.Append(' ', ColumnGap);
+                    WorldEditorCell cell = row[c];
+                    sb.Append(cell.Text);
+                    sb.Append(cell.ItemIndex == selected ? SelectionMarker : " ");
+                }
+                sb.Append(Environment.NewLine);
+            }
+            return sb.ToString();
+        }
+
+        /// <summary>
+        /// 真正输出一帧：选中项在 `[]` **后面**打 <see cref="SelectionMarker"/>，
+        /// 并用反白加强（ConsoleColor 而不是 ANSI —— Windows 控制台不保证开启 VT 处理）。
+        /// </summary>
+        private void RenderWorldEditorFrame(WorldCreationDraft draft, int page,
+            List<WorldEditorItem> items, int selected)
+        {
+            List<List<WorldEditorCell>> grid = BuildWorldEditorGrid(items, out int columns);
+            BeginScreen();
+            Console.WriteLine(GetCurrentScreen() + "> Create World [" + (page + 1) + "/2]" +
+                "  (" + columns + " columns)");
+            Console.WriteLine("Arrows move  Enter edit  Esc back");
+            Console.WriteLine();
+
+            ConsoleColor previousForeground = Console.ForegroundColor;
+            ConsoleColor previousBackground = Console.BackgroundColor;
+            try
+            {
+                foreach (List<WorldEditorCell> row in grid)
+                {
+                    for (int c = 0; c < row.Count; c++)
+                    {
+                        if (c > 0) Console.Write(new string(' ', ColumnGap));
+                        WorldEditorCell cell = row[c];
+                        bool isSelected = cell.ItemIndex == selected;
+                        if (isSelected)
+                        {
+                            Console.ForegroundColor = ConsoleColor.Black;
+                            Console.BackgroundColor = ConsoleColor.Gray;
+                        }
+                        Console.Write(cell.Text);
+                        Console.Write(isSelected ? SelectionMarker : " ");
+                        if (isSelected)
+                        {
+                            Console.ForegroundColor = previousForeground;
+                            Console.BackgroundColor = previousBackground;
+                        }
+                    }
+                    Console.WriteLine();
+                }
+            }
+            finally
+            {
+                Console.ForegroundColor = previousForeground;
+                Console.BackgroundColor = previousBackground;
+            }
+        }
+
+        /// <summary>终端可用宽度；取不到就退回 80，绝不因此抛异常。</summary>
+        private static int SafeWindowWidth()
+        {
+            try
+            {
+                int w = Console.WindowWidth;
+                return w > 20 ? w : 80;
+            }
+            catch
+            {
+                return 80;
+            }
+        }
+
+        /// <summary>显示宽度：CJK / 全角算 2 列，其余算 1 列（用于对齐与列数判断）。</summary>
+        private static int DisplayWidth(string text)
+        {
+            if (string.IsNullOrEmpty(text)) return 0;
+            int width = 0;
+            foreach (char c in text)
+                width += IsWideChar(c) ? 2 : 1;
+            return width;
+        }
+
+        private static bool IsWideChar(char c) =>
+            (c >= 0x1100 && c <= 0x115F) ||
+            (c >= 0x2E80 && c <= 0xA4CF) ||
+            (c >= 0xAC00 && c <= 0xD7A3) ||
+            (c >= 0xF900 && c <= 0xFAFF) ||
+            (c >= 0xFE30 && c <= 0xFE6F) ||
+            (c >= 0xFF00 && c <= 0xFF60) ||
+            (c >= 0xFFE0 && c <= 0xFFE6);
 
         private List<WorldEditorItem> BuildNewWorldPage(WorldCreationDraft draft)
         {
@@ -799,9 +1351,9 @@ namespace HeadlessRenderingMod
 
             if (current == null)
             {
-                Console.Clear();
+                BeginScreen();
                 Console.WriteLine(GetCurrentScreen() + "> Current World");
-                Console.WriteLine(GetCurrentWorldMenuLabel());
+                Console.WriteLine(GetWorldMenuLabel());
                 Pause();
                 return;
             }
@@ -809,32 +1361,10 @@ namespace HeadlessRenderingMod
             ShowWorldDetails(current);
         }
 
-        private string GetCurrentWorldMenuLabel()
-        {
-            try
-            {
-                // Source: HeadlessRenderingMod.cs:BuildStatus
-                // The status snapshot is the authoritative loaded-world state and does not
-                // rescan save directories while the game is loading.
-                Dictionary<string, object> status = GetResult<Dictionary<string, object>>(
-                    m_server.SubmitLocal("status"));
-                bool loaded = status.TryGetValue("worldLoaded", out object loadedValue) &&
-                    loadedValue is bool isLoaded && isLoaded;
-                if (!loaded) return "Current World: <none>";
-                if (status.TryGetValue("worldName", out object worldNameValue) &&
-                    worldNameValue is string worldName && !string.IsNullOrWhiteSpace(worldName))
-                    return "Current World: " + worldName;
-                return "Current World: Loading...";
-            }
-            catch
-            {
-                return "Current World: Unavailable";
-            }
-        }
 
         private void ShowWorldDetails(Dictionary<string, object> world)
         {
-            Console.Clear();
+            BeginScreen();
             bool loaded = world.TryGetValue("loaded", out object loadedValue) &&
                 loadedValue is bool isLoaded && isLoaded;
             Console.WriteLine(GetCurrentScreen() + "> World: " + world["name"]);
@@ -1226,14 +1756,33 @@ namespace HeadlessRenderingMod
         private int? SelectMenuCore(string title, string[] items, int selected) =>
             SelectMenuCore(title, items, selected, null);
 
-        private int? SelectMenuCore(string title, string[] items, int selected, string[] notes)
+        private int? SelectMenuCore(string title, string[] items, int selected, string[] notes) =>
+            SelectMenuCore(title, () => items, selected, notes);
+
+        /// <summary>
+        /// 菜单核心（**动态项版本**）。
+        ///
+        /// <paramref name="itemsFactory"/> 在**每一帧重绘前**重新求值 —— 这是"实时刷新"的关键：
+        /// 主菜单里的世界名、当前模式之类的标签会随游戏状态变化，而菜单可能一开就停在上面很久。
+        /// 旧实现只在**进入菜单之前**构建一次 items，于是世界名变了要退出再进才看得到
+        /// （实测：加载世界后停在菜单里，标题一直显示 &lt;none&gt;）。
+        /// </summary>
+        private int? SelectMenuCore(string title, Func<string[]> itemsFactory, int selected,
+            string[] notes)
         {
+            string[] items = itemsFactory?.Invoke();
             if (items == null || items.Length == 0)
                 return null;
             selected = Math.Clamp(selected, 0, items.Length - 1);
             while (m_running)
             {
-                Console.Clear();
+                // 每帧重新求值：状态变了（加载了世界 / 切了模式）下一次重绘就反映出来。
+                items = itemsFactory?.Invoke() ?? items;
+                if (items.Length == 0)
+                    return null;
+                selected = Math.Clamp(selected, 0, items.Length - 1);
+
+                BeginScreen();
                 int page = selected / MenuPageSize;
                 int first = page * MenuPageSize;
                 int last = Math.Min(first + MenuPageSize, items.Length);
@@ -1267,13 +1816,21 @@ namespace HeadlessRenderingMod
                     selected = 0;
                 else if (key == ConsoleKey.End)
                     selected = items.Length - 1;
-                else if (key == ConsoleKey.LeftArrow || key == ConsoleKey.Escape)
+                else if (key == ConsoleKey.LeftArrow)
+                    selected = selected > 0 ? selected - 1 : items.Length - 1;
+                else if (key == ConsoleKey.Escape)
                     return null;
-                else if (key == ConsoleKey.RightArrow || key == ConsoleKey.Enter)
+                else if (key == ConsoleKey.RightArrow)
+                    selected = selected < items.Length - 1 ? selected + 1 : 0;
+                else if (key == ConsoleKey.Enter)
                     return selected;
             }
             return null;
         }
+
+        /// <summary>动态项菜单：每次重绘前调用 <paramref name="itemsFactory"/> 取最新标签。</summary>
+        private int? SelectDynamicMenu(string title, Func<string[]> itemsFactory, int selected) =>
+            Interactive(() => SelectMenuCore(title, itemsFactory, selected, null));
 
         private string PromptChoice(string label, string[] choices, string defaultValue)
         {
@@ -1674,7 +2231,7 @@ namespace HeadlessRenderingMod
                 return;
             if (setup.Value == 0)
             {
-                Console.Clear();
+                BeginScreen();
                 Console.WriteLine(GetCurrentScreen() + "> Data Modification");
                 Console.WriteLine("Mode: " + FormatDataModificationMode(
                     ReadString(settings, "dataModificationMode", "default")));
@@ -1753,7 +2310,7 @@ namespace HeadlessRenderingMod
         {
             List<DataModificationFeed.Entry> decisions =
                 m_dataModificationFeed?.Snapshot() ?? new List<DataModificationFeed.Entry>();
-            Console.Clear();
+            BeginScreen();
             Console.WriteLine(GetCurrentScreen() + "> Data Modification Decisions");
             Console.WriteLine("Auto approve allowlist: " + DescribeAutoApproveAllowlist());
             // 最近一条的高亮行（父节点现在只显示计数）。
@@ -2173,7 +2730,7 @@ namespace HeadlessRenderingMod
                     GetDataModificationApprovals();
                 if (approvals.Count == 0)
                 {
-                    Console.Clear();
+                    BeginScreen();
                     Console.WriteLine(GetCurrentScreen() + "> Data Modification Approvals");
                     Console.WriteLine("No pending data modification requests.");
                     Console.WriteLine("Decisions already made are listed under Recent decisions.");
@@ -2312,7 +2869,7 @@ namespace HeadlessRenderingMod
 
         private void ConfigureAdvancedDataModification(Dictionary<string, object> settings)
         {
-            Console.Clear();
+            BeginScreen();
             Console.WriteLine(GetCurrentScreen() + "> Professional Data Modification");
             string mode = PromptChoice("Data modification mode",
                 new[] { "Reject", "Default (ask host)", "Allow" },
@@ -2352,6 +2909,60 @@ namespace HeadlessRenderingMod
             return settings;
         }
 
+        /// <summary>
+        /// 联机模块日志模式（SuMultiplayer）：在线 / 调试 两档，主机侧切换后自动下发给所有玩家端。
+        ///
+        /// 远端无头服务器没有人去点游戏内界面，这个菜单是运维唯一能改它的入口。
+        /// 调用走反射（见 Server/HeadlessSuMultiplayerBridge.cs），本 mod 不引用 SuMultiplayer。
+        /// </summary>
+        private void ConfigureMultiplayerLogMode()
+        {
+            bool current;
+            try
+            {
+                current = HeadlessSuMultiplayerBridge.ReadModuleLogMode();
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine();
+                Console.WriteLine("Multiplayer log mode error: " + ex.Message);
+                Pause();
+                return;
+            }
+
+            int? choice = SelectMenu("Multiplayer Log Mode",
+                new[]
+                {
+                    "Online (memory only, no log files" + (current ? "" : ", current") + ")",
+                    "Debug (write role logs to disk" + (current ? ", current" : "") + ")",
+                    "Back"
+                }, current ? 1 : 0);
+            if (!choice.HasValue || choice.Value == 2) return;
+
+            bool persist = choice.Value == 1;
+            try
+            {
+                if (!HeadlessSuMultiplayerBridge.TrySetModuleLogMode(persist, out string note))
+                {
+                    // 明确失败：例如本端不是主机，联机模块会拒（客户端不能本地决定日志模式）。
+                    Console.WriteLine();
+                    Console.WriteLine("Not switched: " + note);
+                    Pause();
+                    return;
+                }
+                Console.WriteLine();
+                Console.WriteLine("Log mode: " + (persist ? "Debug (persisting)" : "Online (memory only)"));
+                if (!string.IsNullOrEmpty(note)) Console.WriteLine(note);
+                Pause();
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine();
+                Console.WriteLine("Multiplayer log mode error: " + ex.Message);
+                Pause();
+            }
+        }
+
         private void ConfigureMultiplayerBandwidth()
         {
             Dictionary<string, object> settings = GetMultiplayerSettings();
@@ -2383,7 +2994,7 @@ namespace HeadlessRenderingMod
         private void ShowMultiplayerBandwidthConfiguration(
             Dictionary<string, object> settings, string mode, bool configurationEnabled)
         {
-            Console.Clear();
+            BeginScreen();
             Console.WriteLine(GetCurrentScreen() + "> Multiplayer Bandwidth");
             Console.WriteLine();
             Console.WriteLine("Mode: " + (configurationEnabled ? "Configured" : "Automatic"));
@@ -2420,7 +3031,7 @@ namespace HeadlessRenderingMod
         private void ConfigureSimpleBandwidth(Dictionary<string, object> settings, string mode,
             bool configurationEnabled)
         {
-            Console.Clear();
+            BeginScreen();
             Console.WriteLine(GetCurrentScreen() + "> Simple Bandwidth");
             Console.WriteLine("Automatic ignores saved caps; Configured uses them without changing their values.");
             Console.WriteLine();
@@ -2479,7 +3090,7 @@ namespace HeadlessRenderingMod
 
         private void ConfigureAdvancedBandwidth(Dictionary<string, object> settings, string mode)
         {
-            Console.Clear();
+            BeginScreen();
             Console.WriteLine(GetCurrentScreen() + "> Advanced Bandwidth");
             Console.WriteLine("Join fixed cap (Kbps)[0] means Automatic and is recommended.");
             Console.WriteLine();
@@ -2561,7 +3172,7 @@ namespace HeadlessRenderingMod
 
         private void ShowResponse(string command)
         {
-            Console.Clear();
+            BeginScreen();
             Console.WriteLine(GetCurrentScreen() + "> " + command);
             PrintResponse(RequireSuccess(m_server.SubmitLocal(command)));
             Pause();

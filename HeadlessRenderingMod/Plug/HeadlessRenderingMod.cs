@@ -15,8 +15,6 @@ namespace HeadlessRenderingMod
     {
         private IModEventBus m_eventBus;
         private EventSubscriptionToken m_frameToken;
-        private EventSubscriptionToken m_serverAuditToken;
-        private EventSubscriptionToken m_serverRetransmitToken;
         private EventSubscriptionToken m_dataModificationApprovalToken;
         private EventSubscriptionToken m_dataModificationResultToken;
         private HeadlessServerConfig m_config;
@@ -39,8 +37,6 @@ namespace HeadlessRenderingMod
         private bool? m_originalWindowVisible;
         private string m_lastFrameError;
         private double m_nextMultiplayerTelemetryTime;
-        private ServerAuditLog m_serverAuditLog;
-        private ServerAuditLog m_serverRetransmitLog;
 
         // Source: Mod/ScMultiplayer/DataModification/DataModificationContracts.cs:
         // DataModificationEvents.ApprovalRequested / ApprovalControl
@@ -65,7 +61,7 @@ namespace HeadlessRenderingMod
 
         public string Name => "无画面服务器";
 
-        public string Version => "1.3.6";
+        public string Version => "1.4.0";
 
         public IEnumerable<string> Dependencies => Array.Empty<string>();
 
@@ -115,15 +111,9 @@ namespace HeadlessRenderingMod
                     "Frame.Update",
                     HandleFrameUpdate,
                     EventPriority.LOWEST);
-                // Source: EntitySystem/SuAPI/IModEventBus.cs:IModEventBus.SubscribeEvent
-                m_serverAuditLog = new ServerAuditLog(Path.Combine(instanceRoot, "Logs", "Server"));
-                m_serverAuditToken = eventBus.SubscribeEvent(
-                    "ScMultiplayer.ServerAudit", HandleServerAuditEvent, EventPriority.LOWEST);
-                m_serverRetransmitLog = new ServerAuditLog(
-                    Path.Combine(instanceRoot, "Logs", "Server"), "Retransmit-", 64);
-                m_serverRetransmitToken = eventBus.SubscribeEvent(
-                    "ScMultiplayer.ServerRetransmitAudit",
-                    HandleServerRetransmitEvent, EventPriority.LOWEST);
+                // 联机日志不再经本 mod 落盘：SuMultiplayer 自己按角色写
+                // data:/Logs/{Server,Client}/SuMultiplayer-*.log（默认上线模式甚至完全不写盘），
+                // 远端要看日志直接读那几个文件即可，这里不再订阅旧 ScMultiplayer 的审计事件。
                 m_dataModificationApprovalToken = eventBus.SubscribeEvent(
                     "ScMultiplayer.DataModification.ApprovalRequested",
                     HandleDataModificationApprovalEvent,
@@ -137,7 +127,10 @@ namespace HeadlessRenderingMod
                     "ScMultiplayer.DataModification.Result",
                     HandleDataModificationResultEvent,
                     EventPriority.LOWEST);
-                if (m_config.EnableConsole && OperatingSystem.IsWindows())
+                // 控制台菜单在 Windows 与 Linux 都可用：Windows 抢/建一个控制台窗口，
+                // Linux 直接用调用方终端（前台 `./Survivalcraft` 启动时标准输入输出已就绪）。
+                // 纯文本界面的按键/清屏/颜色在两者上都是 Console 标准 API，无需额外适配。
+                if (m_config.EnableConsole)
                 {
                     m_consoleController = new WindowsConsoleController(
                         m_server,
@@ -169,25 +162,15 @@ namespace HeadlessRenderingMod
         {
             if (m_eventBus != null && m_frameToken != null)
                 m_eventBus.UnsubscribeEvent(m_frameToken);
-            if (m_eventBus != null && m_serverAuditToken != null)
-                m_eventBus.UnsubscribeEvent(m_serverAuditToken);
-            if (m_eventBus != null && m_serverRetransmitToken != null)
-                m_eventBus.UnsubscribeEvent(m_serverRetransmitToken);
             if (m_eventBus != null && m_dataModificationApprovalToken != null)
                 m_eventBus.UnsubscribeEvent(m_dataModificationApprovalToken);
             if (m_eventBus != null && m_dataModificationResultToken != null)
                 m_eventBus.UnsubscribeEvent(m_dataModificationResultToken);
 
             m_frameToken = null;
-            m_serverAuditToken = null;
-            m_serverRetransmitToken = null;
             m_dataModificationApprovalToken = null;
             m_dataModificationResultToken = null;
             m_eventBus = null;
-            m_serverAuditLog?.Dispose();
-            m_serverAuditLog = null;
-            m_serverRetransmitLog?.Dispose();
-            m_serverRetransmitLog = null;
             if (m_consoleController != null)
             {
                 m_consoleController.Stop();
@@ -231,21 +214,6 @@ namespace HeadlessRenderingMod
         }
 
         // Source: EntitySystem/SuAPI/IModEventBus.cs:IModEventBus.TriggerEvent
-        private object[] HandleServerAuditEvent(object[] args)
-        {
-            if (args != null && args.Length > 0 && args[0] is string record)
-                m_serverAuditLog?.Enqueue(record);
-            return null;
-        }
-
-        // Source: EntitySystem/SuAPI/IModEventBus.cs:IModEventBus.TriggerEvent
-        private object[] HandleServerRetransmitEvent(object[] args)
-        {
-            if (args != null && args.Length > 0 && args[0] is string record)
-                m_serverRetransmitLog?.Enqueue(record);
-            return null;
-        }
-
         // Source: Mod/ScMultiplayer/DataModification/ScMultiplayerDataModificationRuntime.cs:
         // PublishDataModificationApprovalRequest
         private object[] HandleDataModificationApprovalEvent(object[] args)
