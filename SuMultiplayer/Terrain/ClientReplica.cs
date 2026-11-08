@@ -1570,8 +1570,12 @@ namespace SuMultiplayer.Terrain
 
         public static readonly string[] ElectricityDependent =
         {
-            // 只在 SpikedPlankElectricElement.Simulate → RetractExtendSpikes 里写格；
-            // 客户端 SubsystemElectricity 已闸门，求解不会发生。
+            // 只在 SpikedPlankElectricElement.Simulate → RetractExtendSpikes 里写格（data-only）。
+            // 客户端电路求解**会**发生（SuSubsystemElectricity 跑 RunClientCircuitSimulation），
+            // 但 SpikedPlankElectricElement 已在 IsClientAutomaticInput 里被屏蔽 ——
+            // 求解期间它被临时移出元件表，不会调 RetractExtendSpikes，因此不会写格。
+            // 刺出/收回状态改由主机 ChangeCell → 地形同步下发（见 ClientReplicaSubsystems
+            // 的 IsClientAutomaticInput 注释）。
             "Game.SubsystemSpikesBlockBehavior"
         };
 

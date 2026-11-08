@@ -1902,6 +1902,13 @@ namespace SuMultiplayer.Engine
             element is GunpowderKegElectricElement ||
             element is ChristmasTreeElectricElement ||
             element is LightBulbElectricElement ||
+            // 地刺板：Simulate → SubsystemSpikesBlockBehavior.RetractExtendSpikes → ChangeCell
+            // 只改 data 位（刺出/收回），主机端电路模拟必然会产生同样的结果。
+            // 客户端不该自己算这种「电路输出驱动的方块状态」：两端求解进度不一定一致
+            // （客户端有暂停/加速/断点），一次性输入信号下若客户端那次没算出来，
+            // 状态就永久错位。改由主机 ChangeCell → 地形同步下发，客户端只应用权威值。
+            // 与上面灯 / 圣诞树灯同一口径（它们同样只改 data、且主机必然也会算）。
+            element is SpikedPlankElectricElement ||
             element is HygrometerElectricElement ||
             element is ThermometerElectricElement ||
             element is FurnitureElectricElement &&
