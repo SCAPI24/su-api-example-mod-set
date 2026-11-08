@@ -337,7 +337,7 @@ namespace SuMultiplayer.Engine
         {
             if (m_missingParticlesLogged) return;
             m_missingParticlesLogged = true;
-            Log.Warning("[SuMP] " + message);
+            ModLog.Warn("[SuMP] " + message);
         }
 
         private void LogProblem(string message)
@@ -345,7 +345,7 @@ namespace SuMultiplayer.Engine
             long nowMs = (long)(Time.RealTime * 1000.0);
             if (m_lastProblemLogMs != 0 && nowMs - m_lastProblemLogMs < 10000) return;
             m_lastProblemLogMs = nowMs;
-            Log.Warning("[SuMP] " + message);
+            ModLog.Warn("[SuMP] " + message);
         }
 
         public int ActiveCount => m_particles.Count;

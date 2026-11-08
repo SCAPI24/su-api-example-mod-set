@@ -37,7 +37,7 @@ namespace CmdBridgeMod
         /// ⚠️ **必须与 `ModInfo.xml` 的 `&lt;Version&gt;` 同步**：漏同步就会出现
         /// "装的是 1.1.20、状态里报 1.1.15"（本文件实际踩过一次，排查时容易误判成旧包装没生效）。
         /// </summary>
-        internal const string ModVersion = "1.1.39";
+        internal const string ModVersion = "1.1.40";
 
         /// <summary>
         /// 内建命令名（`cmd.list` 用）。加命令时**必须同步这里**：
@@ -83,7 +83,11 @@ namespace CmdBridgeMod
             "ui.cursor", "ui.press", "ui.release", "ui.move", "ui.click",
             "focus.status", "focus.auto", "focus.follow", "focus.attach", "focus.detach", "focus.recover",
             "focus.merge", "focus.lookhold", "look.owner", "hotkey.status",
-            "jump.status", "jump.buffer"
+            "jump.status", "jump.buffer",
+            // SuMultiplayer 模块日志模式（反射 SuMultiplayerMod.SetModuleLogModeRuntime）：
+            // 主机不关房、不改配置就能在"上线（不落盘）/ Debug（落盘）"之间切换，并自动
+            // 广播给所有玩家端（客户端不读本地配置，完全听主机）。
+            "verbose"
         };
 
         // 条件等待： 0ms 轮询一次（远快于人类的反应，也远慢于每帧，避免给游戏线程添压力）。
@@ -282,6 +286,8 @@ namespace CmdBridgeMod
                     return OnGameThread(() => ChatSend(request));
                 case "chat.cancel":
                     return OnGameThread(ChatCancel);
+                case "verbose":
+                    return OnGameThread(() => SetVerbose(request));
                 case "obs.dialogs":
                     return OnGameThread(DescribeDialogs);
                 case "ui.reachability":
@@ -2379,6 +2385,53 @@ namespace CmdBridgeMod
                 }
                 throw;
             }
+        }
+
+        /// <summary>
+        /// `verbose true|false`：运行时切换 SuMultiplayer 的**模块日志模式**。
+        ///
+        ///   · true  = Debug：内存缓冲满时把这一轮写进角色日志（便于完整复盘）；
+        ///   · false = 上线：日志只进内存，缓冲满即丢弃，**永不写盘**。
+        ///
+        /// 只有**主机**能切换：主机立即生效，并把模式广播给所有玩家端
+        /// （客户端不读本地配置，完全听主机）。客户端执行会明确返回 logmode_not_host。
+        /// 本命令**不改** `SuMultiplayer.json` —— 需要持久化请自己改配置后重启。
+        /// </summary>
+        private static object SetVerbose(BridgeRequest request)
+        {
+            string raw = request.GetString("mode", null) ?? request.GetString("value", null);
+            raw = (raw ?? string.Empty).Trim();
+            bool persist;
+            if (string.Equals(raw, "true", StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(raw, "on", StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(raw, "debug", StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(raw, "1", StringComparison.Ordinal))
+            {
+                persist = true;
+            }
+            else if (string.Equals(raw, "false", StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(raw, "off", StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(raw, "online", StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(raw, "0", StringComparison.Ordinal))
+            {
+                persist = false;
+            }
+            else
+            {
+                throw new BridgeCommandException("invalid_argument",
+                    "verbose needs an explicit mode: `verbose true` (debug, persist to disk) or "
+                    + "`verbose false` (online, memory only). Got: \"" + raw + "\".");
+            }
+
+            SuModuleLogAutomation automation = SuModuleLogAutomation.Resolve();
+            string note = automation.SetMode(persist);
+            return new Dictionary<string, object>(StringComparer.Ordinal)
+            {
+                ["ok"] = true,
+                ["mode"] = persist ? "debug" : "online",
+                ["persistToFile"] = persist,
+                ["detail"] = note
+            };
         }
 
         /// <summary>`chat.cancel`：关闭输入行并清空缓冲区（等价按 Esc）；没打开 → chat_not_open。</summary>

@@ -477,19 +477,48 @@ namespace SuMultiplayer.Players
         }
 
         /// <summary>
-        /// 有改动就落盘（主机专属）。
-        /// Source: ScMultiplayerProfileHandlers.cs:273-372
+        /// <see cref="SaveIfDirtyResult"/>：区分"没东西要存（正常）"和"真的存失败了"。
+        ///
+        /// 为什么需要它（用户 2026-11-08 定）：旧接口 <see cref="SaveIfDirty"/> 把两种情况都返回
+        /// <c>false</c> —— 没有脏数据（正常，什么都不用做）和写盘失败（真异常）看起来一模一样，
+        /// 调用方一看到 false 就打"保存失败"告警，实机日志里刷出一堆**假失败**。
+        /// 新代码请用 <see cref="SaveIfDirtyDetailed"/> 并只在 <see cref="Failed"/> 时告警。
         /// </summary>
-        public bool SaveIfDirty()
+        public enum SaveIfDirtyResult
         {
-            if (!m_isHost || !m_dirty) return false;
-            if (string.IsNullOrEmpty(m_worldDirectory)) return false;
+            /// <summary>不是主机，或没有脏数据 —— 不需要写盘，**这是正常情况**。</summary>
+            NothingToSave = 0,
+            /// <summary>已成功写盘。</summary>
+            Saved = 1,
+            /// <summary>**真的失败了**：世界目录未知 / 原文件解析失败（拒绝覆盖）/ 写盘 IO 异常。</summary>
+            Failed = 2
+        }
+
+        /// <summary>
+        /// 有改动就落盘（主机专属），并**明确区分"没东西要存"和"失败了"**。
+        /// 失败时已写好诊断日志，调用方只需按 <see cref="SaveIfDirtyResult.Failed"/> 决定要不要告警。
+        /// </summary>
+        public SaveIfDirtyResult SaveIfDirtyDetailed(out string failureReason)
+        {
+            failureReason = null;
+            if (!m_isHost) return SaveIfDirtyResult.NothingToSave;
+            if (!m_dirty) return SaveIfDirtyResult.NothingToSave;
+            if (string.IsNullOrEmpty(m_worldDirectory))
+            {
+                // 角色记录是脏的但不知道往哪写：这是**异常状态**（世界目录还没确定就要求落盘），
+                // 不能当成"没东西要存"静默掉。
+                failureReason = "世界目录未知（m_worldDirectory 为空）→ 本次无法写盘，" +
+                    "角色记录保持 dirty，等下一次重试";
+                return SaveIfDirtyResult.Failed;
+            }
             if (m_loadFailed)
             {
+                failureReason = "本世界的角色记录文件先前**解析失败**，拒绝覆盖（会丢掉原有记录；" +
+                    "原文件保持原样）";
                 m_diagnostics?.Error(m_ownerId,
                     "拒绝写盘：本世界的角色记录文件先前解析失败，覆盖它会丢掉原有记录（原文件保持原样）",
                     null);
-                return false;
+                return SaveIfDirtyResult.Failed;
             }
             try
             {
@@ -509,17 +538,27 @@ namespace SuMultiplayer.Players
                     new XDocument(root).Save(stream);
                 m_dirty = false;
                 SaveFailed = false;
-                return true;
+                return SaveIfDirtyResult.Saved;
             }
             catch (Exception ex)
             {
                 // 保持 dirty = true（下一次 SaveIfDirty 会重试），并让调用方看到明确失败。
                 SaveFailed = true;
+                failureReason = "写盘 IO 异常：" + ex.GetType().Name + ": " + ex.Message;
                 m_diagnostics?.Error(m_ownerId,
                     "写联机角色记录失败：" + Storage.CombinePaths(m_worldDirectory, FileName), ex);
-                return false;
+                return SaveIfDirtyResult.Failed;
             }
         }
+
+        /// <summary>
+        /// 有改动就落盘（主机专属）。**兼容旧签名**：返回 true 仅表示"这次真的写盘成功了"。
+        ///
+        /// ⚠️ 不能再用 `if (!SaveIfDirty()) 报错` —— false 既可能是"没东西要存"（正常），
+        /// 也可能是"失败"。需要区分时用 <see cref="SaveIfDirtyDetailed"/>。
+        /// </summary>
+        public bool SaveIfDirty() =>
+            SaveIfDirtyDetailed(out _) == SaveIfDirtyResult.Saved;
 
         /// <summary>
         /// 记录里的皮肤资源校验：大小 / PNG / 哈希必须自洽，否则**明确记日志并丢弃资源**

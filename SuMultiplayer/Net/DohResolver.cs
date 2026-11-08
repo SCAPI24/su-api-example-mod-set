@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Net;
 using System.Net.Http;
 using System.Text.Json;
+using SuMultiplayer.Engine;
 
 namespace SuMultiplayer.Net
 {
@@ -109,7 +110,7 @@ namespace SuMultiplayer.Net
                 }
                 catch (Exception error)
                 {
-                    global::Engine.Log.Information("[SuMP][doh] " + url + " 失败：" +
+                    ModLog.Info("[SuMP][doh] " + url + " 失败：" +
                         error.Message);
                 }
             }

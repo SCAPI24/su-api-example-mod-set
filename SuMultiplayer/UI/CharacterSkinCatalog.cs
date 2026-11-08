@@ -5,6 +5,7 @@ using Engine;
 using Engine.Media;
 using Game;
 using SuMultiplayer.Players;
+using SuMultiplayer.Engine;
 
 namespace SuMultiplayer.UI
 {
@@ -42,7 +43,7 @@ namespace SuMultiplayer.UI
                 if (hinted.HasValue && hinted.Value != playerClass) continue;
                 if (!TryReadCustomAsset(name, out byte[] data, out string reason))
                 {
-                    Log.Warning("[SuMP] 皮肤目录：跳过自定义皮肤 \"" + name + "\"：" + reason);
+                    ModLog.Warn("[SuMP] 皮肤目录：跳过自定义皮肤 \"" + name + "\"：" + reason);
                     continue;
                 }
                 names.Add(name);

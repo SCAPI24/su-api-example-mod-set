@@ -144,7 +144,7 @@ namespace SuMultiplayer.UI
                     }
                     if (hiddenDownloads > 0)
                     {
-                        global::Engine.Log.Warning("[SuMP][play] 本地列表发现 " + hiddenDownloads +
+                        ModLog.Warn("[SuMP][play] 本地列表发现 " + hiddenDownloads +
                             " 个下载来的世界（应由清理删除；本帧先从列表隐藏，等下一轮清理）");
                     }
                     m_totalWorldsSize = 0L;

@@ -95,8 +95,12 @@ namespace SuMultiplayer.Engine
             if (nowMs - m_lastSaveMs >= SaveIntervalMs)
             {
                 m_lastSaveMs = nowMs;
-                if (m_records.SaveIfDirty()) m_saves++;
-                else m_saveFailures++;
+                // 只有真失败才计入 m_saveFailures；"没有脏数据"是正常情况，不算失败。
+                switch (m_records.SaveIfDirtyDetailed(out _))
+                {
+                    case SuMultiplayerPlayersXml.SaveIfDirtyResult.Saved: m_saves++; break;
+                    case SuMultiplayerPlayersXml.SaveIfDirtyResult.Failed: m_saveFailures++; break;
+                }
             }
             LogOnce("store:" + recordKey,
                 "客户端背包已写进角色记录：身份 " + PlayerIdentity.Describe(recordKey) +

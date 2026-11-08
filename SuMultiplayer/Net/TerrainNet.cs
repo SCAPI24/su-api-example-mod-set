@@ -9,6 +9,7 @@ using System.Threading.Tasks;
 using Google.Protobuf;
 using SuMultiplayer.Protocol;
 using SuMultiplayer.Protocol.Terrain;
+using SuMultiplayer.Engine;
 
 namespace SuMultiplayer.Net
 {
@@ -909,7 +910,7 @@ namespace SuMultiplayer.Net
                 }
                 catch (Exception e)
                 {
-                    global::Engine.Log.Information("[SuMP][net] 踢出信号发送失败（clientId=" +
+                    ModLog.Info("[SuMP][net] 踢出信号发送失败（clientId=" +
                         clientId + "）：" + e.GetType().Name + " " + e.Message +
                         " → 仍然继续踢出（对端可能已不可达）");
                 }
@@ -1229,7 +1230,7 @@ namespace SuMultiplayer.Net
             catch (Exception e)
             {
                 // 连 KeepAlive 都开不了才是真问题：明确记下来（不静默）。
-                global::Engine.Log.Warning("[SuMP][net] 打开 TCP KeepAlive 失败（" + role + "）：" +
+                ModLog.Warn("[SuMP][net] 打开 TCP KeepAlive 失败（" + role + "）：" +
                     e.GetType().Name + " " + e.Message + " → 空闲连接可能被中间设备回收");
                 return;
             }
@@ -1242,7 +1243,7 @@ namespace SuMultiplayer.Net
                 KeepAliveRetryCount);
             if (!fine)
             {
-                global::Engine.Log.Information("[SuMP][net] TCP KeepAlive 已开启，但平台不支持精细参数" +
+                ModLog.Info("[SuMP][net] TCP KeepAlive 已开启，但平台不支持精细参数" +
                     "（" + role + "）→ 使用系统默认探测节奏；连接不会被无限期挂住");
             }
         }
@@ -1291,7 +1292,7 @@ namespace SuMultiplayer.Net
         {
             try
             {
-                global::Engine.Log.Warning("[SuMP] transport " + what + "：" + e.GetType().Name + " " + e.Message);
+                ModLog.Warn("[SuMP] transport " + what + "：" + e.GetType().Name + " " + e.Message);
             }
             catch (Exception)
             {
@@ -1475,7 +1476,7 @@ namespace SuMultiplayer.Net
                 bool useProxy = false;
                 string routeReason = null;
                 if (ProxyRouter.TryChooseTcp(m_host, m_port, out useProxy, out routeReason))
-                    global::Engine.Log.Information("[SuMP][proxy] 加入路由：" + m_host + ":" + m_port +
+                    ModLog.Info("[SuMP][proxy] 加入路由：" + m_host + ":" + m_port +
                         " → " + (useProxy ? "代理" : "直连") + "（" + routeReason + "）");
                 if (useProxy)
                 {
@@ -1844,7 +1845,7 @@ namespace SuMultiplayer.Net
             }
             catch (Exception e)
             {
-                global::Engine.Log.Warning("[SuMP][net] 打开 TCP KeepAlive 失败（" + role + "）：" +
+                ModLog.Warn("[SuMP][net] 打开 TCP KeepAlive 失败（" + role + "）：" +
                     e.GetType().Name + " " + e.Message + " → 空闲连接可能被中间设备回收");
                 return;
             }
@@ -1857,7 +1858,7 @@ namespace SuMultiplayer.Net
                 KeepAliveRetryCount);
             if (!fine)
             {
-                global::Engine.Log.Information("[SuMP][net] TCP KeepAlive 已开启，但平台不支持精细参数" +
+                ModLog.Info("[SuMP][net] TCP KeepAlive 已开启，但平台不支持精细参数" +
                     "（" + role + "）→ 使用系统默认探测节奏；连接不会被无限期挂住");
             }
         }

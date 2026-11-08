@@ -1066,14 +1066,14 @@ namespace SuMultiplayer.Modules
         private void Log(string message)
         {
             if (m_context != null) m_context.Diagnostics.Info(m_descriptor.Id, message);
-            else global::Engine.Log.Information("[SuMP] " + message);
+            else ModLog.Info("[SuMP] " + message);
         }
 
         /// <summary>需要用户看见的显式失败（不静默、也不当普通信息淹没）。</summary>
         private void LogWarning(string message)
         {
             if (m_context != null) m_context.Diagnostics.Warn(m_descriptor.Id, message);
-            else global::Engine.Log.Warning("[SuMP] " + message);
+            else ModLog.Warn("[SuMP] " + message);
         }
     }
 }

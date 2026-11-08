@@ -37,7 +37,7 @@ namespace SuMultiplayer
     public sealed class SuMultiplayerMod : IMod
     {
         public const string ModIdentifier = "SuMultiplayer";
-        public const string ModVersionText = "0.1.0";
+        public const string ModVersionText = "2.3.0";
 
         private ModuleHost m_moduleHost;
         private TerrainSyncModule m_terrainModule;
@@ -199,6 +199,12 @@ namespace SuMultiplayer
         private InteractionReachGate m_reachGate;
         private long m_frameIndex;
         private long m_lastStatusMs;
+        /// <summary>
+        /// 周期状态行的**去重缓存**：槽位号 → 上一轮输出过的完整文本。
+        /// 只用于"这一行到底变没变"的判断，不参与任何功能。
+        /// </summary>
+        private readonly Dictionary<int, string> m_lastStatusLines =
+            new Dictionary<int, string>();
         /// <summary>上一次帧循环看到的联机会话状态：用于在角色日志里写开始/结束边界。</summary>
         private bool m_lastMultiplayerSessionActive;
 
@@ -246,11 +252,18 @@ namespace SuMultiplayer
             }
             catch (Exception error)
             {
-                Log.Warning("[SuMP][personal] 注册 Add Net World From Link 失败：" +
+                ModLog.Warn("[SuMP][personal] 注册 Add Net World From Link 失败：" +
                     error.GetType().Name + " " + error.Message);
             }
             m_config = SyncConfig.Load(out string note);
-            ModLog.Configure(m_config.VerboseLog);
+            // 日志模式：**主机说了算**（用户 2026-11-08 定）。
+            //   · 上线模式（默认）：只进内存缓冲，缓冲满即丢弃，**不写盘**；
+            //   · Debug 模式（verbose=true）：缓冲满把这一轮写进角色日志。
+            // **启动时一律上线模式（不落盘）**：这时还不知道本进程会不会当主机。
+            // 主机建房时由 TerrainSyncModule.StartHostServer 按 verbose 重新 Configure；
+            // 客户端则始终等 HelloAck.flags bit0 由主机调度
+            // （见 TerrainSyncModule.Tick 里对 ModuleLogPersistRequested 的应用）。
+            ModLog.Configure(false);
             ProxySettings.Load(out string proxyNote);
             ModLog.Info("[SuMP][proxy] " + proxyNote);
             // 交互距离上限（可配置，默认 16 m）：allowed = min(客户端 reach + 0.5 m, 本上限)。
@@ -265,9 +278,16 @@ namespace SuMultiplayer
             // 不再用共享的引擎 RNG 状态（否则两个客户端会摇到同一个名字）。日志走 [SuMP] 前缀。
             m_nameRoller = new CharacterNameRoller(
                 message => ModLog.Info("[SuMP] " + message),
-                message => Log.Warning("[SuMP] " + message),
+                message => ModLog.Warn("[SuMP] " + message),
                 CharacterNameRoller.NewSessionSalt());
             m_terrainModule = new TerrainSyncModule(m_config, profileStore: profileStore);
+            // 主机运行时下发日志模式 → 客户端切换（用户 2026-11-08 定）。
+            m_terrainModule.ModuleLogModeApplied += persistToFile =>
+            {
+                ModLog.Configure(persistToFile);
+                ModLog.Info("[SuMP] 模块日志模式 ← 主机运行时调度：" + (persistToFile
+                    ? "Debug（落盘）" : "上线（不落盘）"));
+            };
             // G10：主机正常退出游戏时通知房间里的客户端（让它们立即退出，而不是等 30 秒重连窗口）。
             // 引擎的 Window.Closed 是**窗口关闭时唯一可靠的钩子**：mod 的 OnUnload 在游戏退出
             // 路径上没有任何调用点（SuAPI 只在 ModLoader 内部用到），所以必须挂在这里。
@@ -332,9 +352,12 @@ namespace SuMultiplayer
             // SuMultiplayerPlayers.xml 带其他端最新 SpawnPosition；不影响原版 Project.xml 路径。
             m_engineWorldTransfer.BeforeExport = delegate
             {
-                bool saved = m_avatarModule.Records.SaveIfDirty();
-                if (!saved)
-                    Log.Warning("[SuMP] 世界导出前保存 SuMultiplayerPlayers.xml 失败（角色记录保持 dirty，后续重试）");
+                // 只有**真的失败**才告警：没有脏数据是正常情况（角色记录没变化就不必写盘），
+                // 旧写法把这两种情况都当失败，实机日志里刷出一堆假"保存失败"（用户 2026-11-08 定）。
+                var outcome = m_avatarModule.Records.SaveIfDirtyDetailed(out string failureReason);
+                if (outcome == SuMultiplayerPlayersXml.SaveIfDirtyResult.Failed)
+                    ModLog.Warn("[SuMP] 世界导出前保存 SuMultiplayerPlayers.xml 失败（角色记录保持" +
+                        " dirty，后续重试）：" + failureReason);
             };
             // 统计 / 成就：统计只有玩家自己的那一端算得准 —— 每个玩家端把自己的 PlayerStats
             // 周期上报给主机，主机按**稳定身份**写进世界作用域角色记录（SuMultiplayerPlayers.xml）
@@ -796,8 +819,8 @@ namespace SuMultiplayer
             });
             m_moduleHost.RegisterPort<IWorldSnapshotInvalidatorPort>(m_transferModule);
             m_moduleHost.RegisterPort<IWorldReadyPort>(m_transferModule.ReadyPort);
-            // 下载世界端口也要注册：联机角色模块靠它判断"当前玩的是不是下载来的联机世界"
-            // （客户端建主机角色的前提），拿不到就会明确拒绝建角色（不做 index 兜底）。
+            // 联机角色模块靠它判断"当前玩的是不是下载来的联机世界"（客户端建主机角色的前提），
+            // 拿不到就会明确拒绝建角色（不做 index 兜底）。
             m_moduleHost.RegisterPort<IDownloadedWorldPort>(m_transferModule.DownloadedWorldPort);
             ModuleResolution resolution = m_moduleHost.Resolve("OnLoad");
             // 单机 / 主菜单不跑联机模块的 Tick（不跟踪同步、不写周期状态日志）：
@@ -834,7 +857,15 @@ namespace SuMultiplayer
                     m_worldJoinSettings.AllowFurnitureExport; },
                 delegate (bool value) { return SetAllowFurnitureExportForUi(value); },
                 delegate { return SaveWorldJoinSettingsForUi(); },
-                m_transferModule.DownloadedWorldPort);
+                m_transferModule.DownloadedWorldPort,
+                // 模块日志模式（用户 2026-11-08 定）：联机设置界面里的开关。
+                // 只有主机能改；改完立即生效并广播给所有玩家端（客户端完全听主机）。
+                delegate { return ModLog.Verbose; },
+                delegate (bool persistToFile)
+                {
+                    SetModuleLogModeRuntime(persistToFile, out string logModeNote);
+                    return logModeNote;
+                });
             // 引擎 Edit Players（PlayerScreen）进入/退出钩子：名字/皮肤统一走引擎自己的编辑屏。
             // 进入抓快照、退出比较；主机广播改名后的本机角色，客户端按 (clientId, slot) 提交资料。
             m_editWatcher = new PlayerEditWatcher(avatarSpawner, engineModManager.ModParentField,
@@ -844,7 +875,7 @@ namespace SuMultiplayer
                     m_avatarModule.OnEditScreenExited(enter, exit);
                 },
                 message => ModLog.Info("[SuMP] " + message),
-                message => Log.Warning("[SuMP] " + message),
+                message => ModLog.Warn("[SuMP] " + message),
                 message => Log.Error("[SuMP] " + message));
             // UI 拖出到世界：引擎 ViewWidget.DragDrop 会先扣本地背包再本地 AddPickable
             // （客户端物品直接消失）。这里每帧把本机 GameWidget 的 DragHost 换成外壳，
@@ -852,12 +883,12 @@ namespace SuMultiplayer
             m_uiDropAttacher = new UiDropAttacher(m_entityEngine,
                 engineModManager.ModParentField,
                 message => ModLog.Info(message),
-                message => Log.Warning(message));
+                message => ModLog.Warn(message));
             // 聊天 HUD：底部消息流 + 暖色半透明面板（无蓝色）+ 回车/T 打开输入 +
             // 触摸端常驻“聊天”按钮。关闭输入时不拦截任何游戏输入。
             m_chatOverlay = new ChatOverlayAttacher(m_chatModule,
                 message => ModLog.Info(message),
-                message => Log.Warning(message));
+                message => ModLog.Warn(message));
             // 自动化钩子：CmdBridge 通过反射读这个属性（本 Mod 不引用 CmdBridge）。
             // 与聊天 HUD 是同一个实例；输入 / 提交走 ChatModule 的同一条发送链。
             ChatAutomation = new ChatAutomation(m_chatOverlay);
@@ -880,7 +911,7 @@ namespace SuMultiplayer
             }
             catch (Exception e)
             {
-                Log.Warning("[SuMP] 触发 SuMultiplayer.MessageRegistry 失败（第三方消息模块可能收不到注册表）：" +
+                ModLog.Warn("[SuMP] 触发 SuMultiplayer.MessageRegistry 失败（第三方消息模块可能收不到注册表）：" +
                     e.GetType().Name + " " + e.Message);
             }
             // 加载顺序兜底（不是功能兜底）：后加载的第三方模块可以主动请求一次注册表。
@@ -1339,49 +1370,50 @@ namespace SuMultiplayer
                         (multiplayerSessionActive || m_config.VerboseLog))
                     {
                         m_lastStatusMs = nowMs;
-                        ModLog.Info("[SuMP] " + m_sessionModule?.StatusLine());
-                        ModLog.Info("[SuMP] " + m_terrainModule?.StatusLine());
-                        ModLog.Info("[SuMP] " + m_circuitModule?.StatusLine());
-                        ModLog.Info("[SuMP] " + m_avatarModule?.StatusLine());
-                        ModLog.Info("[SuMP] " + m_skinModule?.StatusLine());
-                        ModLog.Info("[SuMP] " + m_actionModule?.StatusLine());
-                        ModLog.Info("[SuMP] " + m_statsModule?.StatusLine());
-                        ModLog.Info("[SuMP] " + m_statsPort?.Describe());
-                        ModLog.Info("[SuMP] " + m_inventoryStore?.StatusLine());
-                        ModLog.Info("[SuMP] " + m_explosionModule?.StatusLine());
-                        ModLog.Info("[SuMP] " + m_burnAwayModule?.StatusLine());
-                        ModLog.Info("[SuMP] " + m_campfireModule?.StatusLine());
-                        ModLog.Info("[SuMP] " + m_campfirePresenter?.Describe() + " · " +
-                            m_terrainModule?.Bridge.BlockBehaviorNotify.Describe());
-                        ModLog.Info("[SuMP] " + m_furnacePresenter?.Describe());
-                        ModLog.Info("[SuMP] " + m_entityModule?.StatusLine());
-                        ModLog.Info("[SuMP] " + m_blockUseModule?.StatusLine());
-                        ModLog.Info("[SuMP] " + m_furnitureModule?.StatusLine());
-                        ModLog.Info("[SuMP] " + m_editableModule?.StatusLine());
-                        ModLog.Info("[SuMP] " + m_remoteAudioModule?.StatusLine());
-                        ModLog.Info("[SuMP] " + m_ambientSoundModule?.StatusLine());
-                        ModLog.Info("[SuMP] " + m_voiceModule?.StatusLine());
-                        ModLog.Info("[SuMP] " + m_waterSplashModule?.StatusLine());
-                        ModLog.Info("[SuMP] " + m_projectileHitModule?.StatusLine());
-                        ModLog.Info("[SuMP] " + m_pistonModule?.StatusLine());
-                        ModLog.Info("[SuMP] " + m_creatureModule?.StatusLine());
-                        ModLog.Info("[SuMP] " + m_creatureWorld?.StatusLine());
-                        ModLog.Info("[SuMP] " + m_nameRoller?.StatusLine());
-                        ModLog.Info("[SuMP] 交互距离：serverMax=" +
+                        EmitStatusLineIfChanged(1, m_sessionModule?.StatusLine());
+                        EmitStatusLineIfChanged(2, m_terrainModule?.StatusLine());
+                        EmitStatusLineIfChanged(3, m_circuitModule?.StatusLine());
+                        EmitStatusLineIfChanged(4, m_avatarModule?.StatusLine());
+                        EmitStatusLineIfChanged(5, m_skinModule?.StatusLine());
+                        EmitStatusLineIfChanged(6, m_actionModule?.StatusLine());
+                        EmitStatusLineIfChanged(7, m_statsModule?.StatusLine());
+                        EmitStatusLineIfChanged(8, m_statsPort?.Describe());
+                        EmitStatusLineIfChanged(9, m_inventoryStore?.StatusLine());
+                        EmitStatusLineIfChanged(10, m_explosionModule?.StatusLine());
+                        EmitStatusLineIfChanged(11, m_burnAwayModule?.StatusLine());
+                        EmitStatusLineIfChanged(12, m_campfireModule?.StatusLine());
+                        EmitStatusLineIfChanged(28, m_campfirePresenter?.Describe() + " · " +
+m_terrainModule?.Bridge.BlockBehaviorNotify.Describe());
+                        EmitStatusLineIfChanged(13, m_furnacePresenter?.Describe());
+                        EmitStatusLineIfChanged(14, m_entityModule?.StatusLine());
+                        EmitStatusLineIfChanged(15, m_blockUseModule?.StatusLine());
+                        EmitStatusLineIfChanged(16, m_furnitureModule?.StatusLine());
+                        EmitStatusLineIfChanged(17, m_editableModule?.StatusLine());
+                        EmitStatusLineIfChanged(18, m_remoteAudioModule?.StatusLine());
+                        EmitStatusLineIfChanged(19, m_ambientSoundModule?.StatusLine());
+                        EmitStatusLineIfChanged(20, m_voiceModule?.StatusLine());
+                        EmitStatusLineIfChanged(21, m_waterSplashModule?.StatusLine());
+                        EmitStatusLineIfChanged(22, m_projectileHitModule?.StatusLine());
+                        EmitStatusLineIfChanged(23, m_pistonModule?.StatusLine());
+                        EmitStatusLineIfChanged(24, m_creatureModule?.StatusLine());
+                        EmitStatusLineIfChanged(25, m_creatureWorld?.StatusLine());
+                        EmitStatusLineIfChanged(26, m_nameRoller?.StatusLine());
+                        EmitStatusLineIfChanged(27, "交互距离：serverMax=" +
                             m_reachGate.ServerMaxMeters.ToString("0.##",
                                 CultureInfo.InvariantCulture) + "m · " +
                             m_reachGate.Counters.Describe());
-                        ModLog.Info("[SuMP] " + m_fusePresenter?.Describe());
-                        ModLog.Info("[SuMP] ui-drop: installedDragHosts=" +
+                        EmitStatusLineIfChanged(28, m_fusePresenter?.Describe());
+                        EmitStatusLineIfChanged(29, "ui-drop: installedDragHosts=" +
                             (m_uiDropAttacher?.InstalledCount ?? 0));
-                        ModLog.Info("[SuMP] HUD: " +
+                        EmitStatusLineIfChanged(30, "HUD: " +
                             (m_voiceHud?.DescribeCounters() ?? "voice-hud=n/a") + " · " +
                             (m_uiAttacher?.DescribeCounters() ?? "room-ui=n/a") + " · " +
                             (m_voiceMuteTable?.DescribeCounters() ?? "vo=n/a") +
                             " · frameSteps=" + m_frameStepFailureTotal + " [" +
                             DescribeFrameStepCounters() + "]");
                         // G8 验收证据：联机时进菜单 → pullBacks 增长（世界没被本地界面冻结）。
-                        ModLog.Info("[SuMP] time-flow: " + DescribeTimeFlowCounters());
+                        EmitStatusLineIfChanged(31, "time-flow: " +
+                            DescribeTimeFlowCounters());
                     }
                 }
                 catch (Exception e)
@@ -1393,6 +1425,61 @@ namespace SuMultiplayer
         }
 
         /// <summary>
+        /// 周期状态行出口：**只在文本变化时**写角色日志。
+        ///
+        /// 为什么需要它（实测）：32 个模块的状态行每 5 秒全量输出一次，一轮约 24 KB。
+        /// 世界静止时这些计数几乎不动（`campfire: hostEvents=0 hostIdle=0 …` 每轮一字不差），
+        /// 等于每小时往角色日志里写约 17 MB 纯重复内容，2 MiB 的分卷每 7 分钟就轮换一次，
+        /// 真正的异常反而被埋掉。
+        ///
+        /// 口径：
+        ///   · 文本与上一轮**完全相同** → 不写；
+        ///   · 有变化 / 第一次出现 → 写（所以“归零”也算变化，会照常留痕）；
+        ///   · <see cref="SyncConfig.VerboseLog"/> 打开时**不做去重**，仍每轮全量输出。
+        /// </summary>
+        /// <param name="slot">稳定的槽位号（同一模块每轮必须传同一个号）。</param>
+        /// <param name="line">这一轮的状态文本；null / 空表示本端该模块不存在。</param>
+        private void EmitStatusLineIfChanged(int slot, string line)
+        {
+            if (line == null) return;
+            if (m_config != null && m_config.VerboseLog)
+            {
+                ModLog.Info(line);
+                return;
+            }
+            if (m_lastStatusLines.TryGetValue(slot, out string previous) &&
+                string.Equals(previous, line, StringComparison.Ordinal))
+            {
+                return;
+            }
+            m_lastStatusLines[slot] = line;
+            ModLog.Info(line);
+        }
+
+        /// <summary>
+        /// 运行时切换模块日志模式（用户 2026-11-08 定）：**不关房、不写配置文件**。
+        ///
+        ///   · 主机：立即作用到本机，并广播给所有玩家端（它们不读本地配置）；
+        ///   · 客户端：只接受主机调度，本地调用无效（返回 false + 说明）。
+        ///
+        /// 这是给 CmdBridge / 联机设置界面用的入口；**不改 SuMultiplayer.json** ——
+        /// 想持久化请自行改配置文件后重启。
+        /// </summary>
+        /// <returns>是否生效（客户端返回 false）。</returns>
+        public bool SetModuleLogModeRuntime(bool persistToFile, out string note)
+        {
+            if (m_sessionModule != null && m_sessionModule.IsHostingRoom)
+            {
+                m_terrainModule?.BroadcastModuleLogMode(persistToFile);
+                ModLog.Configure(persistToFile);
+                note = "主机：模块日志模式已切换到 " + (persistToFile
+                    ? "Debug（落盘）" : "上线（不落盘）") + "，并已下发给所有玩家端";
+                return true;
+            }
+            note = "客户端不能本地决定日志模式（由主机调度）；如需主机切换请在主机端执行";
+            return false;
+        }
+
         /// <summary>换世界时重读 &lt;世界目录&gt;/SuMultiplayerWorld.json（加入审批设置）。</summary>
         private void RefreshWorldJoinSettings(bool inWorld)
         {
@@ -1428,7 +1515,6 @@ namespace SuMultiplayer
             return saved ? "World multiplayer settings saved." :
                 "Saving world multiplayer settings failed; see the log.";
         }
-
         private string BanIdentityForUi(string identity, bool kick)
         {
             if (string.IsNullOrWhiteSpace(identity)) return "User ID is empty; cannot ban.";
@@ -1561,11 +1647,11 @@ namespace SuMultiplayer
                 string own = PlayerIdentity.LocalIdentity() ?? string.Empty;
                 text += " | Your user ID: " + (own.Length == 0 ? "(unavailable)" : own);
             }
-            Log.Warning("[SuMP][join-approval] 加入被主机拒绝：" + text + " → 回 Play 屏（不再自动重连）");
+            ModLog.Warn("[SuMP][join-approval] 加入被主机拒绝：" + text + " → 回 Play 屏（不再自动重连）");
             try { m_sessionModule?.NotifyJoinRejected(reason); }
             catch (Exception e)
             {
-                Log.Warning("[SuMP][join-approval] 重置加入流程失败：" + e.GetType().Name + " " +
+                ModLog.Warn("[SuMP][join-approval] 重置加入流程失败：" + e.GetType().Name + " " +
                     e.Message + "（通道可能仍在运行；请从 Play 屏重新加入）");
             }
             try
@@ -1576,7 +1662,7 @@ namespace SuMultiplayer
             }
             catch (Exception e)
             {
-                Log.Warning("[SuMP][join-approval] 显示拒绝提示失败：" + e.GetType().Name + " " +
+                ModLog.Warn("[SuMP][join-approval] 显示拒绝提示失败：" + e.GetType().Name + " " +
                     e.Message + "（原因已写入日志：加入被拒绝）");
             }
         }
@@ -1862,13 +1948,44 @@ namespace SuMultiplayer
             ModLog.Info("[SuMP] " + ModIdentifier + " 已卸载");
         }
 
-        /// <summary>模块日志出口：模块不直接依赖引擎日志。</summary>
+        /// <summary>
+        /// 模块日志出口：模块不直接依赖引擎日志。
+        ///
+        /// ★ <see cref="Info"/> 做**同模块内容去重**（用户 2026-11-08 定）。
+        /// 每个模块自己在 Tick 里有周期汇总（`if (nowMs - m_lastSummaryMs >= SummaryLogMs)
+        /// Log(Summary())`），世界静止时这些文本一字不差；不在这里挡掉的话，
+        /// 角色日志会被"每轮都相同的计数行"灌满，真正的异常反而被埋掉。
+        ///
+        /// 口径：
+        ///   · 同一 moduleId 的文本与上一次**完全相同** → 不写；
+        ///   · 首次出现 / 文本有变化 → 写（归零也算变化，会照常留痕）；
+        ///   · <see cref="SyncConfig.VerboseLog"/> 打开时**不去重**（排障要看完整时间轴）；
+        ///   · <see cref="Warn"/> / <see cref="Error"/> **永不參與去重** —— 异常必须每次留痕。
+        /// </summary>
         private sealed class GameDiagnostics : IModuleDiagnostics
         {
-            public void Info(string moduleId, string message) =>
-                ModLog.Info("[" + moduleId + "] " + message);
+            /// <summary>moduleId → 上一次写出去的完整行（只用于 Info 去重）。</summary>
+            private readonly Dictionary<string, string> m_lastInfoLines =
+                new Dictionary<string, string>(StringComparer.Ordinal);
+
+            public void Info(string moduleId, string message)
+            {
+                string line = "[" + moduleId + "] " + message;
+                if (!ModLog.Verbose)
+                {
+                    if (m_lastInfoLines.TryGetValue(moduleId, out string previous) &&
+                        string.Equals(previous, line, StringComparison.Ordinal))
+                    {
+                        return;
+                    }
+                    m_lastInfoLines[moduleId] = line;
+                }
+                ModLog.Info(line);
+            }
+
             public void Warn(string moduleId, string message) =>
                 ModLog.Warn("[" + moduleId + "] " + message);
+
             public void Error(string moduleId, string message, Exception exception) =>
                 ModLog.Error("[" + moduleId + "] " + message, exception);
         }
@@ -1882,7 +1999,7 @@ namespace SuMultiplayer
             bool copied = m_editableItemBridge.TryCopyItemDataToBlock(x, y, z, contents,
                 itemDataId, out string reason);
             if (!string.IsNullOrEmpty(reason))
-                Log.Information("[SuMP][editable-item] 放置方块内容复制失败 @" +
+                ModLog.Info("[SuMP][editable-item] 放置方块内容复制失败 @" +
                     x + "," + y + "," + z + " contents=" + contents + " dataId=" +
                     itemDataId + "：" + reason);
             if (copied)

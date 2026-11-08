@@ -200,7 +200,7 @@ namespace SuMultiplayer.Engine
             long nowMs = (long)(Time.RealTime * 1000.0);
             if (m_lastProblemLogMs != 0 && nowMs - m_lastProblemLogMs < SummaryLogMs) return;
             m_lastProblemLogMs = nowMs;
-            Log.Warning("[SuMP] " + message);
+            ModLog.Warn("[SuMP] " + message);
         }
 
         public string Describe() =>

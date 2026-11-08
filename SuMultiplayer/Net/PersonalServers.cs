@@ -4,6 +4,7 @@ using System.IO;
 using System.Linq;
 using System.Text.Json;
 using Engine;
+using SuMultiplayer.Engine;
 
 namespace SuMultiplayer.Net
 {
@@ -208,7 +209,7 @@ namespace SuMultiplayer.Net
             }
             catch (Exception error)
             {
-                global::Engine.Log.Warning("[SuMP][personal] 读取失败：" + error.Message);
+                ModLog.Warn("[SuMP][personal] 读取失败：" + error.Message);
                 s_records.Clear();
             }
         }

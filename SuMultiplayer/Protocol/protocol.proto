@@ -510,6 +510,11 @@ enum MessageType {
   TOP_LAYER_DIGEST_REPORT = 178;
   TOP_LAYER_DIGEST_VERDICT = 179;
 
+  // 主机 -> 客户端：运行时切换**模块日志模式**（用户 2026-11-08 定）。
+  // 主机在联机设置里改 verbose 时立刻广播；客户端收到就切（不改本地配置）。
+  // 与 HelloAck.flags bit0 同义：那个管握手后的初始值，这条管运行中动态改。
+  MODULE_LOG_CONTROL = 180;
+
   // On-demand terrain resync diagnostic control/sample.
   TERRAIN_DIAGNOSTIC_CONTROL = 151;
   TERRAIN_DIAGNOSTIC_REPORT = 152;

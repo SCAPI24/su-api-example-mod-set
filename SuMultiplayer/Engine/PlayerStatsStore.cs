@@ -229,7 +229,7 @@ namespace SuMultiplayer.Engine
             }
             catch (Exception e)
             {
-                Log.Warning("[SuMP] Failed to apply player death record: " + e.Message);
+                ModLog.Warn("[SuMP] Failed to apply player death record: " + e.Message);
             }
         }
 

@@ -410,7 +410,7 @@ namespace SuMultiplayer.Engine
             inventory.AddSlotItems(slotIndex, authoritativeValue, 1);
             dataId = stored;
             CacheHostItem(kind, stored, data);
-            Log.Information("[SuMP][editable-item] host local edit kind=" + kind +
+            ModLog.Info("[SuMP][editable-item] host local edit kind=" + kind +
                 " slot=" + slotIndex + " dataId=" + stored + " payloadBytes=" +
                 (data == null ? 0 : data.Length) + " first=" +
                 (data != null && data.Length > 0 ? data[0].ToString() : "0"));

@@ -183,6 +183,8 @@ namespace SuMultiplayer.Modules
         private long m_clientChangeSequence;
         /// <summary>客户端：最近一次 HelloAck 收到的主机会话标识（重连判定的第二半）。</summary>
         private string m_lastHostSessionId = string.Empty;
+        /// <summary>上一次应用给 ModLog 的"主机要求落盘"状态（只在变化时重新 Configure）。</summary>
+        private bool m_lastHostWantsLogs;
         /// <summary>客户端：已经写过"追帧被拒绝 → 整图重下"的日志没有（同一原因只写一行）。</summary>
         private bool m_clientCatchUpRejectionLogged;
 
@@ -603,7 +605,7 @@ namespace SuMultiplayer.Modules
                 case MessageType.TopLayerDigestVerdict:
                 case MessageType.TopLayerMismatchReport:
                 case MessageType.TopLayerFix:
-                case MessageType.TerrainDiagnosticControl:
+                case MessageType.ModuleLogControl:
                 case MessageType.TerrainDiagnosticReport:
                 case MessageType.ClientRuntimeTelemetry:
                 case MessageType.LiveMapTelemetry:
@@ -993,6 +995,32 @@ namespace SuMultiplayer.Modules
         }
 
         /// <summary>
+        /// 主机运行时下发了新的模块日志模式（参数 = 是否落盘）。组合根据此调 ModLog.Configure。
+        /// 由 Terrain 层的 <c>ModuleLogModeChanged</c> 转发过来。
+        /// </summary>
+        public event Action<bool> ModuleLogModeApplied;
+
+        /// <summary>
+        /// 主机：把**模块日志模式**下发给所有玩家端（用户 2026-11-08 定）。
+        /// 主机在运行时改 verbose（不关房）时调用；客户端收到就切，不读本地配置。
+        /// 与 HelloAck.flags bit0 同义：那个管握手初始值，这条管运行中动态改。
+        /// </summary>
+        public void BroadcastModuleLogMode(bool persistToFile)
+        {
+            if (m_server == null) return;
+            m_host.HostWantsClientLogPersistence = persistToFile;
+            var control = new ModuleLogControl { PersistToFile = persistToFile };
+            byte[] payload = control.ToByteArray();
+            foreach (PeerInfo peer in m_server.ListPeers())
+            {
+                if (peer.Kind != ClientKind.Player ||
+                    TrySendPeerMessage(peer.Id, MessageType.ModuleLogControl, payload)) continue;
+                LogRateLimited("module-log-control-send:" + peer.Id,
+                    "模块日志模式下发失败（clientId=" + peer.Id + "，主连接背压或已失效）", 5000);
+            }
+        }
+
+        /// <summary>
         /// 联机角色模块接上 / 断开它的视图（<see cref="IAvatarTerrainBridge"/>）。
         /// 本机玩家判定（旧实现：PlayersData 里不是网络化身的那一条）与兴趣半径算法都住在
         /// 联机角色模块里，地形模块只是消费方；断开后本机玩家定位会明确失败并写清原因。
@@ -1099,6 +1127,9 @@ namespace SuMultiplayer.Modules
                 // 客户端手里的世界被判过期 ⇒ 整图重下。绝不落盘（见 Terrain/SessionIdentity.cs）。
                 m_sessionId = SessionIdentity.NewSessionId();
                 m_host.SessionId = m_sessionId;
+                // 主机按自己的 verbose 决定本次会话日志模式，并下发给客户端（客户端不读本地配置）。
+                m_host.HostWantsClientLogPersistence = m_config.VerboseLog;
+                ModLog.Configure(m_config.VerboseLog);
                 m_host.ClientJoined += HandleHostClientJoined;
                 m_host.PendingApprovalAborted += clientId => PendingApprovalAborted?.Invoke(clientId);
                 // 重连判定 / 追帧的明确日志（Terrain 层不写引擎日志，由这里照原样写一行）。
@@ -1346,6 +1377,9 @@ namespace SuMultiplayer.Modules
                 m_clientSync.ClientChunkSetFailed += HandleClientChunkSetFailed;
                 // 断线重连：重连判定拒绝 / 追帧拒绝 / 追帧过程日志。拒绝是显式失败（不是静默降级）。
                 m_clientSync.RejoinRejected += HandleClientRejoinRejected;
+                // 主机运行时切换日志模式 → 转发给组合根（Terrain 层不直接碰 ModLog）。
+                m_clientSync.ModuleLogModeChanged += persistToFile =>
+                    ModuleLogModeApplied?.Invoke(persistToFile);
                 // G6：主机主动踢出（已连接状态下）→ 直接退出世界，绝不进重连窗口。
                 m_clientSync.KickedByHost += HandleClientKickedByHost;
                 // G10：主机正常退出 → 立即退出世界（不等 30 秒重连窗口）。
@@ -1861,7 +1895,17 @@ namespace SuMultiplayer.Modules
             //   · 客户端（m_client != null）：引擎侧停止所有会改地形的世界模拟，
             //     并把本地写入捕获成编辑请求（见 Engine/ClientReplicaSubsystems.cs）；
             //   · 主机 / 未联机：桥与外壳保持权威行为（下发 / 正常模拟）。
-            bool replica = m_client != null;
+            // 架构决定：**主机唯一权威，客户端是副本**。
+            //
+            // ⚠️ 判据必须包含「重连窗口内」：主机强退后 m_client 会被置 null，
+            // 但世界还留在屏幕上（ShouldHoldWorldForReconnect 的 30 秒窗口）。
+            // 如果这时 replica 变 false，所有 ClientReplica 闸门会打开 → 引擎恢复本地世界模拟
+            // （流体/火/岩浆/生物/爆炸）+ 玩家挖掘放置直接本地生效，
+            // 等于「主机不在时客户端把世界改乱了」，重连后这些改动全部与主机冲突。
+            // 重连窗口内必须**继续按副本对待**：模拟保持停止，本地写入只被捕获
+            // （发不出去也没关系 —— 相当于掉线，恢复后以主机权威覆盖）。
+            bool inReconnectHold = m_reconnectWindowUntilMs != 0;
+            bool replica = m_client != null || inReconnectHold;
             m_bridge.ClientReplica = replica;
             if (m_shell != null) m_shell.ClientReplica = replica;
             // 追帧 / 重连被拒绝时在回调里只**登记**断开请求（不在网络帧回调里 Dispose，
@@ -2084,6 +2128,17 @@ namespace SuMultiplayer.Modules
                 m_clientChangeSequence = m_clientSync.LastAppliedChangeSequence;
                 if (!string.IsNullOrEmpty(m_clientSync.HostSessionId))
                     m_lastHostSessionId = m_clientSync.HostSessionId;
+                // 日志模式由主机调度：主机在 HelloAck.flags bit0 告知是否落盘。
+                // 只在变化时应用一次（ModLog.Configure 会清缓冲，不重复调）。
+                bool hostWantsLogs = m_clientSync.ModuleLogPersistRequested;
+                if (hostWantsLogs != m_lastHostWantsLogs)
+                {
+                    m_lastHostWantsLogs = hostWantsLogs;
+                    ModLog.Configure(hostWantsLogs);
+                    Log("模块日志模式 ← 主机调度：" + (hostWantsLogs
+                        ? "Debug（落盘到角色日志）"
+                        : "上线（只进内存，缓冲满即丢弃，不写盘）"));
+                }
                 // 兴趣上报（含"握手前重发"）统一在 UpdateInterest 里做，这里不再另发一份。
             }
             UpdateCircuitClientConnection(tick.Now);

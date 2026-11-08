@@ -115,7 +115,7 @@ namespace SuMultiplayer.Engine
             {
                 if (m_clientSleepScaleFailureLogged) return;
                 m_clientSleepScaleFailureLogged = true;
-                Log.Warning("[SuMP] Client sleep time scaling could not be normalized: " +
+                ModLog.Warn("[SuMP] Client sleep time scaling could not be normalized: " +
                     error.GetType().Name + ": " + error.Message);
             }
         }

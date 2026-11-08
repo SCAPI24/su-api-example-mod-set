@@ -137,7 +137,7 @@ namespace SuMultiplayer.Net
                 }
                 catch (Exception error)
                 {
-                    global::Engine.Log.Warning("[SuMP][catalog] 刷新异常：" + error.Message);
+                    ModLog.Warn("[SuMP][catalog] 刷新异常：" + error.Message);
                 }
                 for (int i = 0; i < 10 && m_running; i++) Thread.Sleep(100);
             }
@@ -158,7 +158,7 @@ namespace SuMultiplayer.Net
             }
             catch (Exception error)
             {
-                global::Engine.Log.Warning("[SuMP][catalog] 内嵌 ServerDns 读取失败：" + error.Message);
+                ModLog.Warn("[SuMP][catalog] 内嵌 ServerDns 读取失败：" + error.Message);
             }
             ApplyDirectoryHosts(hosts, "embedded");
             RefreshPersonal();

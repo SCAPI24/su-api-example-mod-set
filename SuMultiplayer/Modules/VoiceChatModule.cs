@@ -7,6 +7,7 @@ using SuMultiplayer.Net;
 using SuMultiplayer.Protocol;
 using SuMultiplayer.Voice;
 using V = SuMultiplayer.Protocol.Voice;
+using SuMultiplayer.Engine;
 
 namespace SuMultiplayer.Modules
 {
@@ -246,12 +247,12 @@ namespace SuMultiplayer.Modules
         {
             if (!context.TryGetPort(out m_transport) || m_transport == null)
             {
-                Log.Warning("[SuMP][voice] 没有传输端口（transport）→ 语音模块不启用");
+                ModLog.Warn("[SuMP][voice] 没有传输端口（transport）→ 语音模块不启用");
                 return;
             }
             if (!context.TryGetPort(out m_control) || m_control == null)
             {
-                Log.Warning("[SuMP][voice] 没有通道控制端口（ITransportControlPort）→ 无法判断" +
+                ModLog.Warn("[SuMP][voice] 没有通道控制端口（ITransportControlPort）→ 无法判断" +
                     "主机/客户端，语音不启用（不猜方向）");
                 return;
             }
@@ -270,7 +271,7 @@ namespace SuMultiplayer.Modules
             }
             else
             {
-                Log.Warning("[SuMP][voice] 没有消息注册表（IMessageRegistryPort）→ " +
+                ModLog.Warn("[SuMP][voice] 没有消息注册表（IMessageRegistryPort）→ " +
                     "收不到任何语音消息，语音不启用");
                 return;
             }
@@ -1387,7 +1388,7 @@ namespace SuMultiplayer.Modules
             {
                 StopPipeline();
                 SendVoiceState(force: true);
-                Log.Warning("[SuMP][voice] 主机禁用语音（" + m_sessionVoiceReason +
+                ModLog.Warn("[SuMP][voice] 主机禁用语音（" + m_sessionVoiceReason +
                     "）→ 本端停止采集 / 播放");
             }
         }
@@ -1800,7 +1801,7 @@ namespace SuMultiplayer.Modules
                 m_nowMs - last < VoiceFormat.ProblemLogMs)
                 return;
             m_lastProblemMs[key] = m_nowMs;
-            Log.Warning("[SuMP][voice] " + message);
+            ModLog.Warn("[SuMP][voice] " + message);
         }
     }
 }

@@ -143,7 +143,7 @@ namespace SuMultiplayer.Engine
         {
             if (m_warnedNoReplica) return;
             m_warnedNoReplica = true;
-            Log.Warning("[SuMP] 客户端开弓时没有挂上实体复制适配器（" + reason +
+            ModLog.Warn("[SuMP] 客户端开弓时没有挂上实体复制适配器（" + reason +
                 "）→ 请求不会发出，本机也不生成幽灵箭（检查实体复制模块是否 Active）");
         }
     }
@@ -209,7 +209,7 @@ namespace SuMultiplayer.Engine
         {
             if (m_warnedNoReplica) return;
             m_warnedNoReplica = true;
-            Log.Warning("[SuMP] 客户端开弩时没有挂上实体复制适配器（" + reason +
+            ModLog.Warn("[SuMP] 客户端开弩时没有挂上实体复制适配器（" + reason +
                 "）→ 请求不会发出，本机也不生成幽灵弩箭（检查实体复制模块是否 Active）");
         }
     }
@@ -278,7 +278,7 @@ namespace SuMultiplayer.Engine
         {
             if (m_warnedNoReplica) return;
             m_warnedNoReplica = true;
-            Log.Warning("[SuMP] 客户端开火枪时没有挂上实体复制适配器（" + reason +
+            ModLog.Warn("[SuMP] 客户端开火枪时没有挂上实体复制适配器（" + reason +
                 "）→ 请求不会发出，本机也不生成幽灵子弹（检查实体复制模块是否 Active）");
         }
     }

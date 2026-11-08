@@ -7,6 +7,7 @@ using Engine.Graphics;
 using Game;
 using SuAPI;
 using SuMultiplayer.Players;
+using SuMultiplayer.Engine;
 
 namespace SuMultiplayer.UI
 {
@@ -133,7 +134,7 @@ namespace SuMultiplayer.UI
                 if (!CharacterSkinCatalog.TryReadCustomAsset(m_skinName,
                         out customAsset, out string assetReason))
                 {
-                    global::Engine.Log.Warning("[SuMP][skin] custom skin unavailable: " + m_skinName + " · " + assetReason);
+                    ModLog.Warn("[SuMP][skin] custom skin unavailable: " + m_skinName + " · " + assetReason);
                     ShowError("Custom skin unavailable",
                         "Cannot use custom skin \"" + m_skinName + "\": invalid or unreadable skin file.");
                     return;

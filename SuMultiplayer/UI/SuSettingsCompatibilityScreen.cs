@@ -63,7 +63,7 @@ namespace SuMultiplayer.UI
                 }
                 else
                 {
-                    global::Engine.Log.Information("[SuMP][proxy] UI 切换代理模式 → " +
+                    ModLog.Info("[SuMP][proxy] UI 切换代理模式 → " +
                         ProxySettings.ModeName(mode) + "（" + ProxySettings.Describe + "）");
                 }
             }

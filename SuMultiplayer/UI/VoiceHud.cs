@@ -10,6 +10,7 @@ using Game;
 using GameEntitySystem;
 using SuMultiplayer.Modules;
 using SuMultiplayer.Voice;
+using SuMultiplayer.Engine;
 
 namespace SuMultiplayer.UI
 {
@@ -689,7 +690,7 @@ namespace SuMultiplayer.UI
         private void WarnRateLimited(string key, string message, int intervalMs = 5000)
         {
             if (!ShouldLog(key, intervalMs)) return;
-            global::Engine.Log.Warning(message + " · " + DescribeCounters());
+            ModLog.Warn(message + " · " + DescribeCounters());
         }
 
         private void InfoRateLimited(string key, string message, int intervalMs = 5000)
@@ -733,7 +734,7 @@ namespace SuMultiplayer.UI
             {
                 m_keyboardFailed = true;
                 m_keyboardFailures++;
-                global::Engine.Log.Warning("[SuMP][voice] 读取语音快捷键失败（U 不可用，" +
+                ModLog.Warn("[SuMP][voice] 读取语音快捷键失败（U 不可用，" +
                     "HUD 的语音图标仍可用）：" + e.GetType().Name + " " + e.Message);
                 return;
             }
@@ -767,7 +768,7 @@ namespace SuMultiplayer.UI
                 catch (Exception e)
                 {
                     m_textInputProbeFailed = true;
-                    global::Engine.Log.Warning("[SuMP][voice] 查询聊天输入状态失败（U 键的文本输入抑制" +
+                    ModLog.Warn("[SuMP][voice] 查询聊天输入状态失败（U 键的文本输入抑制" +
                         "只剩对话框 / 软键盘两项）：" + e.GetType().Name + " " + e.Message);
                 }
             }
@@ -785,7 +786,7 @@ namespace SuMultiplayer.UI
                 if (downOnce == null)
                 {
                     m_keyboardFailed = true;
-                    global::Engine.Log.Warning("[SuMP][voice] 找不到 Engine.Input.Keyboard." +
+                    ModLog.Warn("[SuMP][voice] 找不到 Engine.Input.Keyboard." +
                         "IsKeyDownOnce（语音快捷键不可用，HUD 图标仍可用）");
                     return;
                 }
@@ -800,7 +801,7 @@ namespace SuMultiplayer.UI
             catch (Exception e)
             {
                 m_keyboardFailed = true;
-                global::Engine.Log.Warning("[SuMP][voice] 初始化语音快捷键失败（HUD 图标仍可用）：" +
+                ModLog.Warn("[SuMP][voice] 初始化语音快捷键失败（HUD 图标仍可用）：" +
                     e.GetType().Name + " " + e.Message);
             }
         }

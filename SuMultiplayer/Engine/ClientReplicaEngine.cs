@@ -527,7 +527,7 @@ namespace SuMultiplayer.Engine
                 if (!m_weatherFailureLogged)
                 {
                     m_weatherFailureLogged = true;
-                    Log.Warning("[SuMP] 客户端雾/降水对账有 " + failures +
+                    ModLog.Warn("[SuMP] 客户端雾/降水对账有 " + failures +
                         " 个字段写入失败（引擎字段名变化？）→ 已计数");
                 }
             }

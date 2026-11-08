@@ -226,7 +226,7 @@ namespace SuMultiplayer.Engine
                 if (dropped > 0)
                 {
                     m_clientCaptureDroppedTotal += dropped;
-                    Log.Warning("[SuMP] clientCapture: 角色切换清掉 " + dropped +
+                    ModLog.Warn("[SuMP] clientCapture: 角色切换清掉 " + dropped +
                         " 格待捕获的本地写入（已计入 captureDropped[roleChanged]，不静默）");
                 }
             }
@@ -296,7 +296,7 @@ namespace SuMultiplayer.Engine
                     if (m_lastInboxWarnMs == 0 || nowMs - m_lastInboxWarnMs >= 10000)
                     {
                         m_lastInboxWarnMs = nowMs;
-                        global::Engine.Log.Warning("[SuMP][terrain] 网络帧积压超过上限 " +
+                        ModLog.Warn("[SuMP][terrain] 网络帧积压超过上限 " +
                             InboxCapacity + " 条 → 丢弃**无序号语义**的帧（" + frame.Type + " seq=" +
                             frame.Sequence + "）；已累计丢弃 " + m_inboxDropped +
                             " 帧、因是关键帧而保留 " + m_inboxCriticalRetained +
@@ -311,7 +311,7 @@ namespace SuMultiplayer.Engine
                 if (m_lastInboxWarnMs == 0 || retainedNow - m_lastInboxWarnMs >= 10000)
                 {
                     m_lastInboxWarnMs = retainedNow;
-                    global::Engine.Log.Warning("[SuMP][terrain] 网络帧积压超过上限 " +
+                    ModLog.Warn("[SuMP][terrain] 网络帧积压超过上限 " +
                         InboxCapacity + " 条，但到的是**关键帧**（" + frame.Type + " seq=" +
                         frame.Sequence + "）→ 保留不丢（丢它会触发全部内存块强制核对，" +
                         "反而加重同步压力）。当前队列 " + m_inbox.Count +
@@ -951,7 +951,7 @@ namespace SuMultiplayer.Engine
             long now = Environment.TickCount64;
             if (m_lastOnDemandSlotLogMs != 0 && now - m_lastOnDemandSlotLogMs < StallWarningIntervalMs) return;
             m_lastOnDemandSlotLogMs = now;
-            Log.Warning("[SuMP] onDemandLoad: " + count + " 条临时单块地形更新位置随世界一起丢失（" + reason +
+            ModLog.Warn("[SuMP] onDemandLoad: " + count + " 条临时单块地形更新位置随世界一起丢失（" + reason +
                 "）→ 账本已同步清空（不当作还挂着）；累计创建 " + OnDemandLoadLocationsCreated + " 条");
         }
 
@@ -1061,7 +1061,7 @@ namespace SuMultiplayer.Engine
                         now - m_lastClientCaptureDropLogMs >= ClientCaptureLogIntervalMs)
                     {
                         m_lastClientCaptureDropLogMs = now;
-                        Log.Warning("[SuMP] clientCaptureApplyFailed: " + cell.X + "," + cell.Y + "," +
+                        ModLog.Warn("[SuMP] clientCaptureApplyFailed: " + cell.X + "," + cell.Y + "," +
                             cell.Z + " 交付模块异常（" + e.GetType().Name + " " + e.Message +
                             "）→ 该格保留重试；累计 " + m_clientCaptureApplyFailures + " 次");
                     }
@@ -1095,7 +1095,7 @@ namespace SuMultiplayer.Engine
                 return;
             }
             m_lastClientCaptureDropLogMs = now;
-            Log.Warning("[SuMP] clientCaptureDropped: " + count + " 格本地写入没能上报（" + reason +
+            ModLog.Warn("[SuMP] clientCaptureDropped: " + count + " 格本地写入没能上报（" + reason +
                 "）→ 累计丢弃 " + m_clientCaptureDroppedTotal + " 格；" + m_clientCapture.Describe());
         }
 
@@ -1109,7 +1109,7 @@ namespace SuMultiplayer.Engine
                 return;
             }
             m_lastClientCaptureLogMs = now;
-            Log.Warning("[SuMP] clientCaptureDeferred: " + reason + "；" + m_clientCapture.Describe());
+            ModLog.Warn("[SuMP] clientCaptureDeferred: " + reason + "；" + m_clientCapture.Describe());
         }
 
         /// <summary>主机：读一格当前值（编辑校验 / already 判定）。</summary>
@@ -1281,7 +1281,7 @@ namespace SuMultiplayer.Engine
                             nowMs - m_lastDropPrepareLogMs >= DropPrepareLogIntervalMs)
                         {
                             m_lastDropPrepareLogMs = nowMs;
-                            Log.Warning("[SuMP] editDropPrepareFailed: cell=" + x + "," + y + "," + z +
+                            ModLog.Warn("[SuMP] editDropPrepareFailed: cell=" + x + "," + y + "," + z +
                                 " value=" + oldValue + " → " + (prepReason ?? "unknown") +
                                 "（编辑照常落地，但这一格没有补生成掉落；已计入 " +
                                 "dropFromEditSkipped[spawn-failed]，同原因限流 " +
@@ -1363,7 +1363,7 @@ namespace SuMultiplayer.Engine
         {
             if (m_hostDropSinkMissingLogged) return;
             m_hostDropSinkMissingLogged = true;
-            Log.Warning("[SuMP] 主机没有注入方块掉落的引擎端口（TerrainBridge.HostBlockDrops == null）→ " +
+            ModLog.Warn("[SuMP] 主机没有注入方块掉落的引擎端口（TerrainBridge.HostBlockDrops == null）→ " +
                 "客户端编辑造成的方块销毁不会补生成拾取物（已计入 dropFromEditSkipped[no-host-drops]）；" +
                 "请检查组合根装配");
         }
@@ -1589,7 +1589,7 @@ namespace SuMultiplayer.Engine
                     .Append('s');
             }
             if (count > listed) builder.Append("；还有 ").Append(count - listed).Append(" 块（同原因限流）");
-            Log.Warning(builder.ToString());
+            ModLog.Warn(builder.ToString());
         }
 
         /// <summary>
@@ -1666,7 +1666,7 @@ namespace SuMultiplayer.Engine
         {
             if (m_coverageUnavailableLogged) return false;
             m_coverageUnavailableLogged = true;
-            Log.Warning("[SuMP] 读不到 TerrainUpdater 的地形更新位置（" + reason + "）→ 未定稿块的停滞原因" +
+            ModLog.Warn("[SuMP] 读不到 TerrainUpdater 的地形更新位置（" + reason + "）→ 未定稿块的停滞原因" +
                 "只能记 locations-unknown（无法判定\"引擎还会不会推进它\"；不拿猜测当原因）");
             return false;
         }
@@ -1750,7 +1750,7 @@ namespace SuMultiplayer.Engine
             long now = Environment.TickCount64;
             if (m_lastHostMissLogMs != 0 && now - m_lastHostMissLogMs < HostMissLogIntervalMs) return;
             m_lastHostMissLogMs = now;
-            Log.Warning("[SuMP] hostCellMissed: 主机有 " + count + " 格改动没能捕获（" + reason +
+            ModLog.Warn("[SuMP] hostCellMissed: 主机有 " + count + " 格改动没能捕获（" + reason +
                 "）→ 跳过（不猜值）；累计 " + HostCellMisses + " 格（同原因限流 " +
                 (HostMissLogIntervalMs / 1000) + "s；加载后由摘要核对 / 整块回传收敛）");
         }
@@ -1761,7 +1761,7 @@ namespace SuMultiplayer.Engine
         {
             if (m_reportedWrongThread || Thread.CurrentThread.ManagedThreadId == m_mainThreadId) return;
             m_reportedWrongThread = true;
-            Log.Warning("[SuMP] TerrainBridge." + what + " 从非主线程调用（应为引擎线程）");
+            ModLog.Warn("[SuMP] TerrainBridge." + what + " 从非主线程调用（应为引擎线程）");
         }
     }
 }

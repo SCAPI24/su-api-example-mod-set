@@ -660,7 +660,7 @@ namespace SuMultiplayer.Modules
         private void Log(string message)
         {
             if (m_context != null) m_context.Diagnostics.Info(m_descriptor.Id, message);
-            else global::Engine.Log.Information("[SuMP] " + message);
+            else ModLog.Info("[SuMP] " + message);
         }
     }
 }

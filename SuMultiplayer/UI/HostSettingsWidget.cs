@@ -24,6 +24,10 @@ namespace SuMultiplayer.UI
         private readonly Action m_close;
         private readonly BevelledButtonWidget m_autoHostButton;
         private readonly BevelledButtonWidget m_autoApproveButton;
+        /// <summary>模块日志模式（上线 / Debug）。只有主机能改；客户端点了会明确提示由主机调度。</summary>
+        private readonly Func<bool> m_moduleLogPersist;
+        private readonly Action m_toggleModuleLog;
+        private readonly BevelledButtonWidget m_moduleLogButton;
         private readonly CanvasWidget m_panel;
         private readonly BevelledButtonWidget[] m_row1;
         private readonly BevelledButtonWidget[] m_row2;
@@ -32,8 +36,11 @@ namespace SuMultiplayer.UI
 
         public HostSettingsWidget(Func<bool> autoHost, Func<bool> autoApprove,
             Action setAutoHost, Action setAutoApprove, Action advanced,
-            Action banKick, Action banId, Action kick, Action removeBan, Action close)
+            Action banKick, Action banId, Action kick, Action removeBan, Action close,
+            Func<bool> moduleLogPersist = null, Action toggleModuleLog = null)
         {
+            m_moduleLogPersist = moduleLogPersist;
+            m_toggleModuleLog = toggleModuleLog;
             m_autoHost = autoHost;
             m_autoApprove = autoApprove;
             m_setAutoHost = setAutoHost;
@@ -66,6 +73,7 @@ namespace SuMultiplayer.UI
                 Children.Find<BevelledButtonWidget>("Advanced"),
                 Children.Find<BevelledButtonWidget>("Close")
             };
+            m_moduleLogButton = Children.Find<BevelledButtonWidget>("ModuleLog");
         }
 
         public override void Update()
@@ -80,8 +88,14 @@ namespace SuMultiplayer.UI
             if (Children.Find<BevelledButtonWidget>("BanId").IsClicked) m_banId?.Invoke();
             if (Children.Find<BevelledButtonWidget>("Kick").IsClicked) m_kick?.Invoke();
             if (Children.Find<BevelledButtonWidget>("RemoveBan").IsClicked) m_removeBan?.Invoke();
+            if (m_moduleLogButton != null)
+            {
+                m_moduleLogButton.Text = "MODULE LOG: " +
+                    (m_moduleLogPersist?.Invoke() == true ? "DEBUG" : "ONLINE");
+            }
             if (Children.Find<BevelledButtonWidget>("Advanced").IsClicked) m_advanced?.Invoke();
             if (Children.Find<BevelledButtonWidget>("Close").IsClicked) m_close?.Invoke();
+            if (m_moduleLogButton != null && m_moduleLogButton.IsClicked) m_toggleModuleLog?.Invoke();
         }
 
         /// <summary>
@@ -100,6 +114,8 @@ namespace SuMultiplayer.UI
             SetRowWidth(m_row1, 3, inner);
             SetRowWidth(m_row2, 3, inner);
             SetRowWidth(m_row3, 2, inner);
+            if (m_moduleLogButton != null)
+                m_moduleLogButton.Size = new Vector2(inner - 12f, m_moduleLogButton.Size.Y);
         }
 
         private static void SetRowWidth(BevelledButtonWidget[] row, int columns, float available)

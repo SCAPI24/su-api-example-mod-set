@@ -1,6 +1,7 @@
 using System;
 using System.Buffers;
 using System.Threading;
+using SuMultiplayer.Engine;
 
 namespace SuMultiplayer.Net
 {
@@ -217,14 +218,14 @@ namespace SuMultiplayer.Net
             if (Interlocked.CompareExchange(ref s_lastLogMs, now, last) != last) return;
             try
             {
-                global::Engine.Log.Information("[SuMP] " + Snapshot());
+                ModLog.Info("[SuMP] " + Snapshot());
             }
             catch (Exception e)
             {
                 // 日志失败本身不能影响传输；用最小代价留下明确原因（不静默）。
                 try
                 {
-                    global::Engine.Log.Warning("[SuMP] transport 统计日志写入失败：" +
+                    ModLog.Warn("[SuMP] transport 统计日志写入失败：" +
                         e.GetType().Name + " " + e.Message);
                 }
                 catch (Exception)

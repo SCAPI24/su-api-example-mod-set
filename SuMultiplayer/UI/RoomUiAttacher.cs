@@ -49,6 +49,10 @@ namespace SuMultiplayer.UI
         private readonly Func<bool> m_allowFurnitureExportEnabled;
         private readonly Func<bool, string> m_setAutoHost;
         private readonly Func<bool, string> m_setAutoApprove;
+        /// <summary>主机：模块日志是否落盘（Debug）。null = 本端没有该能力（客户端）。</summary>
+        private readonly Func<bool> m_moduleLogPersist;
+        /// <summary>主机：切换模块日志模式（true=Debug / false=上线），返回给 UI 的提示文本。</summary>
+        private readonly Func<bool, string> m_setModuleLog;
         private readonly Func<bool, string> m_setAllowFurnitureDelete;
         private readonly Func<bool, string> m_setAllowFurnitureImport;
         private readonly Func<bool, string> m_setAllowFurnitureExport;
@@ -115,7 +119,9 @@ namespace SuMultiplayer.UI
             Func<bool> allowFurnitureExportEnabled = null,
             Func<bool, string> setAllowFurnitureExport = null,
             Func<string> saveWorldSettings = null,
-            IDownloadedWorldPort downloads = null)
+            IDownloadedWorldPort downloads = null,
+            Func<bool> moduleLogPersist = null,
+            Func<bool, string> setModuleLog = null)
         {
             m_rooms = rooms;
             m_ready = ready;
@@ -134,6 +140,8 @@ namespace SuMultiplayer.UI
             m_autoApproveEnabled = autoApproveEnabled;
             m_setAutoHost = setAutoHost;
             m_setAutoApprove = setAutoApprove;
+            m_moduleLogPersist = moduleLogPersist;
+            m_setModuleLog = setModuleLog;
             m_allowFurnitureDeleteEnabled = allowFurnitureDeleteEnabled;
             m_setAllowFurnitureDelete = setAllowFurnitureDelete;
             m_allowFurnitureImportEnabled = allowFurnitureImportEnabled;
@@ -572,7 +580,13 @@ namespace SuMultiplayer.UI
                 BanUserId,
                 delegate { SelectPeer(false); },
                 SelectBan,
-                CloseHostSettings);
+                CloseHostSettings,
+                m_moduleLogPersist,
+                delegate
+                {
+                    bool next = m_moduleLogPersist?.Invoke() != true;
+                    ShowResult("Module log", m_setModuleLog?.Invoke(next));
+                });
             m_settingsOwner = localPlayer;
             m_settingsWidget = settings;
             localPlayer.ComponentGui.ModalPanelWidget = settings;
@@ -743,7 +757,7 @@ namespace SuMultiplayer.UI
         private void WarnRateLimited(string key, string message, int intervalMs = 10000)
         {
             if (!ShouldLog(key, intervalMs)) return;
-            global::Engine.Log.Warning(message + " · " + DescribeCounters());
+            ModLog.Warn(message + " · " + DescribeCounters());
         }
 
         private void InfoRateLimited(string key, string message, int intervalMs = 5000)

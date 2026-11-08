@@ -12,7 +12,7 @@ namespace SuMultiplayer.Net
     public static class MultiplayerModCompatibility
     {
         // Source: SuMultiplayer/ModInfo.xml:ModInfo.Version
-        public const string ModVersion = "0.1.0";
+        public const string ModVersion = "2.3.0";
         public const uint ProtocolVersion = 1;
 
         private static readonly FileDescriptor[] s_descriptors =

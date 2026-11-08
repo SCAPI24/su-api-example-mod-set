@@ -6,6 +6,7 @@ using Game;
 using GameEntitySystem;
 using SuMultiplayer.Modules;
 using SuMultiplayer.Voice;
+using SuMultiplayer.Engine;
 
 namespace SuMultiplayer.UI
 {
@@ -249,7 +250,7 @@ namespace SuMultiplayer.UI
         private void WarnRateLimited(string key, string message, int intervalMs = 10000)
         {
             if (!ShouldLog(key, intervalMs)) return;
-            global::Engine.Log.Warning(message + " · " + DescribeCounters());
+            ModLog.Warn(message + " · " + DescribeCounters());
         }
 
         private void InfoRateLimited(string key, string message, int intervalMs = 10000)
@@ -557,7 +558,7 @@ namespace SuMultiplayer.UI
             long nowMs = (long)(Time.RealTime * 1000.0);
             if (m_lastLogMs.TryGetValue(key, out long last) && nowMs - last < intervalMs) return;
             m_lastLogMs[key] = nowMs;
-            global::Engine.Log.Warning(message + " · " + m_counters.Describe());
+            ModLog.Warn(message + " · " + m_counters.Describe());
         }
 
         private void InfoRateLimited(string key, string message, int intervalMs = 10000)

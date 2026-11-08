@@ -94,7 +94,7 @@ namespace SuMultiplayer.Protocol {
             "AQoQUGxheWVyU3Bhd25TdGF0ZRIMCgRmdWxsGAEgASgIEhAKCHJldmlzaW9u",
             "GAIgASgNEjAKB2VudHJpZXMYAyADKAsyHy5zdW1wLnByb3RvY29sLlBsYXll",
             "clNwYXduRW50cnkSCwoDZXh0GGQgASgMEiQKBmN1c3RvbRhlIAEoCzIULmdv",
-            "b2dsZS5wcm90b2J1Zi5BbnkqgBsKC01lc3NhZ2VUeXBlEhwKGE1FU1NBR0Vf",
+            "b2dsZS5wcm90b2J1Zi5BbnkqmRsKC01lc3NhZ2VUeXBlEhwKGE1FU1NBR0Vf",
             "VFlQRV9VTlNQRUNJRklFRBAAEgkKBUhFTExPEAESDQoJSEVMTE9fQUNLEAIS",
             "EwoPSU5URVJFU1RfVVBEQVRFEAMSFwoTQ0hVTktfRElHRVNUX1JFUE9SVBAE",
             "EhEKDUNIVU5LX1ZFUkRJQ1QQBRIQCgxDSFVOS19SRVNZTkMQBhIPCgtDRUxM",
@@ -166,13 +166,13 @@ namespace SuMultiplayer.Protocol {
             "VF9SRVFVRVNUEHISDwoLTU9VTlRfU1RBVEUQcxIQCgxQTEFZRVJfU1BBV04Q",
             "dBIICgRQSU5HEHUSCAoEUE9ORxB2EhgKFEJMT0NLX0RFU1RST1lfRUZGRUNU",
             "EHcSHAoXVE9QX0xBWUVSX0RJR0VTVF9SRVBPUlQQsgESHQoYVE9QX0xBWUVS",
-            "X0RJR0VTVF9WRVJESUNUELMBEh8KGlRFUlJBSU5fRElBR05PU1RJQ19DT05U",
-            "Uk9MEJcBEh4KGVRFUlJBSU5fRElBR05PU1RJQ19SRVBPUlQQmAESHgoZVE9Q",
-            "X0xBWUVSX01JU01BVENIX1JFUE9SVBCZARISCg1UT1BfTEFZRVJfRklYEJoB",
-            "Eh0KGENMSUVOVF9SVU5USU1FX1RFTEVNRVRSWRCRARIXChJMSVZFX01BUF9U",
-            "RUxFTUVUUlkQkgESCwoGS0lDS0VEEJUBEhIKDUhPU1RfU0hVVERPV04QmwEi",
-            "BAhkEGQiBAhuEG5CG0gBqgIWU3VNdWx0aXBsYXllci5Qcm90b2NvbGIGcHJv",
-            "dG8z"));
+            "X0RJR0VTVF9WRVJESUNUELMBEhcKEk1PRFVMRV9MT0dfQ09OVFJPTBC0ARIf",
+            "ChpURVJSQUlOX0RJQUdOT1NUSUNfQ09OVFJPTBCXARIeChlURVJSQUlOX0RJ",
+            "QUdOT1NUSUNfUkVQT1JUEJgBEh4KGVRPUF9MQVlFUl9NSVNNQVRDSF9SRVBP",
+            "UlQQmQESEgoNVE9QX0xBWUVSX0ZJWBCaARIdChhDTElFTlRfUlVOVElNRV9U",
+            "RUxFTUVUUlkQkQESFwoSTElWRV9NQVBfVEVMRU1FVFJZEJIBEgsKBktJQ0tF",
+            "RBCVARISCg1IT1NUX1NIVVRET1dOEJsBIgQIZBBkIgQIbhBuQhtIAaoCFlN1",
+            "TXVsdGlwbGF5ZXIuUHJvdG9jb2xiBnByb3RvMw=="));
       descriptor = pbr::FileDescriptor.FromGeneratedCode(descriptorData,
           new pbr::FileDescriptor[] { global::Google.Protobuf.WellKnownTypes.AnyReflection.Descriptor, },
           new pbr::GeneratedClrTypeInfo(new[] {typeof(global::SuMultiplayer.Protocol.MessageType), }, null, new pbr::GeneratedClrTypeInfo[] {
@@ -751,6 +751,12 @@ namespace SuMultiplayer.Protocol {
     /// </summary>
     [pbr::OriginalName("TOP_LAYER_DIGEST_REPORT")] TopLayerDigestReport = 178,
     [pbr::OriginalName("TOP_LAYER_DIGEST_VERDICT")] TopLayerDigestVerdict = 179,
+    /// <summary>
+    /// 主机 -> 客户端：运行时切换**模块日志模式**（用户 2026-11-08 定）。
+    /// 主机在联机设置里改 verbose 时立刻广播；客户端收到就切（不改本地配置）。
+    /// 与 HelloAck.flags bit0 同义：那个管握手后的初始值，这条管运行中动态改。
+    /// </summary>
+    [pbr::OriginalName("MODULE_LOG_CONTROL")] ModuleLogControl = 180,
     /// <summary>
     /// On-demand terrain resync diagnostic control/sample.
     /// </summary>

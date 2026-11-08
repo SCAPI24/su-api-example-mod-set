@@ -184,7 +184,7 @@ namespace SuMultiplayer.Engine
             if (m_lastProblemMs.TryGetValue(key, out long last) && nowMs - last < ProblemLogMs)
                 return;
             m_lastProblemMs[key] = nowMs;
-            Log.Warning("[SuMP] 真值表：" + message);
+            ModLog.Warn("[SuMP] 真值表：" + message);
         }
 
         public override bool OnEditInventoryItem(IInventory inventory, int slotIndex,
@@ -192,7 +192,7 @@ namespace SuMultiplayer.Engine
         {
             EditableItemBridge bridge =
                 (SubsystemTerrain as SuSubsystemTerrain)?.Bridge?.EditableItems;
-            Log.Information("[SuMP][editable-item] inventory edit entry kind=" +
+            ModLog.Info("[SuMP][editable-item] inventory edit entry kind=" +
                 EditableKinds.Name(EditableKinds.TruthTable) + " bridge=" +
                 (bridge != null) + " client=" + ReplicaGates.IsClient(SubsystemTerrain) +
                 " slot=" + slotIndex);
@@ -460,7 +460,7 @@ namespace SuMultiplayer.Engine
             if (m_lastProblemMs.TryGetValue(key, out long last) && nowMs - last < ProblemLogMs)
                 return;
             m_lastProblemMs[key] = nowMs;
-            Log.Warning("[SuMP] 内存条：" + message);
+            ModLog.Warn("[SuMP] 内存条：" + message);
 
         }
 
@@ -469,7 +469,7 @@ namespace SuMultiplayer.Engine
         {
             EditableItemBridge bridge =
                 (SubsystemTerrain as SuSubsystemTerrain)?.Bridge?.EditableItems;
-            Log.Information("[SuMP][editable-item] inventory edit entry kind=" +
+            ModLog.Info("[SuMP][editable-item] inventory edit entry kind=" +
                 EditableKinds.Name(EditableKinds.MemoryBank) + " bridge=" +
                 (bridge != null) + " client=" + ReplicaGates.IsClient(SubsystemTerrain) +
                 " slot=" + slotIndex);

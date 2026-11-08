@@ -11,8 +11,8 @@
       <Text lang="en_US">SuMultiplayer</Text>
       <Text lang="zh_CN">联机模组（重写版）</Text>
     </LocalizedName>
-    <Version>0.1.0</Version>
-    <APIVersion>0.1.6.0</APIVersion>
+    <Version>2.3.0</Version>
+    <APIVersion>0.1.7.0</APIVersion>
     <IsMergeLib>true</IsMergeLib>
     <Asset>
       <ContentRoot>Content/</ContentRoot>

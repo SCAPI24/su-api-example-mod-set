@@ -97,7 +97,9 @@ WatchMod | su-watch | ["0.1.6.0"] | 1.0.1 | gitee:"https://gitee.com/SC-SPM/su-a
 #   `ObserveClientJoinBarrier` / `BuildJoinBarrierDiagnostics` 调用点与字段。功能与 2.2.6 相同，
 #   仅去掉诊断输出（2.2.6 的那几项修复全部保留）。
 # ⚠️ buildFingerprint 再次变化：2.2.7 与 2.2.6 及更早构建**互不互通**，三端必须同时换。
-ScMultiplayer | Su-ScMP | ["0.1.6.0"] | 2.2.9 | gitee:"https://gitee.com/SC-SPM/su-api-example-mod-set/releases/download/0.1.6.0/%5BSuAPI%5DScMultiplayer-2.2.9.scmod";github:"https://github.com/SCAPI24/su-api-example-mod-set/releases/download/0.1.6.0/SuAPI.ScMultiplayer-2.2.9.scmod";cnb:"https://cnb.cool/suceru.cb/SC-SPM/SuAPIMod/-/releases/download/0.1.6.0/[SuAPI]ScMultiplayer-2.2.9.scmod" | zh_CN=联机模组;en_US=ScMultiplayer
+# ── 联机模组：ScMultiplayer（旧版，已被下方的 SuMultiplayer 重写版取代）─────────────────
+# 旧的 ScMultiplayer 条目保留在此，需要回退时把行首 # 去掉即可（短码 Su-ScMP 只认最新版）。
+# ScMultiplayer | Su-ScMP | ["0.1.6.0"] | 2.2.9 | gitee:"https://gitee.com/SC-SPM/su-api-example-mod-set/releases/download/0.1.6.0/%5BSuAPI%5DScMultiplayer-2.2.9.scmod";github:"https://github.com/SCAPI24/su-api-example-mod-set/releases/download/0.1.6.0/SuAPI.ScMultiplayer-2.2.9.scmod";cnb:"https://cnb.cool/suceru.cb/SC-SPM/SuAPIMod/-/releases/download/0.1.6.0/[SuAPI]ScMultiplayer-2.2.9.scmod" | zh_CN=联机模组;en_US=ScMultiplayer
 # ScMultiplayer | Su-ScMP | ["0.1.6.0"] | 2.2.8 | gitee:"https://gitee.com/SC-SPM/su-api-example-mod-set/releases/download/0.1.6.0/%5BSuAPI%5DScMultiplayer-2.2.8.scmod";github:"https://github.com/SCAPI24/su-api-example-mod-set/releases/download/0.1.6.0/SuAPI.ScMultiplayer-2.2.8.scmod";cnb:"https://cnb.cool/suceru.cb/SC-SPM/SuAPIMod/-/releases/download/0.1.6.0/[SuAPI]ScMultiplayer-2.2.8.scmod" | zh_CN=联机模组;en_US=ScMultiplayer
 # ScMultiplayer | Su-ScMP | ["0.1.6.0"] | 2.2.7 | gitee:"https://gitee.com/SC-SPM/su-api-example-mod-set/releases/download/0.1.6.0/%5BSuAPI%5DScMultiplayer-2.2.7.scmod";github:"https://github.com/SCAPI24/su-api-example-mod-set/releases/download/0.1.6.0/SuAPI.ScMultiplayer-2.2.7.scmod";cnb:"https://cnb.cool/suceru.cb/SC-SPM/SuAPIMod/-/releases/download/0.1.6.0/[SuAPI]ScMultiplayer-2.2.7.scmod" | zh_CN=联机模组;en_US=ScMultiplayer
 # 上一版（`Su-ScMP@2.2.6`）
@@ -135,3 +137,20 @@ HeadlessRenderingMod | Su-HRM | ["0.1.6.0"] | 1.3.6 | gitee:"https://gitee.com/S
 # 挖掘掉本体且通道号归零（可堆叠）；自带中英词条（中文经翻译 Mod 的 AddTranslations 应用）。
 # 依赖 SuEventBus 已并入 Lib/，无需单独条目；不装本 Mod 时 index 142 仍是原版按钮（满电压），存档可双向切换。
 Channel | Su-chanl | ["0.1.6.0"] | 1.0.0 | gitee:"https://gitee.com/SC-SPM/su-api-example-mod-set/releases/download/0.1.6.0/%5BSuAPI%5DChannel-1.0.0.scmod";github:"https://github.com/SCAPI24/su-api-example-mod-set/releases/download/0.1.6.0/SuAPI.Channel-1.0.0.scmod";cnb:"https://cnb.cool/suceru.cb/SC-SPM/SuAPIMod/-/releases/download/0.1.6.0/[SuAPI]Channel-1.0.0.scmod" | zh_CN=信道;en_US=Channel
+# ── 联机模组：SuMultiplayer 2.3.0（重写版，取代旧 ScMultiplayer）──────────────────────
+# 这是联机模块的**重写版**：模块化架构（Session/Terrain/Circuit/Player/... 各自独立），
+# 与旧 ScMultiplayer 的协议、存档格式、服务发现都不同，两者**不能混用**。
+#
+# 2.3.0（2026-11-08）：本版是重写版第一次对外发布，包含自 0.1.0 起的全部功能与修复：
+#   · 端口模型：10 个房间槽位，每槽 TCP+UDP 同端口；发现走 UDP；`suceru.site:3103` 单端口、
+#     `suceru.site:3103-10` 表示 3103 起的 10 个端口范围。
+#   · 日志分层：上线模式默认**只进内存不写盘**（缓冲满即丢弃），主机可在联机设置界面
+#     或 `verbose true/false` 运行时切成 Debug 落盘并下发所有客户端（不关房、不改配置）。
+#   · 电路同步：主机权威；客户端每帧按地形同样的就绪判据；地刺板/灯/圣诞树灯的输出状态
+#     改由主机地形同步下发（客户端不再自己求解这些一次性信号）。
+#   · 重连：主机正常退出会主动通知客户端立即退出；主机强杀时客户端保持世界 30 秒重连窗口，
+#     窗口内仍按副本模式（世界模拟保持停止，避免离线改乱世界）。
+#   · 可编辑方块（内存条/真值表）：乐观锁 + 主机权威，被拒会明确回滚。
+#   · 角色记录 SuMultiplayerPlayers.xml：世界导出前保存，落盘失败只在**真失败**时告警。
+# ⚠️ 与旧 ScMultiplayer 的存档、协议、服务目录格式均**不兼容**，三端必须同时换到本版。
+SuMultiplayer | Su-MP | ["0.1.7.0"] | 2.3.0 | gitee:"https://gitee.com/SC-SPM/su-api-example-mod-set/releases/download/0.1.7.0/%5BSuAPI%5DSuMultiplayer-2.3.0.scmod";github:"https://github.com/SCAPI24/su-api-example-mod-set/releases/download/0.1.7.0/SuAPI.SuMultiplayer-2.3.0.scmod";cnb:"https://cnb.cool/suceru.cb/SC-SPM/SuAPIMod/-/releases/download/0.1.7.0/[SuAPI]SuMultiplayer-2.3.0.scmod" | zh_CN=联机模组;en_US=SuMultiplayer

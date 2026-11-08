@@ -240,6 +240,12 @@ namespace CmdBridgeClient
                         return BoxCommand(client, args);
 
                     // 进世界：循环驱动服务端 `act.enter`（主菜单 → 世界列表 → 创建/加载 → 角色界面 → 游戏）
+
+                    // SuMultiplayer 模块日志模式：`verbose true`（Debug，落盘）/ `verbose false`（上线，不落盘）。
+                    // 只有主机能切；主机改完会广播给所有玩家端（客户端不读本地配置）。
+                    case "verbose":
+                        Require(args.Count >= 2, "verbose <true|false>");
+                        return Print(client, "verbose", Args(("mode", args[1])));
                     case "enter":
                     case "enterworld":
                         return EnterWorld(client, args);

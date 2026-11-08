@@ -296,6 +296,14 @@ message TerrainDiagnosticControl {
   uint32 window_ms = 2;
 }
 
+// 主机 -> 客户端：模块日志是否落盘（Debug 模式）。
+// 主机在运行时改 verbose 时广播；客户端不读本地配置，完全听这条。
+// 与 HelloAck.flags bit0 同义：那个是握手初始值，这条是运行中动态改。
+message ModuleLogControl {
+  // true = Debug（缓冲满写角色日志）；false = 上线（只进内存，缓冲满丢弃，不写盘）。
+  bool persist_to_file = 1;
+}
+
 // Client -> host: one sample requested by TerrainDiagnosticControl.
 message TerrainDiagnosticReport {
   TerrainResyncSample sample = 1;

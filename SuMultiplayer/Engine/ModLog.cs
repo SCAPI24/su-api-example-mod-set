@@ -7,15 +7,21 @@ using Engine;
 namespace SuMultiplayer.Engine
 {
     /// <summary>
-    /// SuMultiplayer 的分层日志出口。
+    /// SuMultiplayer 的分层日志出口。**两种模式**（用户 2026-11-08 定）：
     ///
-    /// Game.log 只留给游戏核心 / 真正异常；本 Mod 的常规高频日志（模块状态、网络统计、
-    /// 房间发现、区块生命周期……）先进入内存缓冲，按角色写入：
-    ///   data:/Logs/Server/SuMultiplayer-*.log
-    ///   data:/Logs/Client/SuMultiplayer-*.log
+    ///   · <b>上线模式（默认，verbose=false）</b>：所有模块日志只进内存缓冲，
+    ///     缓冲满（256 KB / 4096 行）就**直接丢弃**，**永不写盘**。
+    ///     上线跑图不产生任何 SuMultiplayer-*.log 文件，也不占用存储。
+    ///   · <b>Debug 模式（verbose=true）</b>：缓冲满时把这一轮内容写进角色日志
+    ///     （`data:/Logs/{Server,Client}/SuMultiplayer-YYYYMMDD-*.log`，2 MiB 分卷），
+    ///     供完整复盘。
     ///
-    /// 默认不逐行落盘：缓冲区达到阈值（约 256KB）或角色切换 / 卸载时才写盘并轮转文件。
-    /// verbose 只是“把额外诊断细节也收进角色日志”，普通 Info 始终不会写 Game.log。
+    /// 模式**由主机调度**：主机按自己的 `SuMultiplayer.json` 的 `verbose` 决定自身模式，
+    /// 并在握手（HelloAck.flags bit0）把同一个意图下发给客户端；客户端**不读本地 verbose**，
+    /// 完全听主机的。客户端在收到 HelloAck 之前一律是上线模式（不落盘）。
+    ///
+    /// `Warn` / `Error` 始终同时写 Game.log（真异常必须留在核心日志），
+    /// 是否再进角色日志由模式决定（同 Info）。
     /// </summary>
     public static class ModLog
     {
@@ -31,6 +37,11 @@ namespace SuMultiplayer.Engine
         private static readonly List<string> Buffer = new List<string>(512);
         private static int s_bufferedBytes;
         private static bool s_verbose;
+        /// <summary>
+        /// 是否把内存缓冲写入磁盘。false = 上线模式（缓冲满直接丢弃，永不写盘）。
+        /// 与 <see cref="s_verbose"/> 同步：只有 Debug 模式才落盘。
+        /// </summary>
+        private static bool s_persistToFile;
         private static string s_role = "Client";
         private static string s_lastCleanupDay;
 
@@ -41,6 +52,7 @@ namespace SuMultiplayer.Engine
             lock (Gate)
             {
                 s_verbose = verbose;
+                s_persistToFile = verbose;
                 Buffer.Clear();
                 s_bufferedBytes = 0;
             }
@@ -214,6 +226,13 @@ namespace SuMultiplayer.Engine
         private static void WriteBufferLocked()
         {
             if (Buffer.Count == 0) return;
+            if (!s_persistToFile)
+            {
+                // 上线模式：缓冲满即丢弃，绝不写盘（不累积、不轮转、不占存储）。
+                Buffer.Clear();
+                s_bufferedBytes = 0;
+                return;
+            }
             try
             {
                 string directory = Storage.CombinePaths("data:/Logs", s_role);

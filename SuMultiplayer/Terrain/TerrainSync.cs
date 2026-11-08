@@ -9,6 +9,7 @@ using SuMultiplayer.Protocol;
 using Google.Protobuf;
 using SuMultiplayer.Protocol.Telemetry;
 using PT = SuMultiplayer.Protocol.Terrain;
+using SuMultiplayer.Engine;
 namespace SuMultiplayer.Terrain
 {
     /// <summary>
@@ -2089,6 +2090,15 @@ namespace SuMultiplayer.Terrain
         private bool m_identityNoStalePeerProbe;
         private long m_identityNoStaleProbeCount;
         private long m_rejoinAccepted;
+
+        /// <summary>HelloAck.flags bit0：主机要求客户端把模块日志落盘（Debug 模式）。</summary>
+        public const uint HelloAckFlagsPersistModuleLog = 1u;
+
+        /// <summary>
+        /// 主机：是否要求客户端把模块日志落盘。由组合根在主机启动时按
+        /// `SuMultiplayer.json` 的 verbose 设置一次；客户端不参与决定。
+        /// </summary>
+        public bool HostWantsClientLogPersistence { get; set; }
         private long m_rejoinRejected;
         private long m_catchUpRejected;
         private long m_catchUpRounds;
@@ -3639,7 +3649,7 @@ namespace SuMultiplayer.Terrain
             }
             catch (Exception e)
             {
-                global::Engine.Log.Warning("[SuMP][terrain] 构造 HostShutdown 消息失败：" +
+                ModLog.Warn("[SuMP][terrain] 构造 HostShutdown 消息失败：" +
                     e.GetType().Name + " " + e.Message + " → 客户端只能等重连窗口耗尽（仍会退出）");
                 return;
             }
@@ -3660,11 +3670,11 @@ namespace SuMultiplayer.Terrain
                 }
                 catch (Exception e)
                 {
-                    global::Engine.Log.Warning("[SuMP][terrain] HostShutdown 发送失败（clientId=" +
+                    ModLog.Warn("[SuMP][terrain] HostShutdown 发送失败（clientId=" +
                         targets[i] + "）：" + e.GetType().Name + " " + e.Message);
                 }
             }
-            global::Engine.Log.Information("[SuMP][terrain] 主机正常退出 → 已向 " + sent + "/" +
+            ModLog.Info("[SuMP][terrain] 主机正常退出 → 已向 " + sent + "/" +
                 targets.Count + " 条连接广播 HostShutdown（" + text + "）；客户端会立即退出世界");
             SessionTrace?.Invoke("主机正常退出：广播 HostShutdown 给 " + sent + "/" + targets.Count +
                 " 条连接（客户端不做重连）");
@@ -3708,7 +3718,7 @@ namespace SuMultiplayer.Terrain
             catch (Exception e)
             {
                 // 交接失败不阻断踢出：踢掉死连接本身更重要，日志里如实记原因。
-                global::Engine.Log.Warning("[SuMP][terrain] 同身份接管交接会话记录失败（旧 clientId=" +
+                ModLog.Warn("[SuMP][terrain] 同身份接管交接会话记录失败（旧 clientId=" +
                     supersededClientId + " → 新 clientId=" + newClientId + "）：" +
                     e.GetType().Name + " " + e.Message + " → 仍继续踢掉旧连接");
             }
@@ -3737,7 +3747,7 @@ namespace SuMultiplayer.Terrain
                 }
                 catch (Exception e)
                 {
-                    global::Engine.Log.Warning("[SuMP][terrain] 握手期踢出通知发送失败（clientId=" +
+                    ModLog.Warn("[SuMP][terrain] 握手期踢出通知发送失败（clientId=" +
                         supersededClientId + "）：" + e.GetType().Name + " " + e.Message +
                         " → 仍继续踢出");
                 }
@@ -3962,7 +3972,10 @@ namespace SuMultiplayer.Terrain
                 Version = 1,
                 ClientId = state.Id,
                 Room = "SuMP-World",
-                Flags = 0,
+                // bit0 = 主机要求本客户端把模块日志落盘（Debug 模式）。
+                // 日志模式**由主机调度**：客户端不读本地 verbose，只认这一位；
+                // 收到 HelloAck 之前客户端一律是上线模式（不落盘）。
+                Flags = HostWantsClientLogPersistence ? HelloAckFlagsPersistModuleLog : 0u,
                 MaxRadius = 20,
                 // 主机身份 + 主机名字（客户端建"主机角色"必须按身份绑定，不能用 index 兜底）。
                 HostIdentity = Identity ?? string.Empty,
@@ -7781,7 +7794,26 @@ namespace SuMultiplayer.Terrain
                 TerrainDiagnosticControl.Parser,
                 new DelegateMessageHandler<TerrainDiagnosticControl>(OnTerrainDiagnosticControl),
                 MessageOwner);
+            // 主机运行时切换模块日志模式（用户 2026-11-08 定）：客户端完全听主机的。
+            registry.Register((int)MessageType.ModuleLogControl,
+                ModuleLogControl.Parser,
+                new DelegateMessageHandler<ModuleLogControl>(OnModuleLogControl),
+                MessageOwner);
         }
+
+        /// <summary>
+        /// 主机运行时下发模块日志模式。**客户端不读本地配置**，只认这条 + HelloAck.flags bit0。
+        /// Terrain 层不直接碰 ModLog（那是组合根的日志出口），只把意图抛给上层。
+        /// </summary>
+        private void OnModuleLogControl(MessageContext context, ModuleLogControl message)
+        {
+            if (message == null) return;
+            ModuleLogPersistRequested = message.PersistToFile;
+            ModuleLogModeChanged?.Invoke(message.PersistToFile);
+        }
+
+        /// <summary>主机下发了新的模块日志模式（参数 = 是否落盘）。组合根据此调 ModLog.Configure。</summary>
+        public event Action<bool> ModuleLogModeChanged;
 
         private void OnTerrainDiagnosticControl(MessageContext context,
             TerrainDiagnosticControl message)
@@ -8052,6 +8084,13 @@ namespace SuMultiplayer.Terrain
 
         /// <summary>最近一次 HelloAck 收到的**主机会话标识**（旧主机 = 空串）。</summary>
         public string HostSessionId { get; private set; } = string.Empty;
+
+        /// <summary>
+        /// 客户端：主机在 HelloAck 里要求的"模块日志是否落盘"。
+        /// 客户端**不读本地 config.verbose**，完全听主机；收到 HelloAck 之前为 false（上线模式）。
+        /// 由组合根在握手完成后调用 ModLog.Configure 应用。
+        /// </summary>
+        public bool ModuleLogPersistRequested { get; private set; }
 
         /// <summary>收到的 HelloAck 次数（同一连接上重发 Hello 时，测试/上层用它等到**新**确认）。</summary>
         public int Handshakes { get; private set; }
@@ -9531,7 +9570,13 @@ namespace SuMultiplayer.Terrain
                         // 主机判定"差异是否只在顶层"必须靠这两个值（见 TrySendTopLayerFix）。
                         // 没算过顶层时填 0 = 未提供 → 主机会保守地走整块回传。
                         ClientTopHeightHash = topH,
-                        ClientTopBlockHash = topB
+                        ClientTopBlockHash = topB,
+                        // 主机对**完整摘要**只接受 purpose=1（脚下最终核验）：见
+                        // TerrainSync.cs 里 `if (entry.Purpose != 1u) → 整帧拒绝`。
+                        // 这里两个分支（新算 / 队列里的完整摘要）都属于"脚下最终核验"，
+                        // 必须显式写 1；漏填会变成 0 → 主机整帧拒绝（实测 Game.log 里的
+                        // "完整摘要用途非法（0）→ 整帧拒绝"）。
+                        Purpose = entry.Purpose == 0u ? 1u : entry.Purpose
                     });
                 }
                 if (!m_messages.TrySend(0, MessageType.ChunkDigestReport, report.ToByteArray()))
@@ -9705,7 +9750,7 @@ namespace SuMultiplayer.Terrain
                 string kickReason = string.IsNullOrEmpty(ack.KickReason)
                     ? "host-kicked"
                     : ack.KickReason;
-                global::Engine.Log.Warning("[SuMP][terrain] 主机在握手期踢出本连接：" +
+                ModLog.Warn("[SuMP][terrain] 主机在握手期踢出本连接：" +
                     kickReason + " → 直接退出世界，不重连");
                 KickedByHost?.Invoke(kickReason, false);
                 return;
@@ -9777,6 +9822,10 @@ namespace SuMultiplayer.Terrain
             ProfileRequired = ack.ProfileRequired;
             ProfileRequiredReason = ack.ProfileRequiredReason ?? string.Empty;
             HostSessionId = ack.SessionId ?? string.Empty;
+            // 日志模式由主机调度：bit0 = 主机要求本端把模块日志落盘。
+            // 收到这条之前本端一直是上线模式（不落盘），见 Engine/ModLog.cs 类头。
+            ModuleLogPersistRequested =
+                (ack.Flags & TerrainSyncHost.HelloAckFlagsPersistModuleLog) != 0;
             RejoinAccepted = ack.RejoinAccepted;
             RejoinHeadSequence = ack.HeadSequence;
             RejoinReason = ack.RejoinReason ?? string.Empty;

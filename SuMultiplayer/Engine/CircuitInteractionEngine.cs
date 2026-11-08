@@ -545,7 +545,7 @@ namespace SuMultiplayer.Engine
 
         private static void LogProblem(string code, string detail)
         {
-            Log.Warning("[SuMP] circuit interaction " + code + ": " + detail);
+            ModLog.Warn("[SuMP] circuit interaction " + code + ": " + detail);
         }
     }
 }

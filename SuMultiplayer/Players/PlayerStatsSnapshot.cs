@@ -5,6 +5,7 @@ using System.Reflection;
 using System.Xml.Linq;
 using Engine;
 using Game;
+using SuMultiplayer.Engine;
 
 namespace SuMultiplayer.Players
 {
@@ -69,14 +70,14 @@ namespace SuMultiplayer.Players
                 }
                 catch (Exception ex)
                 {
-                    Log.Warning("[SuMP] Failed to apply player stat '" + field.Name + "': " + ex.Message);
+                    ModLog.Warn("[SuMP] Failed to apply player stat '" + field.Name + "': " + ex.Message);
                 }
             }
             // 快照里有、当前引擎没有的字段：忽略（跨版本兼容，不让它把整个回填搞失败）。
             foreach (string name in Values.Keys)
             {
                 if (!known.Contains(name))
-                    Log.Warning("[SuMP] Player stat '" + name + "' is not present in this build; skipped.");
+                    ModLog.Warn("[SuMP] Player stat '" + name + "' is not present in this build; skipped.");
             }
             foreach (string text in DeathRecords)
             {
@@ -89,7 +90,7 @@ namespace SuMultiplayer.Players
                 }
                 catch (Exception ex)
                 {
-                    Log.Warning("[SuMP] Failed to apply player death record: " + ex.Message);
+                    ModLog.Warn("[SuMP] Failed to apply player death record: " + ex.Message);
                 }
             }
         }

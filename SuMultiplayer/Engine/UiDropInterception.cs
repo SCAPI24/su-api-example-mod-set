@@ -173,7 +173,7 @@ namespace SuMultiplayer.Engine
             if (m_lastFaultMs.TryGetValue(key, out long last) && nowMs - last < 5000) return;
             if (m_lastFaultMs.Count > 32) m_lastFaultMs.Clear();
             m_lastFaultMs[key] = nowMs;
-            Log.Warning("[SuMP][ui-drop] 从非玩家背包拖到世界（源: " +
+            ModLog.Warn("[SuMP][ui-drop] 从非玩家背包拖到世界（源: " +
                 (source == null ? "null" : source.GetType().Name) +
                 "）→ 不由 UI 丢弃请求链接管（容器槽位改动走容器同步链；" +
                 "累计 " + ForeignInventoryDrops + " 次）");

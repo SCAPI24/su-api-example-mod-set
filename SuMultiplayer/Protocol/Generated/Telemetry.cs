@@ -164,7 +164,8 @@ namespace SuMultiplayer.Protocol.Telemetry {
             "dBgCIAEoCzIjLnN1bXAudGVsZW1ldHJ5LkNsaWVudENpcmN1aXRTYW1wbGUS",
             "MgoHdGVycmFpbhgDIAEoCzIhLnN1bXAudGVsZW1ldHJ5LlRlcnJhaW5TeW5j",
             "U2FtcGxlIkEKGFRlcnJhaW5EaWFnbm9zdGljQ29udHJvbBISCgpyZXF1ZXN0",
-            "X2lkGAEgASgEEhEKCXdpbmRvd19tcxgCIAEoDSJOChdUZXJyYWluRGlhZ25v",
+            "X2lkGAEgASgEEhEKCXdpbmRvd19tcxgCIAEoDSIrChBNb2R1bGVMb2dDb250",
+            "cm9sEhcKD3BlcnNpc3RfdG9fZmlsZRgBIAEoCCJOChdUZXJyYWluRGlhZ25v",
             "c3RpY1JlcG9ydBIzCgZzYW1wbGUYASABKAsyIy5zdW1wLnRlbGVtZXRyeS5U",
             "ZXJyYWluUmVzeW5jU2FtcGxlQiVIAaoCIFN1TXVsdGlwbGF5ZXIuUHJvdG9j",
             "b2wuVGVsZW1ldHJ5YgZwcm90bzM="));
@@ -184,6 +185,7 @@ namespace SuMultiplayer.Protocol.Telemetry {
             new pbr::GeneratedClrTypeInfo(typeof(global::SuMultiplayer.Protocol.Telemetry.LiveTelemetry), global::SuMultiplayer.Protocol.Telemetry.LiveTelemetry.Parser, new[]{ "SampleId", "SampledAtMs", "HostRuntime", "Circuit", "Terrain", "Peers", "LiveMapBuildMs", "LiveMapChunks", "LiveMapBatches", "LiveMapBytesSent", "LiveMapFramesSent", "LiveMapRequests", "MonitorTransport" }, null, null, null, null),
             new pbr::GeneratedClrTypeInfo(typeof(global::SuMultiplayer.Protocol.Telemetry.ClientRuntimeTelemetry), global::SuMultiplayer.Protocol.Telemetry.ClientRuntimeTelemetry.Parser, new[]{ "Runtime", "Circuit", "Terrain" }, null, null, null, null),
             new pbr::GeneratedClrTypeInfo(typeof(global::SuMultiplayer.Protocol.Telemetry.TerrainDiagnosticControl), global::SuMultiplayer.Protocol.Telemetry.TerrainDiagnosticControl.Parser, new[]{ "RequestId", "WindowMs" }, null, null, null, null),
+            new pbr::GeneratedClrTypeInfo(typeof(global::SuMultiplayer.Protocol.Telemetry.ModuleLogControl), global::SuMultiplayer.Protocol.Telemetry.ModuleLogControl.Parser, new[]{ "PersistToFile" }, null, null, null, null),
             new pbr::GeneratedClrTypeInfo(typeof(global::SuMultiplayer.Protocol.Telemetry.TerrainDiagnosticReport), global::SuMultiplayer.Protocol.Telemetry.TerrainDiagnosticReport.Parser, new[]{ "Sample" }, null, null, null, null)
           }));
     }
@@ -9798,6 +9800,212 @@ namespace SuMultiplayer.Protocol.Telemetry {
   }
 
   /// <summary>
+  /// 主机 -> 客户端：模块日志是否落盘（Debug 模式）。
+  /// 主机在运行时改 verbose 时广播；客户端不读本地配置，完全听这条。
+  /// 与 HelloAck.flags bit0 同义：那个是握手初始值，这条是运行中动态改。
+  /// </summary>
+  [global::System.Diagnostics.DebuggerDisplayAttribute("{ToString(),nq}")]
+  public sealed partial class ModuleLogControl : pb::IMessage<ModuleLogControl>
+  #if !GOOGLE_PROTOBUF_REFSTRUCT_COMPATIBILITY_MODE
+      , pb::IBufferMessage
+  #endif
+  {
+    private static readonly pb::MessageParser<ModuleLogControl> _parser = new pb::MessageParser<ModuleLogControl>(() => new ModuleLogControl());
+    private pb::UnknownFieldSet _unknownFields;
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public static pb::MessageParser<ModuleLogControl> Parser { get { return _parser; } }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public static pbr::MessageDescriptor Descriptor {
+      get { return global::SuMultiplayer.Protocol.Telemetry.TelemetryReflection.Descriptor.MessageTypes[13]; }
+    }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    pbr::MessageDescriptor pb::IMessage.Descriptor {
+      get { return Descriptor; }
+    }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public ModuleLogControl() {
+      OnConstruction();
+    }
+
+    partial void OnConstruction();
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public ModuleLogControl(ModuleLogControl other) : this() {
+      persistToFile_ = other.persistToFile_;
+      _unknownFields = pb::UnknownFieldSet.Clone(other._unknownFields);
+    }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public ModuleLogControl Clone() {
+      return new ModuleLogControl(this);
+    }
+
+    /// <summary>Field number for the "persist_to_file" field.</summary>
+    public const int PersistToFileFieldNumber = 1;
+    private bool persistToFile_;
+    /// <summary>
+    /// true = Debug（缓冲满写角色日志）；false = 上线（只进内存，缓冲满丢弃，不写盘）。
+    /// </summary>
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public bool PersistToFile {
+      get { return persistToFile_; }
+      set {
+        persistToFile_ = value;
+      }
+    }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public override bool Equals(object other) {
+      return Equals(other as ModuleLogControl);
+    }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public bool Equals(ModuleLogControl other) {
+      if (ReferenceEquals(other, null)) {
+        return false;
+      }
+      if (ReferenceEquals(other, this)) {
+        return true;
+      }
+      if (PersistToFile != other.PersistToFile) return false;
+      return Equals(_unknownFields, other._unknownFields);
+    }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public override int GetHashCode() {
+      int hash = 1;
+      if (PersistToFile != false) hash ^= PersistToFile.GetHashCode();
+      if (_unknownFields != null) {
+        hash ^= _unknownFields.GetHashCode();
+      }
+      return hash;
+    }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public override string ToString() {
+      return pb::JsonFormatter.ToDiagnosticString(this);
+    }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public void WriteTo(pb::CodedOutputStream output) {
+    #if !GOOGLE_PROTOBUF_REFSTRUCT_COMPATIBILITY_MODE
+      output.WriteRawMessage(this);
+    #else
+      if (PersistToFile != false) {
+        output.WriteRawTag(8);
+        output.WriteBool(PersistToFile);
+      }
+      if (_unknownFields != null) {
+        _unknownFields.WriteTo(output);
+      }
+    #endif
+    }
+
+    #if !GOOGLE_PROTOBUF_REFSTRUCT_COMPATIBILITY_MODE
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    void pb::IBufferMessage.InternalWriteTo(ref pb::WriteContext output) {
+      if (PersistToFile != false) {
+        output.WriteRawTag(8);
+        output.WriteBool(PersistToFile);
+      }
+      if (_unknownFields != null) {
+        _unknownFields.WriteTo(ref output);
+      }
+    }
+    #endif
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public int CalculateSize() {
+      int size = 0;
+      if (PersistToFile != false) {
+        size += 1 + 1;
+      }
+      if (_unknownFields != null) {
+        size += _unknownFields.CalculateSize();
+      }
+      return size;
+    }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public void MergeFrom(ModuleLogControl other) {
+      if (other == null) {
+        return;
+      }
+      if (other.PersistToFile != false) {
+        PersistToFile = other.PersistToFile;
+      }
+      _unknownFields = pb::UnknownFieldSet.MergeFrom(_unknownFields, other._unknownFields);
+    }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public void MergeFrom(pb::CodedInputStream input) {
+    #if !GOOGLE_PROTOBUF_REFSTRUCT_COMPATIBILITY_MODE
+      input.ReadRawMessage(this);
+    #else
+      uint tag;
+      while ((tag = input.ReadTag()) != 0) {
+      if ((tag & 7) == 4) {
+        // Abort on any end group tag.
+        return;
+      }
+      switch(tag) {
+          default:
+            _unknownFields = pb::UnknownFieldSet.MergeFieldFrom(_unknownFields, input);
+            break;
+          case 8: {
+            PersistToFile = input.ReadBool();
+            break;
+          }
+        }
+      }
+    #endif
+    }
+
+    #if !GOOGLE_PROTOBUF_REFSTRUCT_COMPATIBILITY_MODE
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    void pb::IBufferMessage.InternalMergeFrom(ref pb::ParseContext input) {
+      uint tag;
+      while ((tag = input.ReadTag()) != 0) {
+      if ((tag & 7) == 4) {
+        // Abort on any end group tag.
+        return;
+      }
+      switch(tag) {
+          default:
+            _unknownFields = pb::UnknownFieldSet.MergeFieldFrom(_unknownFields, ref input);
+            break;
+          case 8: {
+            PersistToFile = input.ReadBool();
+            break;
+          }
+        }
+      }
+    }
+    #endif
+
+  }
+
+  /// <summary>
   /// Client -> host: one sample requested by TerrainDiagnosticControl.
   /// </summary>
   [global::System.Diagnostics.DebuggerDisplayAttribute("{ToString(),nq}")]
@@ -9815,7 +10023,7 @@ namespace SuMultiplayer.Protocol.Telemetry {
     [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
     [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
     public static pbr::MessageDescriptor Descriptor {
-      get { return global::SuMultiplayer.Protocol.Telemetry.TelemetryReflection.Descriptor.MessageTypes[13]; }
+      get { return global::SuMultiplayer.Protocol.Telemetry.TelemetryReflection.Descriptor.MessageTypes[14]; }
     }
 
     [global::System.Diagnostics.DebuggerNonUserCodeAttribute]

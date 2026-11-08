@@ -749,7 +749,7 @@ namespace SuMultiplayer.Engine
             if (m_lastBurnAwayProblemLogMs != 0 &&
                 nowMs - m_lastBurnAwayProblemLogMs < 10000) return;
             m_lastBurnAwayProblemLogMs = nowMs;
-            Log.Warning("[SuMP] burnAwayEffect: " + message);
+            ModLog.Warn("[SuMP] burnAwayEffect: " + message);
         }
 
         /// <summary>
@@ -1498,7 +1498,7 @@ namespace SuMultiplayer.Engine
                 if (!s_queueLeafParticlesMissingLogged)
                 {
                     s_queueLeafParticlesMissingLogged = true;
-                    Log.Warning("[SuMP] evergreen-leaves: 引擎 QueueLeafParticles 不可用 → " +
+                    ModLog.Warn("[SuMP] evergreen-leaves: 引擎 QueueLeafParticles 不可用 → " +
                         "客户端秋季落叶粒子缺失（明确失败，不静默）");
                 }
                 return;
@@ -1512,7 +1512,7 @@ namespace SuMultiplayer.Engine
                 if (!s_queueLeafParticlesMissingLogged)
                 {
                     s_queueLeafParticlesMissingLogged = true;
-                    Log.Warning("[SuMP] evergreen-leaves: QueueLeafParticles 调用失败 → " +
+                    ModLog.Warn("[SuMP] evergreen-leaves: QueueLeafParticles 调用失败 → " +
                         "客户端秋季落叶粒子缺失：" + e.GetType().Name + " " + e.Message);
                 }
             }
@@ -2150,7 +2150,7 @@ namespace SuMultiplayer.Engine
                     if (!m_clientRampFaultLogged)
                     {
                         m_clientRampFaultLogged = true;
-                        Log.Warning("[SuMP] 客户端天气视觉推进的字段反射绑定失败（引擎字段名变化？）" +
+                        ModLog.Warn("[SuMP] 客户端天气视觉推进的字段反射绑定失败（引擎字段名变化？）" +
                             " → 雨/雾过渡退回 2Hz 快照阶跃（只记录一次）");
                     }
                     return;
@@ -2203,7 +2203,7 @@ namespace SuMultiplayer.Engine
                 if (!m_clientRampFaultLogged)
                 {
                     m_clientRampFaultLogged = true;
-                    Log.Warning("[SuMP] 客户端天气视觉推进异常（" + e.GetType().Name + " " + e.Message +
+                    ModLog.Warn("[SuMP] 客户端天气视觉推进异常（" + e.GetType().Name + " " + e.Message +
                         "）→ 本会话退回 2Hz 快照阶跃（只记录一次）");
                 }
             }
@@ -2555,7 +2555,7 @@ namespace SuMultiplayer.Engine
             if (m_lastHostProblemLogMs != 0 &&
                 nowMs - m_lastHostProblemLogMs < HostProblemLogMs) return;
             m_lastHostProblemLogMs = nowMs;
-            Log.Warning("[SuMP] collapsing(host): " + message);
+            ModLog.Warn("[SuMP] collapsing(host): " + message);
         }
 
         private void EnsureClientHandlersDetached()
@@ -2787,7 +2787,7 @@ namespace SuMultiplayer.Engine
         {
             if (m_clientCollisionReflectionFailed) return;
             m_clientCollisionReflectionFailed = true;
-            Log.Warning("[SuMP] collapsing: 客户端判停条件不可用（" + reason +
+            ModLog.Warn("[SuMP] collapsing: 客户端判停条件不可用（" + reason +
                 "）→ 塌落组会一直走到目标点（只影响表现；本地仍然绝不写格）");
         }
     }
@@ -3034,7 +3034,7 @@ namespace SuMultiplayer.Engine
             long nowMs = (long)(Time.RealTime * 1000.0);
             if (m_lastMissingLogMs != 0 && nowMs - m_lastMissingLogMs < 10000) return;
             m_lastMissingLogMs = nowMs;
-            Log.Warning("[SuMP] 熔炉火焰表现层未接线（" + where + " @ " + x + "," + y + "," + z +
+            ModLog.Warn("[SuMP] 熔炉火焰表现层未接线（" + where + " @ " + x + "," + y + "," + z +
                 "）→ 本格火焰暂不显示；累计 " + m_missingPresenter +
                 " 次（TerrainBridge.FurnacePresenter == null，检查组合根装配）");
         }
@@ -3059,7 +3059,7 @@ namespace SuMultiplayer.Engine
                     if (!m_dropLogged)
                     {
                         m_dropLogged = true;
-                        Log.Warning("[SuMP] 熔炉火焰表现：待重放格子超过上限 " +
+                        ModLog.Warn("[SuMP] 熔炉火焰表现：待重放格子超过上限 " +
                             PendingGeneratedCap + " → 之后的生成格不再排队（累计丢弃 " +
                             m_pendingGeneratedDropped + " 格；表现层接线后由炉况 / 格子变化重试）");
                     }
@@ -3898,7 +3898,7 @@ namespace SuMultiplayer.Engine
             long nowMs = (long)(Time.RealTime * 1000.0);
             if (m_lastProblemLogMs != 0 && nowMs - m_lastProblemLogMs < ProblemLogMs) return;
             m_lastProblemLogMs = nowMs;
-            Log.Warning("[SuMP] piston: " + message);
+            ModLog.Warn("[SuMP] piston: " + message);
         }
 
         /// <summary>"摘不掉 base 写格订阅"是明确失败，用 Error 单独限流（不与普通表现告警混在一起）。</summary>
@@ -4024,7 +4024,7 @@ namespace SuMultiplayer.Engine
             if (m_lastGuardProblemLogMs != 0 &&
                 nowMs - m_lastGuardProblemLogMs < GuardProblemLogMs) return;
             m_lastGuardProblemLogMs = nowMs;
-            Log.Warning("[SuMP] movingBlocks: " + message);
+            ModLog.Warn("[SuMP] movingBlocks: " + message);
         }
     }
 
