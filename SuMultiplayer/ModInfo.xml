@@ -9,7 +9,7 @@
     <Identifier>SuMultiplayer</Identifier>
     <LocalizedName>
       <Text lang="en_US">SuMultiplayer</Text>
-      <Text lang="zh_CN">联机模组（重写版）</Text>
+      <Text lang="zh_CN">联机模组</Text>
     </LocalizedName>
     <Version>2.3.1</Version>
     <APIVersion>0.1.7.0</APIVersion>
