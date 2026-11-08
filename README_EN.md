@@ -46,6 +46,34 @@ Do not include `Engine.dll`, `Survivalcraft.dll`, `GameEntitySystem.dll`, or pla
 
 ## Included Mods
 
+### SuMultiplayer
+
+Current version: `2.3.0`
+
+SuAPI compatibility: `0.1.7.0`
+
+[Download 0.1.7.0](https://gitee.com/SC-SPM/su-api-example-mod-set/releases/tag/0.1.7.0)
+
+Rewritten multiplayer mod. Host-authoritative architecture, supporting Windows and Android clients, headless servers, room discovery, world transfer, and reconnect recovery.
+
+#### Changes in 2.3.0
+
+1. Modular architecture: features are split into 33 independent modules, so a failure in one module does not affect the others.
+2. Port model: one address supports up to 10 rooms, each room using the same port; a server address may specify a single port or a port range.
+3. Reconnect: the world is kept after a disconnect and reconnect is retried automatically within 30 seconds; when the host exits normally, clients are told to leave immediately.
+4. Log modes: by default no log files are written to disk; a debug mode can be enabled for detailed logs. The host can switch this at any time without closing the room or editing configuration, and the change is propagated to all players. Both a command and an in-game setting are available.
+5. Disconnect protection: while waiting to reconnect after losing the host, the world stays frozen and local actions are not written to the world; once reconnected, host data takes precedence.
+6. Host arbitration for editable blocks: when memory banks, truth tables and similar blocks are edited by multiple players at once, the host decides; rejected edits are reported and rolled back.
+7. Module state deduplication: unchanged periodic state is no longer recorded repeatedly, keeping log size stable while idle.
+8. Circuit sync: now decided solely by the host; clients no longer compute one-shot results themselves, eliminating the permanent desync where the host executed but the client did not.
+9. Terrain sync: now chunks around each player are synchronized by range, and content checks patch only the differing parts instead of resending whole chunks, reducing bandwidth use and stutter.
+10. Player systems split: appearance, skins, inventory, statistics, health and vitals, death and respawn, mounts, melee and projectiles each synchronize independently.
+11. Territory system: the feature for claiming areas and restricting other players' digging is not finished yet.
+
+#### Relationship to ScMultiplayer
+
+`SuMultiplayer` is a rewrite of the multiplayer module and is a **different mod** from `ScMultiplayer` below. The two cannot be installed together, and their saves and protocols are incompatible. `ScMultiplayer` stays in the index for rollback.
+
 ### ScMultiplayer
 
 ![ScMultiplayer multiplayer screenshot](images/ScMultiplayer.png)
