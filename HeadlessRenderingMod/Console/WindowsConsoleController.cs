@@ -434,7 +434,10 @@ namespace HeadlessRenderingMod
                             RunCommandLine();
                             break;
                         case 5:
-                            if (PromptBoolean("Shut down Survivalcraft", false))
+                            // 明确告知会先保存世界：退出前不保存 = 丢最近一个自动保存周期的改动。
+                            if (PromptBoolean(
+                                "Save the world (if one is loaded) and shut down Survivalcraft",
+                                false))
                             {
                                 PrintResponse(m_server.SubmitLocal("shutdown"));
                                 m_running = false;
@@ -583,9 +586,13 @@ namespace HeadlessRenderingMod
                     "List Worlds",
                     "Export World",
                     "Delete World",
+                    // 退出世界：保存当前世界 → 销毁项目 → 切回主菜单
+                    // （与游戏内"退出世界"走同一条 CloseLoadedProject 路径）。
+                    // 未加载世界时按下会明确告知，不静默无动作。
+                    "Leave World",
                     "Back"
                 }, selected);
-                if (!choice.HasValue || choice.Value == 6) return;
+                if (!choice.HasValue || choice.Value == 7) return;
                 selected = choice.Value;
                 try
                 {
@@ -597,6 +604,7 @@ namespace HeadlessRenderingMod
                         case 3: ShowWorlds(); break;
                         case 4: ExportWorld(); break;
                         case 5: DeleteWorld(); break;
+                        case 6: LeaveWorld(); break;
                     }
                 }
                 catch (Exception ex)
@@ -1586,6 +1594,50 @@ namespace HeadlessRenderingMod
             Dictionary<string, object> world = SelectWorld("Worlds");
             if (world != null)
                 ShowWorldDetails(world);
+        }
+
+        /// <summary>
+        /// 退出当前世界：保存 → 销毁项目 → 切回主菜单。
+        ///
+        /// 走的是 `world.close` 控制命令（`CloseWorld` → `CloseLoadedProject`），
+        /// 与游戏内"退出世界"**同一条路径**：先 `GameManager.SaveProject` 再 `DisposeProject`，
+        /// 所以不会丢进度。没有已加载的世界时明确告知，不静默无动作。
+        /// </summary>
+        private void LeaveWorld()
+        {
+            Dictionary<string, object> status = GetResult<Dictionary<string, object>>(
+                m_server.SubmitLocal("status"));
+            bool loaded = status.TryGetValue("worldLoaded", out object loadedValue) &&
+                loadedValue is bool isLoaded && isLoaded;
+            if (!loaded)
+            {
+                Console.WriteLine();
+                Console.WriteLine("No world is loaded; there is nothing to leave.");
+                Pause();
+                return;
+            }
+            string worldName = status.TryGetValue("worldName", out object nameValue)
+                ? nameValue?.ToString() ?? string.Empty
+                : string.Empty;
+            if (!PromptBoolean("Save and leave the world \"" + worldName + "\"", false))
+                return;
+            try
+            {
+                Dictionary<string, object> result = GetResult<Dictionary<string, object>>(
+                    m_server.SubmitLocal("world.close"));
+                Console.WriteLine();
+                Console.WriteLine(result.TryGetValue("closed", out object closedValue) &&
+                    closedValue is bool closed && closed
+                    ? "Left the world. The main menu is now active."
+                    : "The world was already closed.");
+                Pause();
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine();
+                Console.WriteLine("Could not leave the world: " + ex.Message);
+                Pause();
+            }
         }
 
         private void ShowCurrentWorld()

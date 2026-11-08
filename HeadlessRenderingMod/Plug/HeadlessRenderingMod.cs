@@ -1165,13 +1165,53 @@ namespace HeadlessRenderingMod
             };
         }
 
-        // Source: Engine/Engine/Window.cs:Window.Close
+        /// <summary>
+        /// 关闭服务器（保留在无头服务器 mod 内，不依赖任何外部程序）。
+        ///
+        /// **加载了世界就先保存再关窗口**：<c>Engine.Window.Close()</c> 只是把 m_closing 置真，
+        /// 下一帧 RenderFrameHandler 直接 <c>m_gameWindow.Close()</c> —— 全程不碰游戏数据。
+        /// 本方法最初只调 Window.Close()，等于丢掉"最近一个自动保存周期"内的所有改动
+        /// （世界、联机角色记录 SuMultiplayerPlayers.xml 都在其中）。
+        /// 现在按游戏内退出世界同一条路径先 <c>GameManager.SaveProject</c>。
+        ///
+        /// **没有加载世界时直接关，不做保存**（用户 2026-11-08 定）：没有 Project 就没有可保存的
+        /// 世界，此时再去访问 GameManager 只会撞空引用。
+        ///
+        /// 保存失败仍然关（shutdown 是明确的关机指令，不该被卡住），
+        /// 但把 worldSaved=false 与原因如实回给调用方 —— 不假装保存成功。
+        /// </summary>
         private Dictionary<string, object> Shutdown()
         {
+            bool worldLoaded = GameManager.Project != null;
+            bool saved = false;
+            string saveError = null;
+            if (worldLoaded)
+            {
+                try
+                {
+                    // Source: Survivalcraft/Game/GameScreen.cs:GameScreen.LeaveWorld
+                    GameManager.SaveProject(waitForCompletion: true, showErrorDialog: false);
+                    saved = true;
+                }
+                catch (Exception exception)
+                {
+                    saveError = exception.GetType().Name + ": " + exception.Message;
+                    Engine.Log.Error("[HeadlessRenderingMod] 退出前保存世界失败：" + saveError);
+                }
+            }
+            else
+            {
+                Engine.Log.Information(
+                    "[HeadlessRenderingMod] 关闭服务器：没有加载的世界，跳过保存");
+            }
+
             Engine.Window.Close();
             return new Dictionary<string, object>(StringComparer.Ordinal)
             {
-                ["closing"] = true
+                ["closing"] = true,
+                ["worldLoaded"] = worldLoaded,
+                ["worldSaved"] = saved,
+                ["saveError"] = saveError
             };
         }
 

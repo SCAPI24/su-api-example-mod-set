@@ -140,10 +140,17 @@ WatchMod | su-watch | ["0.1.6.0"] | 1.0.1 | gitee:"https://gitee.com/SC-SPM/su-a
 #       ChatRoom      每行一条的游戏内聊天，顶部 Send Message / Back
 #       Host Body-[Ghost/Normal] 主机角色幽灵化（不可见/不可攻击/睡眠）与复原
 #   - `Server Status-[Offline]` / `[N clients | X KB/s down Y KB/s up]`：主菜单行内显示房间流量。
+#   - **世界菜单补 `Leave World`**：保存 → 销毁项目 → 回主菜单（走 world.close，
+#     与游戏内"退出世界"同一条 CloseLoadedProject 路径）；没加载世界时明确告知。
+#   - **`shutdown` 现在会先保存世界**（本方法最初只调 Engine.Window.Close()，
+#     等于丢掉最近一个自动保存周期内的所有改动）。没加载世界则跳过保存；
+#     保存失败仍然关（shutdown 是明确的关机指令），但返回 worldSaved=false + 原因，不假装成功。
 #   - **与 SuMultiplayer 的对接走 `SuMultiplayer.Control` 事件**（两边互不引用程序集）。
 #     旧版用的 `ScMultiplayer.ServerSettings` / `ScMultiplayer.NetworkPlayers` 事件
 #     在 SuMultiplayer 里**不存在**，所以本版之前的遥测/联机角色列表一直是空的。
 #   - 需要配合 SuMultiplayer 2.3.1 及以上。
+#   ⚠️ 1.4.1 于 2026-11-08 重新打包（内容更新，版本号不变）：三端 release 的旧资产已删除后重传，
+#     包 129886 B、sha256 `2e616d72…`；下载回验三端一致。
 HeadlessRenderingMod | Su-HRM | ["0.1.7.0"] | 1.4.1 | gitee:"https://gitee.com/SC-SPM/su-api-example-mod-set/releases/download/0.1.7.0/%5BSuAPI%5DHeadlessRenderingMod-1.4.1.scmod";github:"https://github.com/SCAPI24/su-api-example-mod-set/releases/download/0.1.7.0/SuAPI.HeadlessRenderingMod-1.4.1.scmod";cnb:"https://cnb.cool/suceru.cb/SC-SPM/SuAPIMod/-/releases/download/0.1.7.0/[SuAPI]HeadlessRenderingMod-1.4.1.scmod" | zh_CN=无画面服务器;en_US=Headless Server
 # HeadlessRenderingMod | Su-HRM | ["0.1.6.0"] | 1.3.6 | gitee:"https://gitee.com/SC-SPM/su-api-example-mod-set/releases/download/0.1.6.0/%5BSuAPI%5DHeadlessRenderingMod-1.3.6.scmod";github:"https://github.com/SCAPI24/su-api-example-mod-set/releases/download/0.1.6.0/SuAPI.HeadlessRenderingMod-1.3.6.scmod";cnb:"https://cnb.cool/suceru.cb/SC-SPM/SuAPIMod/-/releases/download/0.1.6.0/[SuAPI]HeadlessRenderingMod-1.3.6.scmod" | zh_CN=无画面服务器;en_US=Headless Server
 # 上一版（`Su-HRM@1.3.5`）
