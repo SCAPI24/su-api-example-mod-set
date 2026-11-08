@@ -1005,9 +1005,45 @@ namespace SuMultiplayer.Modules
         /// 主机在运行时改 verbose（不关房）时调用；客户端收到就切，不读本地配置。
         /// 与 HelloAck.flags bit0 同义：那个管握手初始值，这条管运行中动态改。
         /// </summary>
-        public void BroadcastModuleLogMode(bool persistToFile)
+        /// <summary>
+        /// 当前"已下发 / 将要下发"的客户端落盘意图（供 UI 判断是 OnlySelf 还是 AllPlayers）。
+        /// 只读：改它要走 <see cref="BroadcastModuleLogMode"/>（否则 peers 不会收到变更）。
+        /// </summary>
+        public bool HostWantsClientLogPersistence => m_host?.HostWantsClientLogPersistence ?? false;
+
+        /// <summary>
+        /// 主机侧累计通道流量（字节）。供控制台按差值算每秒速率。
+        ///
+        /// 口径：所有**玩家端**连接的三条通道（主 / 电路 / 地形）之和，不含调试端
+        /// —— 与房间广播的"在线玩家"口径一致。非主机或不存在的客户端返回 0。
+        ///
+        /// 为什么返回累计值而不是速率：速率属于采样方的职责（不同采样间隔算出来才一致），
+        /// 模块这里只提供单调递增的计数，避免两处各算一套口径。
+        /// </summary>
+        public (long Sent, long Received) AggregateTrafficBytes()
         {
-            if (m_server == null) return;
+            if (m_server == null) return (0, 0);
+            long sent = 0;
+            long received = 0;
+            foreach (PeerInfo peer in m_server.ListPeers())
+            {
+                if (!peer.Alive || peer.Kind != ClientKind.Player) continue;
+                Accumulate(peer.Stats, ref sent, ref received);
+                Accumulate(m_server.CircuitStatsOf(peer.Id), ref sent, ref received);
+                Accumulate(m_server.TerrainStatsOf(peer.Id), ref sent, ref received);
+            }
+            return (sent, received);
+        }
+
+        private static void Accumulate(ChannelStats stats, ref long sent, ref long received)
+        {
+            if (stats == null) return;
+            sent += System.Threading.Interlocked.Read(ref stats.BytesSent);
+            received += System.Threading.Interlocked.Read(ref stats.BytesReceived);
+        }
+
+        public void BroadcastModuleLogMode(bool persistToFile)
+        {            if (m_server == null) return;
             m_host.HostWantsClientLogPersistence = persistToFile;
             var control = new ModuleLogControl { PersistToFile = persistToFile };
             byte[] payload = control.ToByteArray();

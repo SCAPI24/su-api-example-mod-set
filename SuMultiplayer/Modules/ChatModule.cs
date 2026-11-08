@@ -37,6 +37,19 @@ namespace SuMultiplayer.Modules
         private readonly Func<string> m_localIdentity;
         private readonly Func<double> m_clock;
         private readonly ChatFeed m_feed = new ChatFeed();
+        /// <summary>
+        /// 控制台可回看的聊天历史（**不受 8 秒淡出窗口限制**）。
+        ///
+        /// 存在的理由：<see cref="m_feed"/> 是有界可见窗口（8 条 / 8 秒后消失），
+        /// 那是给游戏内 HUD 用的；无头服务器控制台的聊天室要"每行一条、能往上翻"，
+        /// 必须有一份不受淡出影响的记录。**同样纯内存、不落盘**（与 HUD 口径一致：
+        /// 重连不重放历史）。只影响显示，不参与协议判定 —— 漏读不会导致消息被丢。
+        /// </summary>
+        private readonly List<ChatFeedEntry> m_history = new List<ChatFeedEntry>(MaxHistoryEntries);
+
+        /// <summary>控制台聊天历史的上限（超出丢最旧）。</summary>
+        public const int MaxHistoryEntries = 200;
+
         private readonly ChatRateLimiter m_rateLimiter = new ChatRateLimiter();
         /// <summary>主机：已加入玩家端 → 显示名 / 身份（ClientJoined 事件维护，ClientLeft 清除）。</summary>
         private readonly Dictionary<int, ChatPeer> m_peers = new Dictionary<int, ChatPeer>();
@@ -104,6 +117,13 @@ namespace SuMultiplayer.Modules
 
         /// <summary>最近 8 条消息（UI 只读；淡出由 <see cref="Tick"/> 推进）。</summary>
         public ChatFeed Feed => m_feed;
+
+        /// <summary>
+        /// 控制台可回看的聊天历史（最多 <see cref="MaxHistoryEntries"/> 条，超出丢最旧）。
+        /// **与 <see cref="Feed"/> 不同：不受 8 秒淡出影响**，供无头服务器控制台做聊天室。
+        /// 纯内存、不落盘；重连时随 <see cref="Feed"/> 一起清空。
+        /// </summary>
+        public IReadOnlyList<ChatFeedEntry> History => m_history;
 
         /// <summary>
         /// 当前是否处于联机会话（主机正在监听，或客户端已完成握手）。
@@ -825,6 +845,9 @@ namespace SuMultiplayer.Modules
         private void AppendFeed(ChatFeedEntry entry, bool countBubble)
         {
             int removed = m_feed.Append(entry, m_clock());
+            // 控制台历史：与可见窗口**同步追加**，但独立淘汰（不受 8 秒淡出影响）。
+            m_history.Add(entry);
+            while (m_history.Count > MaxHistoryEntries) m_history.RemoveAt(0);
             if (countBubble) m_bubblesShown++;
             if (entry.SenderClientId < 0) m_systemLines++;
             if (removed > 0)
@@ -846,6 +869,8 @@ namespace SuMultiplayer.Modules
         private void ResetTransientState(string reason)
         {
             m_feed.Clear();
+            // 控制台历史与可见窗口同口径：重连不重放历史（纯内存，不落盘）。
+            m_history.Clear();
             m_pending.Clear();
             m_peers.Clear();
             m_rateLimiter.Reset();

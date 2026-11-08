@@ -53,6 +53,9 @@ namespace SuMultiplayer.UI
         private readonly Func<bool> m_moduleLogPersist;
         /// <summary>主机：切换模块日志模式（true=Debug / false=上线），返回给 UI 的提示文本。</summary>
         private readonly Func<bool, string> m_setModuleLog;
+        /// <summary>主机角色幽灵身体（只针对主机自己的角色）。</summary>
+        private readonly Func<bool> m_hostGhost;
+        private readonly Action m_toggleHostGhost;
         private readonly Func<bool, string> m_setAllowFurnitureDelete;
         private readonly Func<bool, string> m_setAllowFurnitureImport;
         private readonly Func<bool, string> m_setAllowFurnitureExport;
@@ -121,7 +124,9 @@ namespace SuMultiplayer.UI
             Func<string> saveWorldSettings = null,
             IDownloadedWorldPort downloads = null,
             Func<bool> moduleLogPersist = null,
-            Func<bool, string> setModuleLog = null)
+            Func<bool, string> setModuleLog = null,
+            Func<bool> hostGhost = null,
+            Action toggleHostGhost = null)
         {
             m_rooms = rooms;
             m_ready = ready;
@@ -142,6 +147,8 @@ namespace SuMultiplayer.UI
             m_setAutoApprove = setAutoApprove;
             m_moduleLogPersist = moduleLogPersist;
             m_setModuleLog = setModuleLog;
+            m_hostGhost = hostGhost;
+            m_toggleHostGhost = toggleHostGhost;
             m_allowFurnitureDeleteEnabled = allowFurnitureDeleteEnabled;
             m_setAllowFurnitureDelete = setAllowFurnitureDelete;
             m_allowFurnitureImportEnabled = allowFurnitureImportEnabled;
@@ -586,6 +593,12 @@ namespace SuMultiplayer.UI
                 {
                     bool next = m_moduleLogPersist?.Invoke() != true;
                     ShowResult("Module log", m_setModuleLog?.Invoke(next));
+                },
+                m_hostGhost,
+                delegate
+                {
+                    // 幽灵化 = 主机角色退出世界表现（不可见/不可攻击）+ 睡眠（世界可加速）。
+                    m_toggleHostGhost?.Invoke();
                 });
             m_settingsOwner = localPlayer;
             m_settingsWidget = settings;

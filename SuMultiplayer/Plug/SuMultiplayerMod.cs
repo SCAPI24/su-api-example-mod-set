@@ -169,6 +169,8 @@ namespace SuMultiplayer
         /// <summary>多人聊天（主机权威 / 瞬态）：协议模块 + 底部 HUD（消息流 / 输入 / 触摸按钮）。</summary>
         private ChatModule m_chatModule;
         private ChatOverlayAttacher m_chatOverlay;
+        /// <summary>主机角色幽灵身体（不可见 / 不可攻击 / 睡眠），供无头服务器使用。</summary>
+        private HostGhostModule m_hostGhostModule;
         /// <summary>实时语音：OpenAL 采集/播放（P/Invoke）+ 纯逻辑模块 + 游戏内 HUD。</summary>
         private VoiceAudioEngine m_voiceAudio;
         private VoiceChatModule m_voiceModule;
@@ -795,6 +797,17 @@ namespace SuMultiplayer
                 delegate { return PlayerIdentity.LocalName(); },
                 delegate { return PlayerIdentity.LocalIdentity(); });
             m_moduleHost.Register(m_chatModule);
+            // 主机角色"幽灵身体"：无头服务器的主机没人操作，那个本机角色会永久站在世界里
+            // （客户端看到的是一具不动的身体，还参与碰撞与战斗）。幽灵化后它退出世界表现，
+            // 但 PlayerData / 背包 / 坐标全部保留，随时可复原。
+            // 同时把主机角色置为睡眠：否则客户端全部睡觉时世界永远不会加速
+            // （Survivalcraft/Game/SubsystemTime.cs:87-100 要求"至少一人真的在睡觉"）。
+            m_hostGhostModule = new HostGhostModule(
+                engineModManager.ModParentField,
+                engineModManager.ModParentMethod,
+                message => ModLog.Info(message),
+                message => ModLog.Warn(message));
+            m_moduleHost.Register(m_hostGhostModule);
             // 实时语音：引擎侧 OpenAL 采集/播放端口 + 纯逻辑模块（VAD / 可配置 ADPCM /
             // 1-bit CVSD / 主机中继 / 静音表 / jitter）。端口必须先于模块注册
             // （Attach 里就要拿到）。档位与 VAD 挂起来自 SuMultiplayer.json。
@@ -865,6 +878,17 @@ namespace SuMultiplayer
                 {
                     SetModuleLogModeRuntime(persistToFile, out string logModeNote);
                     return logModeNote;
+                },
+                // 主机角色幽灵身体（用户 2026-11-08 定）：只针对主机自己的角色。
+                // 幽灵 = 不可见 / 不可攻击 / 睡眠（客户端全睡时世界才会加速）。
+                delegate { return m_hostGhostModule?.IsGhost ?? false; },
+                delegate
+                {
+                    if (m_hostGhostModule == null) return;
+                    if (m_hostGhostModule.IsGhost)
+                        m_hostGhostModule.ExitGhost(out _);
+                    else
+                        m_hostGhostModule.EnterGhost(out _);
                 });
             // 引擎 Edit Players（PlayerScreen）进入/退出钩子：名字/皮肤统一走引擎自己的编辑屏。
             // 进入抓快照、退出比较；主机广播改名后的本机角色，客户端按 (clientId, slot) 提交资料。
@@ -915,6 +939,21 @@ namespace SuMultiplayer
                     e.GetType().Name + " " + e.Message);
             }
             // 加载顺序兜底（不是功能兜底）：后加载的第三方模块可以主动请求一次注册表。
+            // 外部控制面（无头服务器等）：与旧版 HRM 连接 ScMultiplayer 的同一套做法 ——
+            // 通过 IModEventBus 事件调用，**两边互不引用程序集**。
+            // 请求：args[0] = Dictionary<string,object>（含 "operation"），可带参数。
+            // 应答：把结果字典放进 args 并返回；调用方读 TriggerEvent 的返回数组。
+            eventBus.SubscribeEvent("SuMultiplayer.Control", args =>
+            {
+                if (args == null || args.Length == 0 ||
+                    !(args[0] is Dictionary<string, object> request))
+                {
+                    return args;
+                }
+                object result = HandleControlRequest(request);
+                return new object[] { result };
+            }, EventPriority.NORMAL);
+
             eventBus.SubscribeEvent("SuMultiplayer.MessageRegistry.Request", args =>
             {
                 if (args != null && args.Length > 0 && args[0] is Action<IMessageRegistryPort> callback)
@@ -1466,19 +1505,499 @@ m_terrainModule?.Bridge.BlockBehaviorNotify.Describe());
         /// 想持久化请自行改配置文件后重启。
         /// </summary>
         /// <returns>是否生效（客户端返回 false）。</returns>
-        public bool SetModuleLogModeRuntime(bool persistToFile, out string note)
+        /// <summary>
+        /// 外部控制面（SuMultiplayer.Control 事件）请求处理。
+        ///
+        /// 为什么走事件而不是接口引用：与旧版 HRM 连接 ScMultiplayer 的做法一致 ——
+        /// 两个 mod 互不引用程序集，各自可独立部署；调用方只需知道事件名 + 操作名 + 字段名。
+        /// 失败一律返回 { ok: false, error: ... }。
+        /// </summary>
+        private object HandleControlRequest(Dictionary<string, object> request)
         {
-            if (m_sessionModule != null && m_sessionModule.IsHostingRoom)
+            string operation = request.TryGetValue("operation", out object operationValue)
+                ? operationValue?.ToString() ?? string.Empty
+                : string.Empty;
+            try
             {
-                m_terrainModule?.BroadcastModuleLogMode(persistToFile);
-                ModLog.Configure(persistToFile);
-                note = "主机：模块日志模式已切换到 " + (persistToFile
-                    ? "Debug（落盘）" : "上线（不落盘）") + "，并已下发给所有玩家端";
-                return true;
+                switch (operation.ToLowerInvariant())
+                {
+                    case "logmode.get":
+                        // 用**整数**传模式，不用枚举名：调用方（HeadlessRenderingMod）
+                        // 会被 Obfuscar 混淆，枚举成员名会被改名，按名字传两端对不上。
+                        // 整数取值由 ModLog.cs 的 ModuleLogMode 显式钉死（0/1/2）。
+                        return new Dictionary<string, object>(StringComparer.Ordinal)
+                        {
+                            ["ok"] = true,
+                            ["mode"] = (int)ReadModuleLogMode()
+                        };
+                    case "logmode.set":
+                        {
+                            int modeValue = ReadControlInt(request, "mode");
+                            if (!Enum.IsDefined(typeof(ModuleLogMode), modeValue))
+                                return ControlError("Unknown log mode: " + modeValue);
+                            ModuleLogMode mode = (ModuleLogMode)modeValue;
+                            bool applied = SetModuleLogModeRuntime(mode, out string note);
+                            return new Dictionary<string, object>(StringComparer.Ordinal)
+                            {
+                                ["ok"] = applied,
+                                ["note"] = note ?? string.Empty
+                            };
+                        }
+                    case "maxplayers.get":
+                        return new Dictionary<string, object>(StringComparer.Ordinal)
+                        {
+                            ["ok"] = true,
+                            ["maxPlayers"] = m_config?.MaxPlayers ?? 0
+                        };
+                    case "maxplayers.set":
+                        {
+                            int value = ReadControlInt(request, "value");
+                            if (m_config == null)
+                                return ControlError("Config is not initialized.");
+                            // 立即生效：房间信标下次应答即读新值（不用重开房）。
+                            m_config.MaxPlayers = value;
+                            m_config.Save();
+                            return new Dictionary<string, object>(StringComparer.Ordinal)
+                            {
+                                ["ok"] = true
+                            };
+                        }
+                    case "worldsettings.get":
+                        return BuildWorldSettingsControlResult();
+                    case "worldsettings.set":
+                        {
+                            string key = ReadControlString(request, "key");
+                            bool value = ReadControlBool(request, "value");
+                            string note = ApplyWorldBoolean(key, value);
+                            return new Dictionary<string, object>(StringComparer.Ordinal)
+                            {
+                                ["ok"] = true,
+                                ["note"] = note ?? string.Empty
+                            };
+                        }
+                    case "hostport.set":
+                        {
+                            int value = ReadControlInt(request, "value");
+                            string note = ChangeHostPortForUi(value);
+                            return new Dictionary<string, object>(StringComparer.Ordinal)
+                            {
+                                ["ok"] = true,
+                                ["note"] = note ?? string.Empty
+                            };
+                        }
+                    case "chat.get":
+                        return BuildChatControlResult(request);
+                    case "chat.send":
+                        {
+                            string text = ReadControlString(request, "text");
+                            if (m_chatModule == null)
+                                return ControlError("Chat module is not available.");
+                            bool sent = m_chatModule.TrySendLocalText(text, out string reason);
+                            return new Dictionary<string, object>(StringComparer.Ordinal)
+                            {
+                                ["ok"] = sent,
+                                ["error"] = sent ? string.Empty : (reason ?? "Send failed.")
+                            };
+                        }
+                    case "ghost.get":
+                        return new Dictionary<string, object>(StringComparer.Ordinal)
+                        {
+                            ["ok"] = true,
+                            ["ghost"] = m_hostGhostModule?.IsGhost ?? false
+                        };
+                    case "ghost.set":
+                        {
+                            bool want = ReadControlBool(request, "ghost");
+                            if (m_hostGhostModule == null)
+                                return ControlError("Host ghost module is unavailable.");
+                            bool applied = want
+                                ? m_hostGhostModule.EnterGhost(out string reason)
+                                : m_hostGhostModule.ExitGhost(out reason);
+                            return new Dictionary<string, object>(StringComparer.Ordinal)
+                            {
+                                ["ok"] = applied,
+                                ["ghost"] = m_hostGhostModule.IsGhost,
+                                ["error"] = applied ? string.Empty : (reason ?? string.Empty)
+                            };
+                        }
+                    case "players.list":
+                        return BuildNetworkPlayersControlResult();
+                    case "players.update":
+                        return UpdateNetworkPlayerControl(request);
+                    case "players.delete":
+                        return DeleteNetworkPlayerControl(request);
+                    case "room.host":
+                        {
+                            // 等价于游戏内按 CR 按钮：把**当前正在玩的世界**开成房间。
+                            // 不做"启动时自动开房"，也不凭空挑一个世界（那会让联机在没有玩家
+                            // 操作时凭空发生，与会话模块的既定入口不一致）。
+                            if (m_sessionModule == null)
+                                return ControlError("Session module is unavailable.");
+                            if (m_sessionModule.IsHostingRoom)
+                            {
+                                return new Dictionary<string, object>(StringComparer.Ordinal)
+                                {
+                                    ["ok"] = true,
+                                    ["already"] = true,
+                                    ["note"] = m_sessionModule.RoomSummary ?? string.Empty
+                                };
+                            }
+                            SubsystemGameInfo gameInfo =
+                                GameManager.Project?.FindSubsystem<SubsystemGameInfo>(false);
+                            if (gameInfo == null)
+                                return ControlError(
+                                    "Cannot read the current world; create a room from inside a world.");
+                            string worldName = gameInfo.WorldSettings.Name ?? string.Empty;
+                            string gameMode = gameInfo.WorldSettings.GameMode.ToString();
+                            if (!m_sessionModule.CreateRoom(worldName, gameMode, out string reason))
+                                return ControlError(reason ?? "Creating the room failed.");
+                            return new Dictionary<string, object>(StringComparer.Ordinal)
+                            {
+                                ["ok"] = true,
+                                ["already"] = false,
+                                ["note"] = m_sessionModule.RoomSummary ?? string.Empty
+                            };
+                        }
+                    case "room.status":
+                        return BuildRoomStatusControlResult();
+                    case "room.close":
+                        {
+                            if (m_sessionModule == null)
+                                return ControlError("Session module is unavailable.");
+                            if (!m_sessionModule.IsHostingRoom)
+                            {
+                                return new Dictionary<string, object>(StringComparer.Ordinal)
+                                {
+                                    ["ok"] = true,
+                                    ["note"] = "Not hosting a room."
+                                };
+                            }
+                            m_sessionModule.CloseRoom();
+                            return new Dictionary<string, object>(StringComparer.Ordinal)
+                            {
+                                ["ok"] = true,
+                                ["note"] = "Room closed."
+                            };
+                        }
+                    default:
+                        return ControlError("Unknown control operation: " + operation);
+                }
             }
-            note = "客户端不能本地决定日志模式（由主机调度）；如需主机切换请在主机端执行";
-            return false;
+            catch (Exception ex)
+            {
+                return ControlError(ex.GetType().Name + ": " + ex.Message);
+            }
         }
+
+        /// <summary>
+        /// 读聊天历史（供无头服务器控制台的聊天室）。
+        ///
+        /// 用 <c>since</c> 游标做**增量**读取：控制台每秒轮询一次，只取新行，
+        /// 不必每次把整段历史搬过去。游标就是 <see cref="ChatFeedEntry.MessageId"/>
+        /// —— 主机自己发的 / 回显的消息都带唯一 message_id；本地系统提示 message_id=0，
+        /// 这类行用"只在新会话首次全量读取时带回"的方式处理（见 <c>since=0</c> 分支），
+        /// 轮询期间不重复下发。
+        /// </summary>
+        private object BuildChatControlResult(Dictionary<string, object> request)
+        {
+            if (m_chatModule == null) return ControlError("Chat module is not available.");
+
+            long since = 0;
+            if (request.TryGetValue("since", out object sinceValue) && sinceValue != null)
+                long.TryParse(sinceValue.ToString(), out since);
+
+            IReadOnlyList<ChatFeedEntry> history = m_chatModule.History;
+            var lines = new List<object>(history.Count);
+            long newest = since;
+            for (int i = 0; i < history.Count; i++)
+            {
+                ChatFeedEntry entry = history[i];
+                // since>0 时只回新消息（message_id 递增）；系统提示（0）不参与增量。
+                if (since > 0 && entry.MessageId <= since) continue;
+                if (entry.MessageId > newest) newest = entry.MessageId;
+                lines.Add(new Dictionary<string, object>(StringComparer.Ordinal)
+                {
+                    ["id"] = entry.MessageId,
+                    ["sender"] = entry.SenderName ?? string.Empty,
+                    ["identity"] = entry.SenderIdentity ?? string.Empty,
+                    ["text"] = entry.Text ?? string.Empty,
+                    ["self"] = entry.IsSelf,
+                    ["system"] = entry.SenderClientId < 0
+                });
+            }
+
+            return new Dictionary<string, object>(StringComparer.Ordinal)
+            {
+                ["ok"] = true,
+                ["lines"] = lines,
+                // 游标：调用方下次带着它来就只拿新行。
+                ["cursor"] = newest,
+                ["inSession"] = m_chatModule.IsInSession
+            };
+        }
+
+        /// <summary>
+        /// 联机角色列表（供无头服务器控制台的 Manage Players）。
+        ///
+        /// 数据来源是主机端角色记录文件 <c>SuMultiplayerPlayers.xml</c>
+        /// —— 所以**离线玩家也能列出 / 管理**，不只是当前在线的人。
+        /// 在线状态另行给出（online / clientId），不把"离线"当成"不存在"。
+        /// </summary>
+        private object BuildNetworkPlayersControlResult()
+        {
+            if (m_avatarModule == null) return ControlError("Player avatar module is unavailable.");
+            IReadOnlyList<KeyValuePair<string, NetworkPlayerRecord>> records =
+                m_avatarModule.CaptureNetworkPlayerRecords(out IReadOnlyDictionary<string, int> online);
+            var players = new List<object>(records.Count);
+            foreach (KeyValuePair<string, NetworkPlayerRecord> entry in records)
+            {
+                NetworkPlayerRecord record = entry.Value;
+                if (record == null) continue;
+                string recordKey = entry.Key ?? string.Empty;
+                bool isOnline = online.TryGetValue(recordKey, out int clientId);
+                players.Add(new Dictionary<string, object>(StringComparer.Ordinal)
+                {
+                    ["recordKey"] = recordKey,
+                    ["name"] = record.Name ?? string.Empty,
+                    ["playerClass"] = record.PlayerClass.ToString(),
+                    ["skinName"] = record.SkinName ?? string.Empty,
+                    ["online"] = isOnline,
+                    ["clientId"] = isOnline ? clientId : 0,
+                    // 数值快照：控制台直接显示，不需要再查一次。
+                    ["level"] = record.Level,
+                    ["health"] = record.Health,
+                    ["air"] = record.Air,
+                    ["food"] = record.Food,
+                    ["stamina"] = record.Stamina,
+                    ["sleep"] = record.Sleep,
+                    ["temperature"] = record.Temperature,
+                    ["wetness"] = record.Wetness,
+                    ["positionX"] = record.Position.X,
+                    ["positionY"] = record.Position.Y,
+                    ["positionZ"] = record.Position.Z
+                });
+            }
+            return new Dictionary<string, object>(StringComparer.Ordinal)
+            {
+                ["ok"] = true,
+                ["players"] = players,
+                ["hosting"] = m_sessionModule?.IsHostingRoom ?? false
+            };
+        }
+
+        /// <summary>改联机角色的名字 / 皮肤 / 各项数值（就地改记录后立即落盘）。</summary>
+        private object UpdateNetworkPlayerControl(Dictionary<string, object> request)
+        {
+            if (m_avatarModule == null) return ControlError("Player avatar module is unavailable.");
+            string recordKey = ReadControlString(request, "recordKey");
+            NetworkPlayerRecord record = m_avatarModule.GetNetworkPlayerRecord(recordKey);
+            if (record == null) return ControlError("No such player record: " + recordKey);
+
+            // 只改请求里出现的字段（与游戏内编辑屏"改什么存什么"一致）。
+            if (request.TryGetValue("name", out object nameValue) && nameValue != null)
+            {
+                string name = nameValue.ToString()?.Trim() ?? string.Empty;
+                if (string.IsNullOrEmpty(name))
+                    return ControlError("Player name cannot be empty.");
+                record.Name = name;
+                record.NameConfirmed = true;
+            }
+            if (request.TryGetValue("skinName", out object skinValue) && skinValue != null)
+                record.SkinName = skinValue.ToString() ?? string.Empty;
+            if (TryReadControlFloat(request, "level", out float level)) record.Level = level;
+            if (TryReadControlFloat(request, "health", out float health)) record.Health = health;
+            if (TryReadControlFloat(request, "air", out float air)) record.Air = air;
+            if (TryReadControlFloat(request, "food", out float food)) record.Food = food;
+            if (TryReadControlFloat(request, "stamina", out float stamina)) record.Stamina = stamina;
+            if (TryReadControlFloat(request, "sleep", out float sleep)) record.Sleep = sleep;
+            if (TryReadControlFloat(request, "temperature", out float temperature))
+                record.Temperature = temperature;
+            if (TryReadControlFloat(request, "wetness", out float wetness)) record.Wetness = wetness;
+
+            bool saved = m_avatarModule.SaveNetworkPlayerRecord(recordKey, record, out string reason);
+            return new Dictionary<string, object>(StringComparer.Ordinal)
+            {
+                ["ok"] = saved,
+                ["error"] = saved ? string.Empty : (reason ?? "Saving the player record failed.")
+            };
+        }
+
+        /// <summary>删除一条联机角色记录（不可恢复，调用方负责确认）。</summary>
+        private object DeleteNetworkPlayerControl(Dictionary<string, object> request)
+        {
+            if (m_avatarModule == null) return ControlError("Player avatar module is unavailable.");
+            string recordKey = ReadControlString(request, "recordKey");
+            bool deleted = m_avatarModule.DeleteNetworkPlayerRecord(recordKey, out string reason);
+            return new Dictionary<string, object>(StringComparer.Ordinal)
+            {
+                ["ok"] = deleted,
+                ["error"] = deleted ? string.Empty : (reason ?? "Deleting the player record failed.")
+            };
+        }
+
+        private static bool TryReadControlFloat(Dictionary<string, object> request, string name,
+            out float value)
+        {
+            value = 0f;
+            if (!request.TryGetValue(name, out object raw) || raw == null) return false;
+            if (raw is float single) { value = single; return true; }
+            if (raw is double number) { value = (float)number; return true; }
+            return float.TryParse(raw.ToString(), System.Globalization.NumberStyles.Float,
+                System.Globalization.CultureInfo.InvariantCulture, out value);
+        }
+
+        /// <summary>
+        /// 房间状态（供控制台把流量拼到菜单项里）。
+        ///
+        /// 返回**累计字节数**，速率由调用方按两次采样差值算 —— 采样间隔属于显示方，
+        /// 这里不猜（否则两处显示会各算一套口径）。
+        /// </summary>
+        private object BuildRoomStatusControlResult()
+        {
+            if (m_sessionModule == null) return ControlError("Session module is unavailable.");
+            bool hosting = m_sessionModule.IsHostingRoom;
+            long sent = 0;
+            long received = 0;
+            if (hosting)
+            {
+                (sent, received) = m_terrainModule?.AggregateTrafficBytes() ?? (0, 0);
+            }
+            return new Dictionary<string, object>(StringComparer.Ordinal)
+            {
+                ["ok"] = true,
+                ["hosting"] = hosting,
+                ["clients"] = hosting
+                    ? (m_terrainModule?.ControlPort?.ConnectedPlayerCount ?? 0)
+                    : 0,
+                ["bytesSent"] = sent,
+                ["bytesReceived"] = received,
+                ["roomName"] = hosting ? (m_sessionModule.RoomSummary ?? string.Empty) : string.Empty
+            };
+        }
+
+        private static Dictionary<string, object> ControlError(string message) =>
+            new Dictionary<string, object>(StringComparer.Ordinal)
+            {
+                ["ok"] = false,
+                ["error"] = message
+            };
+
+        private static string ReadControlString(
+            Dictionary<string, object> request, string name)
+        {
+            if (!request.TryGetValue(name, out object value) || value == null)
+                throw new InvalidOperationException("Control request requires: " + name);
+            return value.ToString();
+        }
+
+        private static int ReadControlInt(Dictionary<string, object> request, string name)
+        {
+            string text = ReadControlString(request, name);
+            if (!int.TryParse(text, System.Globalization.NumberStyles.Integer,
+                System.Globalization.CultureInfo.InvariantCulture, out int value))
+                throw new InvalidOperationException("Not an integer: " + name);
+            return value;
+        }
+
+        private static bool ReadControlBool(Dictionary<string, object> request, string name)
+        {
+            if (!request.TryGetValue(name, out object value) || value == null)
+                throw new InvalidOperationException("Control request requires: " + name);
+            if (value is bool flag) return flag;
+            return bool.TryParse(value.ToString(), out bool parsed) && parsed;
+        }
+
+        private Dictionary<string, object> BuildWorldSettingsControlResult()
+        {
+            WorldJoinSettings settings = m_worldJoinSettings;
+            if (settings == null)
+                return ControlError("No world is loaded, so world settings are unavailable.");
+            return new Dictionary<string, object>(StringComparer.Ordinal)
+            {
+                ["ok"] = true,
+                ["autoHost"] = settings.AutoHostCurrentWorld,
+                ["autoApprove"] = settings.AutoApproveJoins,
+                ["allowClientFurnitureDelete"] = settings.AllowClientFurnitureDelete,
+                ["allowFurnitureImport"] = settings.AllowFurnitureImport,
+                ["allowFurnitureExport"] = settings.AllowFurnitureExport,
+                ["hostPort"] = settings.HostPort
+            };
+        }
+
+        /// <summary>按名字改一个世界联机布尔设置（与游戏内 IF 走同一个 *ForUi 回调）。</summary>
+        private string ApplyWorldBoolean(string key, bool value)
+        {
+            switch (key)
+            {
+                case "AutoHost": return SetAutoHostForUi(value);
+                case "AutoApprove": return SetAutoApproveForUi(value);
+                case "AllowClientFurnitureDelete":
+                    return SetAllowClientFurnitureDeleteForUi(value);
+                case "AllowFurnitureImport":
+                    return SetAllowFurnitureImportForUi(value);
+                case "AllowFurnitureExport":
+                    return SetAllowFurnitureExportForUi(value);
+                default:
+                    throw new InvalidOperationException("Unknown world setting: " + key);
+            }
+        }
+
+        /// <summary>
+        /// 运行时切换模块日志模式（**三种状态**，用户 2026-11-08 定）。
+        ///
+        ///   · <see cref="ModuleLogMode.Runtime"/>     —— 只进内存，永不写盘；
+        ///   · <see cref="ModuleLogMode.OnlySelf"/>    —— 只主机本端落盘，**不下发**，
+        ///     客户端保持 Runtime（主机自己复盘但不写满别人的磁盘）；
+        ///   · <see cref="ModuleLogMode.AllPlayers"/>  —— 主机落盘并下发，所有玩家端都落盘。
+        ///
+        /// 三种状态都**立即生效**（不需要关房/重开房）。
+        /// 客户端不能本地决定日志模式（由主机调度）。
+        /// </summary>
+        public bool SetModuleLogModeRuntime(ModuleLogMode mode, out string note)
+        {
+            if (m_sessionModule == null || !m_sessionModule.IsHostingRoom)
+            {
+                note = "客户端不能本地决定日志模式（由主机调度）；如需主机切换请在主机端执行";
+                return false;
+            }
+            // OnlySelf / AllPlayers 都让本端落盘；Runtime 两者皆假。
+            bool persistLocally = mode != ModuleLogMode.Runtime;
+            bool propagateToClients = mode == ModuleLogMode.AllPlayers;
+            if (propagateToClients)
+                m_terrainModule?.BroadcastModuleLogMode(true);
+            else
+                // 不下发时也要把"客户端不该落盘"的意图同步给现有 peers，
+                // 否则从 AllPlayers 切回 OnlySelf 时客户端会继续落盘（与设置不符）。
+                m_terrainModule?.BroadcastModuleLogMode(false);
+            ModLog.Configure(persistLocally, persistLocally);
+            note = mode switch
+            {
+                ModuleLogMode.Runtime => "主机：Runtime（只进内存，不落盘，已通知客户端不要落盘）",
+                ModuleLogMode.OnlySelf => "主机：Only self（仅本端落盘，客户端不落盘）",
+                _ => "主机：All players（本端与所有玩家端都落盘）"
+            };
+            return true;
+        }
+
+        /// <summary>
+        /// 当前日志模式（供控制台显示）。
+        ///
+        /// 判定依据：本端是否落盘（ModLog.Verbose）+ 是否已下发给客户端
+        /// （Terrain 层的 HostWantsClientLogPersistence）。
+        /// 不落盘 → Runtime；落盘且下发 → AllPlayers；落盘但不下发 → OnlySelf。
+        /// </summary>
+        public ModuleLogMode ReadModuleLogMode()
+        {
+            bool persistLocally = ModLog.Verbose;
+            if (!persistLocally) return ModuleLogMode.Runtime;
+            bool propagated = m_terrainModule?.HostWantsClientLogPersistence ?? false;
+            return propagated ? ModuleLogMode.AllPlayers : ModuleLogMode.OnlySelf;
+        }
+
+        /// <summary>兼容旧调用：bool 语义 = AllPlayers（落盘并下发）/ Runtime。</summary>
+        public bool SetModuleLogModeRuntime(bool persistToFile, out string note) =>
+            SetModuleLogModeRuntime(
+                persistToFile ? ModuleLogMode.AllPlayers : ModuleLogMode.Runtime, out note);
 
         /// <summary>换世界时重读 &lt;世界目录&gt;/SuMultiplayerWorld.json（加入审批设置）。</summary>
         private void RefreshWorldJoinSettings(bool inWorld)
@@ -1686,10 +2205,49 @@ m_terrainModule?.Bridge.BlockBehaviorNotify.Describe());
 
             public bool AutoApprove => m_owner.m_worldJoinSettings.AutoApproveJoins;
 
+            /// <summary>
+            /// 房间容量闸门：返回 true 表示应拒绝（并给出可直接展示的原因）。
+            ///
+            /// 判定口径（用户 2026-11-08 定）：
+            ///   · MaxPlayers = 0 → 关闭加入（不开放任何新连接）；
+            ///   · 已连接数 &gt;= MaxPlayers → 满员；
+            ///   · 其它情况放行。
+            /// 连接数取 ITransportControlPort.ConnectedPlayerCount（按连接计，不按本地角色计）。
+            /// </summary>
+            private bool CheckRoomCapacity(out string reason)
+            {
+                reason = null;
+                int maxPlayers = m_owner.m_config?.MaxPlayers ?? 0;
+                if (maxPlayers <= 0)
+                {
+                    reason = "This room is not accepting new players.";
+                    return true;
+                }
+                int connected = m_owner.m_terrainModule?.ControlPort?.ConnectedPlayerCount ?? 0;
+                if (connected >= maxPlayers)
+                {
+                    reason = "This room is full (" + connected + "/" + maxPlayers + ").";
+                    return true;
+                }
+                return false;
+            }
+
             public void RequestDecision(int clientId, string name, string identity,
                 Action<bool, string> decided)
             {
                 string label = string.IsNullOrEmpty(name) ? ("client#" + clientId) : name;
+                // 容量闸门（在 Ban 之后、自动同意/入队之前）：
+                //   MaxPlayers 是**房间对外可容纳的连接数**（一个连接 = 一台设备，
+                //   与"这台设备上有几个本机角色"无关）。
+                //   0 = 关闭加入（房间里的人继续玩，但不再接受新连接）。
+                //   这里拒绝后 Terrain 层会按 HelloAck.rejected 落地，客户端看到明确原因。
+                if (CheckRoomCapacity(out string capacityText))
+                {
+                    ModLog.Info("[SuMP][join-approval] 拒绝加入（容量）：clientId=" + clientId +
+                        " · " + label + " · " + capacityText);
+                    decided(false, capacityText);
+                    return;
+                }
                 // Ban 在自动同意/入队之前裁决：被 Ban 的身份即使 autoApprove 打开也必须拒绝。
                 if (m_owner.m_worldJoinSettings != null &&
                     m_owner.m_worldJoinSettings.IsBanned(identity))
@@ -1872,7 +2430,8 @@ m_terrainModule?.Bridge.BlockBehaviorNotify.Describe());
             try
             {
                 ChatAutomation = null;
-                CircuitSyncDebugAutomation = null;
+                CircuitSyncDebugAutomation = null;
+
                 m_editWatcher = null;
                 m_chatOverlay?.Dispose();
                 m_chatOverlay = null;

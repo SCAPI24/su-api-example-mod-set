@@ -4314,6 +4314,104 @@ namespace SuMultiplayer.Modules
             Info("联机角色模块下线（" + reason + "）：只清理本模块自己的状态");
         }
 
+        /// <summary>
+        /// 主机：联机角色的**完整快照**（供无头服务器控制台的角色管理）。
+        ///
+        /// 数据来源是 <c>SuMultiplayerPlayers.xml</c> 的角色记录
+        /// （<see cref="SuMultiplayerPlayersXml"/>）—— 主机端联机角色的唯一落盘位置，
+        /// 因此**离线玩家的记录也能管理**（不要求该玩家在线）。
+        ///
+        /// 每条记录附带 <c>online</c> / <c>clientId</c>：在线状态由 <c>m_spawner.Keys</c>
+        /// 与记录键对照得出。不改动任何状态，纯只读。
+        /// </summary>
+        public System.Collections.Generic.IReadOnlyList<
+            System.Collections.Generic.KeyValuePair<string, NetworkPlayerRecord>>
+            CaptureNetworkPlayerRecords(
+                out System.Collections.Generic.IReadOnlyDictionary<string, int> onlineByRecordKey)
+        {
+            var online = new System.Collections.Generic.Dictionary<string, int>(
+                StringComparer.Ordinal);
+            if (m_spawner != null)
+            {
+                foreach (PlayerKey key in m_spawner.Keys)
+                {
+                    if (key.ClientId <= 0) continue;
+                    if (!m_spawner.TryGetRecordKey(key, out string recordKey)) continue;
+                    if (string.IsNullOrEmpty(recordKey)) continue;
+                    // 同一记录键只记第一个在线连接（多槽位设备共用一条记录的情况极少）。
+                    if (!online.ContainsKey(recordKey)) online[recordKey] = key.ClientId;
+                }
+            }
+            onlineByRecordKey = online;
+
+            var result = new System.Collections.Generic.List<
+                System.Collections.Generic.KeyValuePair<string, NetworkPlayerRecord>>();
+            foreach (System.Collections.Generic.KeyValuePair<string, NetworkPlayerRecord> entry
+                in m_records.Entries)
+            {
+                if (entry.Value == null) continue;
+                result.Add(entry);
+            }
+            return result;
+        }
+
+        /// <summary>按记录键取一条联机角色记录（不存在返回 null）。</summary>
+        public NetworkPlayerRecord GetNetworkPlayerRecord(string recordKey)
+        {
+            if (string.IsNullOrEmpty(recordKey)) return null;
+            return m_records.TryGet(recordKey, out NetworkPlayerRecord record) ? record : null;
+        }
+
+        /// <summary>把一条（已就地修改过的）联机角色记录写回并落盘。</summary>
+        public bool SaveNetworkPlayerRecord(string recordKey, NetworkPlayerRecord record,
+            out string reason)
+        {
+            reason = null;
+            if (string.IsNullOrEmpty(recordKey))
+            {
+                reason = "Record key is empty.";
+                return false;
+            }
+            if (record == null)
+            {
+                reason = "Record is null.";
+                return false;
+            }
+            if (!m_records.Put(recordKey, record))
+            {
+                reason = "The host record table rejected the change (only the host may write it).";
+                return false;
+            }
+            if (!m_records.SaveIfDirty())
+            {
+                reason = "Saving " + SuMultiplayerPlayersXml.FileName + " failed; see the log.";
+                return false;
+            }
+            return true;
+        }
+
+        /// <summary>删除一条联机角色记录并落盘。</summary>
+        public bool DeleteNetworkPlayerRecord(string recordKey, out string reason)
+        {
+            reason = null;
+            if (string.IsNullOrEmpty(recordKey))
+            {
+                reason = "Record key is empty.";
+                return false;
+            }
+            if (!m_records.Remove(recordKey))
+            {
+                reason = "No such player record: " + recordKey;
+                return false;
+            }
+            if (!m_records.SaveIfDirty())
+            {
+                reason = "Saving " + SuMultiplayerPlayersXml.FileName + " failed; see the log.";
+                return false;
+            }
+            return true;
+        }
+
         /// <summary>主机：当前在线玩家端列表（IF 设置容器用；只读快照）。</summary>
         public System.Collections.Generic.IReadOnlyList<HostPeerInfo> CaptureHostPeers()
         {

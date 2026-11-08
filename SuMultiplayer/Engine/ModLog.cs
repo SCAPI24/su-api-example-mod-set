@@ -23,6 +23,21 @@ namespace SuMultiplayer.Engine
     /// `Warn` / `Error` 始终同时写 Game.log（真异常必须留在核心日志），
     /// 是否再进角色日志由模式决定（同 Info）。
     /// </summary>
+    /// <summary>
+    /// 模块日志的三种落盘状态（用户 2026-11-08 定）。
+    ///
+    /// 区别只在"谁写盘"，三者都**立即生效**：
+    ///   · <see cref="Runtime"/>    —— 谁都不写盘（默认；上线跑图不产生日志文件）；
+    ///   · <see cref="OnlySelf"/>   —— 只有主机本端写盘，客户端保持 Runtime；
+    ///   · <see cref="AllPlayers"/> —— 主机写盘并下发，所有玩家端都写盘。
+    /// </summary>
+    public enum ModuleLogMode
+    {
+        Runtime = 0,
+        OnlySelf = 1,
+        AllPlayers = 2,
+    }
+
     public static class ModLog
     {
         private const int MaxBufferedBytes = 256 * 1024;
@@ -47,12 +62,34 @@ namespace SuMultiplayer.Engine
 
         public static bool Verbose => s_verbose;
 
-        public static void Configure(bool verbose)
+        /// <summary>
+        /// 配置日志模式（单参版）：verbose 与落盘保持一致，等价于 <c>Configure(v, v)</c>。
+        /// 保留它是为了不改动既有调用点（启动、握手、客户端跟随主机下发）。
+        /// </summary>
+        public static void Configure(bool verbose) => Configure(verbose, verbose);
+
+        /// <summary>
+        /// 配置日志模式（**本地落盘与详细记录分离**）。
+        ///
+        /// 为什么要把两者拆开（用户 2026-11-08 定）：
+        ///   主机在"上线模式"下也需要能**只给自己**落盘做复盘，而不通知客户端跟着落盘
+        ///   （客户端落盘会把每个人的磁盘都写满，且上线跑图本来就不该产生日志文件）。
+        ///
+        /// 三种组合由上层决定，本类只如实执行：
+        ///   · Runtime（verbose=false, persist=false）—— 只进内存，满了丢弃；
+        ///   · Only self（verbose=true, persist=true）—— 只本端落盘，不下发；
+        ///   · All players（verbose=true, persist=true + 下发）—— 本端与客户端都落盘。
+        /// "All players" 与 "Only self" 在本类的状态完全相同，差别只在**是否下发**
+        /// （由 <c>SuMultiplayerMod.SetModuleLogModeRuntime</c> 的重载负责）。
+        /// </summary>
+        public static void Configure(bool verbose, bool persistToFile)
         {
             lock (Gate)
             {
                 s_verbose = verbose;
-                s_persistToFile = verbose;
+                // 不落盘时保留缓冲内容（verbose 可能仍为 true），但缓冲满会丢弃 —— 由
+                // WriteBufferLocked 里"s_persistToFile 为 false 就清空返回"实现。
+                s_persistToFile = persistToFile;
                 Buffer.Clear();
                 s_bufferedBytes = 0;
             }

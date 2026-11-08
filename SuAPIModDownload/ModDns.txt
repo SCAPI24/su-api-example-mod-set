@@ -97,7 +97,11 @@ WatchMod | su-watch | ["0.1.6.0"] | 1.0.1 | gitee:"https://gitee.com/SC-SPM/su-a
 #   `ObserveClientJoinBarrier` / `BuildJoinBarrierDiagnostics` 调用点与字段。功能与 2.2.6 相同，
 #   仅去掉诊断输出（2.2.6 的那几项修复全部保留）。
 # ⚠️ buildFingerprint 再次变化：2.2.7 与 2.2.6 及更早构建**互不互通**，三端必须同时换。
-# ── 联机模组：ScMultiplayer（旧版，已被下方的 SuMultiplayer 重写版取代）─────────────────
+# ── 联机模组：ScMultiplayer（**已废弃 / 仅存档**）────────────────────────────────────
+# ⚠️ 本组条目全部注释掉，**不再对外提供**：请使用下方 `SuMultiplayer`（短码 Su-MP）。
+#    原因：重写版与旧版的协议、存档格式、服务目录格式都不同，两者**不能混用**；
+#    继续让旧版出现在索引里，只会让人装错版本后互不连通。
+#    条目保留仅为**回退存档**：真要回退，必须三端同时换，且把行首 # 去掉。
 # 旧的 ScMultiplayer 条目保留在此，需要回退时把行首 # 去掉即可（短码 Su-ScMP 只认最新版）。
 # ScMultiplayer | Su-ScMP | ["0.1.6.0"] | 2.2.9 | gitee:"https://gitee.com/SC-SPM/su-api-example-mod-set/releases/download/0.1.6.0/%5BSuAPI%5DScMultiplayer-2.2.9.scmod";github:"https://github.com/SCAPI24/su-api-example-mod-set/releases/download/0.1.6.0/SuAPI.ScMultiplayer-2.2.9.scmod";cnb:"https://cnb.cool/suceru.cb/SC-SPM/SuAPIMod/-/releases/download/0.1.6.0/[SuAPI]ScMultiplayer-2.2.9.scmod" | zh_CN=联机模组;en_US=ScMultiplayer
 # ScMultiplayer | Su-ScMP | ["0.1.6.0"] | 2.2.8 | gitee:"https://gitee.com/SC-SPM/su-api-example-mod-set/releases/download/0.1.6.0/%5BSuAPI%5DScMultiplayer-2.2.8.scmod";github:"https://github.com/SCAPI24/su-api-example-mod-set/releases/download/0.1.6.0/SuAPI.ScMultiplayer-2.2.8.scmod";cnb:"https://cnb.cool/suceru.cb/SC-SPM/SuAPIMod/-/releases/download/0.1.6.0/[SuAPI]ScMultiplayer-2.2.8.scmod" | zh_CN=联机模组;en_US=ScMultiplayer
@@ -123,7 +127,25 @@ WatchMod | su-watch | ["0.1.6.0"] | 1.0.1 | gitee:"https://gitee.com/SC-SPM/su-a
 #   ⚠️ 同日重打（2026-10-01）：ModInfo 的 APIVersion 由 0.1.5.0 统一为 **0.1.6.0**，包 sha256
 #   `c7aa0b93…`（91712 B）；三端 release 资产已就地替换（早先那版 `9e8a55af…` 作废），
 #   DLL 与 build 指纹未变，服务器上那份也已换成同一份。
-HeadlessRenderingMod | Su-HRM | ["0.1.6.0"] | 1.3.6 | gitee:"https://gitee.com/SC-SPM/su-api-example-mod-set/releases/download/0.1.6.0/%5BSuAPI%5DHeadlessRenderingMod-1.3.6.scmod";github:"https://github.com/SCAPI24/su-api-example-mod-set/releases/download/0.1.6.0/SuAPI.HeadlessRenderingMod-1.3.6.scmod";cnb:"https://cnb.cool/suceru.cb/SC-SPM/SuAPIMod/-/releases/download/0.1.6.0/[SuAPI]HeadlessRenderingMod-1.3.6.scmod" | zh_CN=无画面服务器;en_US=Headless Server
+# 1.4.1（2026-11-08）：Linux 无 GPU 运行 + 控制台 TUI 正式可用，同时补完联机运维界面：
+#   - **Linux 无 GPU**：6 个空壳库（gbm/drm/EGL/GLESv2/libinput/libc）全部嵌入 mod、
+#     以 `*-headless.so` 独立文件名落盘（**不覆盖系统库**，删掉 mod 即可恢复原状）；
+#     所有需要 OpenGL 的渲染都是空实现，服务器无显卡也能跑。
+#   - **纯文本 TUI**：`Console.ReadKey` + 清屏重绘；Windows 抢/建控制台，Linux 用调用方终端。
+#     底部状态栏替代原来的 `Console.Title`（那是 Windows 专有）。
+#   - **联机运维菜单**（Multiplayer Settings）：
+#       Host Room     把当前世界开成房间（等价游戏内 CR 按钮）
+#       RoomSetting   二维表，与游戏内 IF 设置**同一套**读写路径（逐项即时保存）
+#       Edit-[Player N] 房间容量（对外连接数，0 = 关闭加入），就地输入，立即生效
+#       ChatRoom      每行一条的游戏内聊天，顶部 Send Message / Back
+#       Host Body-[Ghost/Normal] 主机角色幽灵化（不可见/不可攻击/睡眠）与复原
+#   - `Server Status-[Offline]` / `[N clients | X KB/s down Y KB/s up]`：主菜单行内显示房间流量。
+#   - **与 SuMultiplayer 的对接走 `SuMultiplayer.Control` 事件**（两边互不引用程序集）。
+#     旧版用的 `ScMultiplayer.ServerSettings` / `ScMultiplayer.NetworkPlayers` 事件
+#     在 SuMultiplayer 里**不存在**，所以本版之前的遥测/联机角色列表一直是空的。
+#   - 需要配合 SuMultiplayer 2.3.1 及以上。
+HeadlessRenderingMod | Su-HRM | ["0.1.7.0"] | 1.4.1 | gitee:"https://gitee.com/SC-SPM/su-api-example-mod-set/releases/download/0.1.7.0/%5BSuAPI%5DHeadlessRenderingMod-1.4.1.scmod";github:"https://github.com/SCAPI24/su-api-example-mod-set/releases/download/0.1.7.0/SuAPI.HeadlessRenderingMod-1.4.1.scmod";cnb:"https://cnb.cool/suceru.cb/SC-SPM/SuAPIMod/-/releases/download/0.1.7.0/[SuAPI]HeadlessRenderingMod-1.4.1.scmod" | zh_CN=无画面服务器;en_US=Headless Server
+# HeadlessRenderingMod | Su-HRM | ["0.1.6.0"] | 1.3.6 | gitee:"https://gitee.com/SC-SPM/su-api-example-mod-set/releases/download/0.1.6.0/%5BSuAPI%5DHeadlessRenderingMod-1.3.6.scmod";github:"https://github.com/SCAPI24/su-api-example-mod-set/releases/download/0.1.6.0/SuAPI.HeadlessRenderingMod-1.3.6.scmod";cnb:"https://cnb.cool/suceru.cb/SC-SPM/SuAPIMod/-/releases/download/0.1.6.0/[SuAPI]HeadlessRenderingMod-1.3.6.scmod" | zh_CN=无画面服务器;en_US=Headless Server
 # 上一版（`Su-HRM@1.3.5`）
 # HeadlessRenderingMod | Su-HRM | ["0.1.6.0"] | 1.3.5 | gitee:"https://gitee.com/SC-SPM/su-api-example-mod-set/releases/download/0.1.6.0/%5BSuAPI%5DHeadlessRenderingMod-1.3.5.scmod";github:"https://github.com/SCAPI24/su-api-example-mod-set/releases/download/0.1.6.0/SuAPI.HeadlessRenderingMod-1.3.5.scmod";cnb:"https://cnb.cool/suceru.cb/SC-SPM/SuAPIMod/-/releases/download/0.1.6.0/[SuAPI]HeadlessRenderingMod-1.3.5.scmod" | zh_CN=无画面服务器;en_US=Headless Server
 # 上一版（`Su-HRM@1.3.4`）
@@ -137,10 +159,25 @@ HeadlessRenderingMod | Su-HRM | ["0.1.6.0"] | 1.3.6 | gitee:"https://gitee.com/S
 # 挖掘掉本体且通道号归零（可堆叠）；自带中英词条（中文经翻译 Mod 的 AddTranslations 应用）。
 # 依赖 SuEventBus 已并入 Lib/，无需单独条目；不装本 Mod 时 index 142 仍是原版按钮（满电压），存档可双向切换。
 Channel | Su-chanl | ["0.1.6.0"] | 1.0.0 | gitee:"https://gitee.com/SC-SPM/su-api-example-mod-set/releases/download/0.1.6.0/%5BSuAPI%5DChannel-1.0.0.scmod";github:"https://github.com/SCAPI24/su-api-example-mod-set/releases/download/0.1.6.0/SuAPI.Channel-1.0.0.scmod";cnb:"https://cnb.cool/suceru.cb/SC-SPM/SuAPIMod/-/releases/download/0.1.6.0/[SuAPI]Channel-1.0.0.scmod" | zh_CN=信道;en_US=Channel
-# ── 联机模组：SuMultiplayer 2.3.0（重写版，取代旧 ScMultiplayer）──────────────────────
+# ── 联机模组：SuMultiplayer 2.3.1（重写版，取代旧 ScMultiplayer）──────────────────────
 # 这是联机模块的**重写版**：模块化架构（Session/Terrain/Circuit/Player/... 各自独立），
 # 与旧 ScMultiplayer 的协议、存档格式、服务发现都不同，两者**不能混用**。
 #
+# 2.3.1（2026-11-08）：在 2.3.0 基础上补齐无头服务器运维与角色管理：
+#   · 跨 Mod 控制通道：`SuMultiplayer.Control` 事件（与 `ScMultiplayer.ServerSettings` 那种
+#     "用不存在的事件名" 的做法彻底分开）。无头服务器控制台据此读写设置，两边不引用程序集。
+#   · 房间容量 MaxPlayers：语义是**对外连接数**（一台设备算一个连接，与它上面几个本机角色无关）；
+#     0 = 关闭加入。改完立即生效（房间信标下次应答即读新值），不用重开房。
+#   · 日志模式三档：Runtime / Only Self（只有主机落盘）/ All Players（主机+客户端都落盘）。
+#     Only Self 让主机能自己留档复盘，又不会把客户端磁盘写满。
+#   · 聊天历史：HUD 的 8 秒窗口之外另存 200 条（纯内存、不落盘、重连同清），
+#     供无头服务器控制台的聊天室回看。
+#   · 联机角色管理：控制台可列出/改名/改皮肤/改数值/删除 **SuMultiplayerPlayers.xml** 里的
+#     角色记录（离线角色也能删，由主机端保存）。数值改动只对在线角色立即下发。
+#   · 主机角色"幽灵身体"：无头服务器的主机没人操作，那个本机角色会永久站在世界里。
+#     幽灵化 = 摘掉碰撞/渲染/更新（别人看不到、打不到、他也打不到别人）+ 置为睡眠
+#     （否则客户端全睡时世界永远不会加速），PlayerData/背包/坐标全部保留，随时可复原。
+#     只针对主机自己的角色。
 # 2.3.0（2026-11-08）：本版是重写版第一次对外发布，包含自 0.1.0 起的全部功能与修复：
 #   · 端口模型：10 个房间槽位，每槽 TCP+UDP 同端口；发现走 UDP；`suceru.site:3103` 单端口、
 #     `suceru.site:3103-10` 表示 3103 起的 10 个端口范围。
@@ -153,4 +190,4 @@ Channel | Su-chanl | ["0.1.6.0"] | 1.0.0 | gitee:"https://gitee.com/SC-SPM/su-ap
 #   · 可编辑方块（内存条/真值表）：乐观锁 + 主机权威，被拒会明确回滚。
 #   · 角色记录 SuMultiplayerPlayers.xml：世界导出前保存，落盘失败只在**真失败**时告警。
 # ⚠️ 与旧 ScMultiplayer 的存档、协议、服务目录格式均**不兼容**，三端必须同时换到本版。
-SuMultiplayer | Su-MP | ["0.1.7.0"] | 2.3.0 | gitee:"https://gitee.com/SC-SPM/su-api-example-mod-set/releases/download/0.1.7.0/%5BSuAPI%5DSuMultiplayer-2.3.0.scmod";github:"https://github.com/SCAPI24/su-api-example-mod-set/releases/download/0.1.7.0/SuAPI.SuMultiplayer-2.3.0.scmod";cnb:"https://cnb.cool/suceru.cb/SC-SPM/SuAPIMod/-/releases/download/0.1.7.0/[SuAPI]SuMultiplayer-2.3.0.scmod" | zh_CN=联机模组;en_US=SuMultiplayer
+SuMultiplayer | Su-MP | ["0.1.7.0"] | 2.3.1 | gitee:"https://gitee.com/SC-SPM/su-api-example-mod-set/releases/download/0.1.7.0/%5BSuAPI%5DSuMultiplayer-2.3.1.scmod";github:"https://github.com/SCAPI24/su-api-example-mod-set/releases/download/0.1.7.0/SuAPI.SuMultiplayer-2.3.1.scmod";cnb:"https://cnb.cool/suceru.cb/SC-SPM/SuAPIMod/-/releases/download/0.1.7.0/[SuAPI]SuMultiplayer-2.3.1.scmod" | zh_CN=联机模组;en_US=SuMultiplayer

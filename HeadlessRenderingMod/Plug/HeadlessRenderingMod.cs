@@ -105,6 +105,8 @@ namespace HeadlessRenderingMod
                 m_server.Start();
                 m_frameRateLimiter = new FrameRateLimiter(m_config.TargetFrameRate);
                 m_eventBus = eventBus;
+                // 控制面走事件总线（无头服务器 <-> SuMultiplayer 互不引用程序集）。
+                HeadlessSuMultiplayerBridge.Attach(eventBus);
 
                 // Source: Survivalcraft/Game/Program.cs:Program.Run
                 m_frameToken = eventBus.SubscribeEvent(

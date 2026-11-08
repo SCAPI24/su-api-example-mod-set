@@ -57,6 +57,14 @@ namespace HeadlessRenderingMod
         private string m_multiplayerTelemetry;
         private DataModificationFeed m_dataModificationFeed;
 
+        // Server Status 流量采样：累计字节 + 上次采样时刻，用来算每秒速率。
+        private bool m_roomSampleValid;
+        private double m_roomSampleTime;
+        private long m_roomSampleBytesSent;
+        private long m_roomSampleBytesReceived;
+        private double m_roomSampleRateDown;
+        private double m_roomSampleRateUp;
+
         public bool IsRunning => m_running;
 
         /// <summary>主机侧 DM 决策记录（请求 / 自动同意 / 手动裁决 / 回执），菜单里可查。</summary>
@@ -452,10 +460,90 @@ namespace HeadlessRenderingMod
             GetWorldMenuLabel(),
             "Manage Players",
             "Multiplayer Settings",
-            "Server Status",
+            GetServerStatusLabel(),
             "Command Line",
             "Shutdown"
         };
+
+        /// <summary>
+        /// 一级菜单里 `Server Status` 的动态标签（每帧重新求值）。
+        ///
+        /// 未开房：`Server Status-[Offline]`
+        /// 已开房：`Server Status-[2 clients | 1.2 KB/s ↓ 0.4 KB/s ↑]`
+        ///
+        /// 速率由"累计字节数 + 两次采样差值"算出来（SuMultiplayer 只提供单调递增的累计值，
+        /// 速率属于显示方的口径）。采样间隔不足 0.5 秒时沿用上一次结果，避免除零和抖动。
+        /// </summary>
+        private string GetServerStatusLabel()
+        {
+            const string prefix = "Server Status";
+            try
+            {
+                HeadlessSuMultiplayerBridge.RoomStatus status =
+                    HeadlessSuMultiplayerBridge.ReadRoomStatus();
+                double now = Time.RealTime;
+                if (!status.Hosting)
+                {
+                    m_roomSampleValid = false;
+                    m_roomSampleTime = now;
+                    return prefix + "-[Offline]";
+                }
+
+                double downRate = 0;
+                double upRate = 0;
+                if (m_roomSampleValid)
+                {
+                    double elapsed = now - m_roomSampleTime;
+                    // 采样间隔太短时沿用上次速率（差值/间隔会放大抖动）。
+                    if (elapsed >= 0.5)
+                    {
+                        downRate = Math.Max(0,
+                            (status.BytesReceived - m_roomSampleBytesReceived) / elapsed);
+                        upRate = Math.Max(0,
+                            (status.BytesSent - m_roomSampleBytesSent) / elapsed);
+                        m_roomSampleRateDown = downRate;
+                        m_roomSampleRateUp = upRate;
+                    }
+                    else
+                    {
+                        downRate = m_roomSampleRateDown;
+                        upRate = m_roomSampleRateUp;
+                    }
+                }
+                else
+                {
+                    m_roomSampleValid = true;
+                }
+                m_roomSampleTime = now;
+                m_roomSampleBytesSent = status.BytesSent;
+                m_roomSampleBytesReceived = status.BytesReceived;
+
+                return prefix + "-[" + status.Clients +
+                    (status.Clients == 1 ? " client | " : " clients | ") +
+                    FormatRate(downRate) + " \u2193 " + FormatRate(upRate) + " \u2191]";
+            }
+            catch
+            {
+                // 读不到就明说（联机 Mod 未装/未初始化），不伪装成 Offline。
+                return prefix + "-[Unavailable]";
+            }
+        }
+
+        /// <summary>每秒字节 → `1.2 KB/s` 形式的紧凑文本。</summary>
+        private static string FormatRate(double bytesPerSecond)
+        {
+            if (bytesPerSecond < 1024)
+                return bytesPerSecond.ToString("0", System.Globalization.CultureInfo.InvariantCulture)
+                    + " B/s";
+            double kb = bytesPerSecond / 1024.0;
+            if (kb < 1024)
+            {
+                return kb.ToString("0.0", System.Globalization.CultureInfo.InvariantCulture)
+                    + " KB/s";
+            }
+            return (kb / 1024.0).ToString("0.0",
+                System.Globalization.CultureInfo.InvariantCulture) + " MB/s";
+        }
 
         /// <summary>一级菜单的世界入口标签：`World-[世界名]`，未加载时是 `World-[]`。</summary>
         private string GetWorldMenuLabel()
@@ -559,20 +647,26 @@ namespace HeadlessRenderingMod
             {
                 int? choice = SelectDynamicMenu("Multiplayer Settings", () => new[]
                 {
+                    GetHostRoomMenuLabel(),
+                    "RoomSetting",
+                    "ChatRoom",
+                    "Edit-[Player " + DescribeMaxPlayers() + "]",
                     "Multiplayer Hosting",
                     "Multiplayer Bandwidth",
-                    "Multiplayer Log Mode: " + DescribeModuleLogMode(),
                     "Back"
                 }, selected);
-                if (!choice.HasValue || choice.Value == 3) return;
+                if (!choice.HasValue || choice.Value == 6) return;
                 selected = choice.Value;
                 try
                 {
                     switch (selected)
                     {
-                        case 0: ConfigureMultiplayerHosting(); break;
-                        case 1: ConfigureMultiplayerBandwidth(); break;
-                        case 2: ConfigureMultiplayerLogMode(); break;
+                        case 0: RunHostRoom(); break;
+                        case 1: ConfigureRoomSetting(); break;
+                        case 2: RunChatRoom(); break;
+                        case 3: EditMaxPlayers(); break;
+                        case 4: ConfigureMultiplayerHosting(); break;
+                        case 5: ConfigureMultiplayerBandwidth(); break;
                     }
                 }
                 catch (Exception ex)
@@ -589,11 +683,88 @@ namespace HeadlessRenderingMod
         {
             try
             {
-                return HeadlessSuMultiplayerBridge.ReadModuleLogMode() ? "Debug" : "Online";
+                return HeadlessSuMultiplayerBridge.ReadModuleLogMode() switch
+                {
+                    HeadlessSuMultiplayerBridge.LogMode.Runtime => "Runtime",
+                    HeadlessSuMultiplayerBridge.LogMode.OnlySelf => "Only Self",
+                    HeadlessSuMultiplayerBridge.LogMode.AllPlayers => "All Players",
+                    _ => "Unknown"
+                };
             }
             catch
             {
                 return "Unavailable";
+            }
+        }
+
+        /// <summary>
+        /// 房间容量（对外连接数，0 = 关闭加入）。读不到时显示 "?" —— 明确表示未知，
+        /// 不要伪装成 0（0 有"关闭加入"的确切含义）。
+        /// </summary>
+        private string DescribeMaxPlayers()
+        {
+            try
+            {
+                return HeadlessSuMultiplayerBridge.ReadMaxPlayers()
+                    .ToString(System.Globalization.CultureInfo.InvariantCulture);
+            }
+            catch
+            {
+                return "?";
+            }
+        }
+
+        /// <summary>
+        /// 就地编辑房间容量（不进入下级菜单）：屏幕底部出现输入行，
+        /// 与世界编辑器里改 Seed 的交互一致。
+        ///
+        /// 输入规则（用户 2026-11-08 定）：
+        ///   · 输入数字 + 回车 → 立即生效并保存（房间信标下次应答即带新值，不用重开房）；
+        ///   · 输入 0 → 关闭加入（房间里的人继续玩，但不再接受新连接）；
+        ///   · **清空后直接回车 → 保持原值不变**；
+        ///   · 非数字 → 提示后重输。
+        /// </summary>
+        private void EditMaxPlayers()
+        {
+            int current;
+            try
+            {
+                current = HeadlessSuMultiplayerBridge.ReadMaxPlayers();
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine();
+                Console.WriteLine("Max player unavailable: " + ex.Message);
+                Pause();
+                return;
+            }
+
+            while (m_running)
+            {
+                Console.WriteLine();
+                Console.Write("Max Player [" + current + "]: ");
+                string entered = Console.ReadLine();
+                // 清空（或流结束）后回车 = 保持原值。
+                if (string.IsNullOrWhiteSpace(entered))
+                    return;
+                string trimmed = entered.Trim();
+                if (!int.TryParse(trimmed, out int value) || value < 0 || value > 32)
+                {
+                    Console.WriteLine("Use 0-32 (0 = stop accepting new players).");
+                    continue;
+                }
+                try
+                {
+                    HeadlessSuMultiplayerBridge.SetMaxPlayers(value);
+                    Console.WriteLine("Max Player: " + value +
+                        (value == 0 ? " (not accepting new players)" : string.Empty));
+                    return;
+                }
+                catch (Exception ex)
+                {
+                    Console.WriteLine("Max Player not changed: " + ex.Message);
+                    return;
+                }
             }
         }
 
@@ -729,10 +900,10 @@ namespace HeadlessRenderingMod
                 // 不带参数：先报当前状态，再让用户用上下键选（同一套 SelectMenu，与主菜单一致）。
                 try
                 {
-                    bool current = HeadlessSuMultiplayerBridge.ReadModuleLogMode();
+                    HeadlessSuMultiplayerBridge.LogMode current =
+                        HeadlessSuMultiplayerBridge.ReadModuleLogMode();
                     Console.WriteLine();
-                    Console.WriteLine("Current log mode: " +
-                        (current ? "Debug (persisting)" : "Online (memory only)"));
+                    Console.WriteLine("Current log mode: " + DescribeLogMode(current));
                 }
                 catch (Exception ex)
                 {
@@ -766,11 +937,12 @@ namespace HeadlessRenderingMod
                     + "false = online, memory only)");
             }
 
-            bool ok = HeadlessSuMultiplayerBridge.TrySetModuleLogMode(persist, out string note);
+            HeadlessSuMultiplayerBridge.LogMode mode = persist
+                ? HeadlessSuMultiplayerBridge.LogMode.AllPlayers
+                : HeadlessSuMultiplayerBridge.LogMode.Runtime;
+            bool ok = HeadlessSuMultiplayerBridge.TrySetModuleLogMode(mode, out string note);
             Console.WriteLine();
-            Console.WriteLine(ok
-                ? "Log mode: " + (persist ? "Debug (persisting)" : "Online (memory only)")
-                : "Not switched: " + note);
+            Console.WriteLine(ok ? "Log mode: " + DescribeLogMode(mode) : "Not switched: " + note);
             if (ok && !string.IsNullOrEmpty(note)) Console.WriteLine(note);
         }
 
@@ -870,10 +1042,20 @@ namespace HeadlessRenderingMod
                 }
 
                 ConsoleKey key = Console.ReadKey(true).Key;
+                // 二维导航：网格是**行优先**排布（BuildWorldEditorGrid），所以
+                //   ← →  在同一行内左右移动
+                //   ↑ ↓  按**同一列**跨行移动
+                // 列数每次重绘都可能变（窗口宽度/项数变化），所以这里现算一次。
+                BuildWorldEditorGrid(items, out int columns);
+                if (columns < 1) columns = 1;
                 if (key == ConsoleKey.UpArrow)
-                    selected = selected > 0 ? selected - 1 : items.Count - 1;
+                    selected = MoveSelectionVertical(items.Count, columns, selected, -1);
                 else if (key == ConsoleKey.DownArrow)
-                    selected = selected < items.Count - 1 ? selected + 1 : 0;
+                    selected = MoveSelectionVertical(items.Count, columns, selected, +1);
+                else if (key == ConsoleKey.LeftArrow)
+                    selected = MoveSelectionHorizontal(items.Count, columns, selected, -1);
+                else if (key == ConsoleKey.RightArrow)
+                    selected = MoveSelectionHorizontal(items.Count, columns, selected, +1);
                 else if (key == ConsoleKey.Home)
                     selected = 0;
                 else if (key == ConsoleKey.End)
@@ -890,6 +1072,50 @@ namespace HeadlessRenderingMod
                 }
             }
             return WorldEditorResult.Cancel;
+        }
+
+        /// <summary>
+        /// 二维导航 · 垂直移动：**保持列不变**，跳到相邻行的同一列。
+        ///
+        /// 网格是行优先排布（第 r 行第 c 列 = r*columns + c），所以垂直移动就是 ±columns。
+        /// 末行项目数不足时目标位置越界 —— 此时**落到该行最后一列**（而不是跳到别行或原地卡住）。
+        /// 到达首/末行时环绕到另一端（与改造前的上下键环绕行为保持一致）。
+        /// </summary>
+        private static int MoveSelectionVertical(int count, int columns, int selected, int step)
+        {
+            if (count <= 0) return 0;
+            if (columns < 1) columns = 1;
+            int column = selected % columns;
+            int row = selected / columns;
+            int rowCount = (count + columns - 1) / columns;
+            int targetRow = row + step;
+            if (targetRow < 0) targetRow = rowCount - 1;
+            else if (targetRow >= rowCount) targetRow = 0;
+            int target = targetRow * columns + column;
+            if (target >= count)
+            {
+                // 目标行的这一列不存在（末行项数不足）：落到该行最后一列。
+                int rowLast = Math.Min(targetRow * columns + columns - 1, count - 1);
+                // 若连这一行的首列都超界（理论上不会发生），退回当前选择。
+                target = rowLast >= 0 ? rowLast : selected;
+            }
+            return Math.Clamp(target, 0, count - 1);
+        }
+
+        /// <summary>
+        /// 二维导航 · 水平移动：在**同一行内**左右移动，不跨行。
+        /// 行首继续往左 / 行尾继续往右时**停在原地**（不环绕、不换行）——
+        /// 换行会让人以为按了上下键。
+        /// </summary>
+        private static int MoveSelectionHorizontal(int count, int columns, int selected, int step)
+        {
+            if (count <= 0) return 0;
+            if (columns < 1) columns = 1;
+            int rowStart = (selected / columns) * columns;
+            int rowEnd = Math.Min(rowStart + columns - 1, count - 1);
+            int target = selected + step;
+            if (target < rowStart || target > rowEnd) return selected;
+            return target;
         }
 
         /// <summary>项与项之间的水平间距（列间距）。</summary>
@@ -1083,6 +1309,19 @@ namespace HeadlessRenderingMod
                 return 80;
             }
         }
+        /// <summary>可用行数（终端拿不到高度时按 24 行算，与经典终端一致）。</summary>
+        private static int SafeWindowHeight()
+        {
+            try
+            {
+                int h = Console.WindowHeight;
+                return h > 10 ? h : 24;
+            }
+            catch
+            {
+                return 24;
+            }
+        }
 
         /// <summary>显示宽度：CJK / 全角算 2 列，其余算 1 列（用于对齐与列数判断）。</summary>
         private static int DisplayWidth(string text)
@@ -1116,8 +1355,12 @@ namespace HeadlessRenderingMod
                     draft.Name = value;
                 }),
                 new WorldEditorItem(
-                    "Seed: " + (draft.Seed.Length == 0 ? "<random>" : draft.Seed),
-                    delegate { draft.Seed = PromptText("Seed", draft.Seed, "random"); }),
+                    // 留空 = 随机：显示 <> 作为"空"的指示即可。
+                    // 不要在提示里写 random —— 游戏侧对空 seed 才走时间随机
+                    // （Survivalcraft/Game/WorldsManager.cs:CreateWorld），
+                    // 写出 random 会让人以为要输入这几个字，结果得到固定地图。
+                    "Seed: " + (draft.Seed.Length == 0 ? "<>" : draft.Seed),
+                    delegate { draft.Seed = PromptText("Seed", draft.Seed); }),
                 new WorldEditorItem("Game mode: " + draft.GameMode, delegate
                 {
                     draft.GameMode = PromptChoice(
@@ -1525,6 +1768,21 @@ namespace HeadlessRenderingMod
                 Dictionary<string, object> player = SelectPlayer("Manage Players");
                 if (player == null)
                     return;
+                if (ReferenceEquals(player, CreatePlayerRequested))
+                {
+                    // 建完（或中途取消）都回到本菜单，不退出。
+                    try
+                    {
+                        CreatePlayer();
+                    }
+                    catch (Exception ex)
+                    {
+                        Console.WriteLine();
+                        Console.WriteLine("Error: " + ex.Message);
+                        Pause();
+                    }
+                    continue;
+                }
                 if (player.ContainsKey("networkKey"))
                 {
                     ManageNetworkPlayer(player);
@@ -1715,6 +1973,10 @@ namespace HeadlessRenderingMod
                 world.TryGetValue("loaded", out object value) && value is bool loaded && loaded);
         }
 
+        /// <summary>SelectPlayer 的哨兵返回值：用户选了列表里的 "Create Player"。</summary>
+        private static readonly Dictionary<string, object> CreatePlayerRequested =
+            new Dictionary<string, object>(StringComparer.Ordinal);
+
         private Dictionary<string, object> SelectPlayer(string title)
         {
             List<Dictionary<string, object>> players = GetResult<List<Dictionary<string, object>>>(
@@ -1724,11 +1986,37 @@ namespace HeadlessRenderingMod
             List<string> labels = new List<string>();
             foreach (Dictionary<string, object> player in players)
             {
+                if (player.ContainsKey("networkKey"))
+                {
+                    // 联机角色（主机端 SuMultiplayerPlayers.xml 记录）：
+                    // 用 @ 前缀与本地角色的 # 区分，并标出在线状态 —— 离线角色也能管理。
+                    bool online = player.TryGetValue("online", out object onlineValue) &&
+                        onlineValue is bool flag && flag;
+                    labels.Add("@" + player["name"] +
+                        " | " + player["playerClass"] +
+                        " | " + (online ? "online" : "offline"));
+                    continue;
+                }
                 labels.Add("#" + player["playerIndex"] + " " + player["name"] +
                     " | " + player["playerClass"] + " | " + player["skinDisplayName"]);
             }
+            // 列表末尾固定补上 Create Player / Back：
+            //   · 之前这里只有玩家行，选中后进二级菜单，但列表本身没有退路，
+            //     用户只能靠 Esc 猜；补上显式入口，与其它菜单保持一致。
+            int createIndex = labels.Count;
+            int backIndex = labels.Count + 1;
+            labels.Add("Create Player");
+            labels.Add("Back");
             int? selected = SelectMenu(title, labels.ToArray(), 0);
-            return selected.HasValue ? players[selected.Value] : null;
+            if (!selected.HasValue) return null;
+            if (selected.Value == backIndex) return null;
+            if (selected.Value == createIndex)
+            {
+                // 用哨兵告诉调用方"要新建玩家"，由 ManagePlayers 负责执行并留在菜单里
+                // （不能在这里直接 CreatePlayer 再返回 null —— 那会让 ManagePlayers 退出）。
+                return CreatePlayerRequested;
+            }
+            return players[selected.Value];
         }
 
         private Dictionary<string, object> SelectSkin(string playerClass, string title)
@@ -1739,7 +2027,17 @@ namespace HeadlessRenderingMod
                     Args("playerClass", playerClass)));
             List<string> labels = new List<string>();
             foreach (Dictionary<string, object> skin in skins)
-                labels.Add(skin["displayName"] + " | " + skin["name"]);
+            {
+                // 内置皮肤的内部名是 "$Male1" 这类资源名，对玩家没有意义；
+                // 改成 "显示名 |$显示名"（保留 $ 前缀，用来区分游戏自带与自定义 .scskin）。
+                // 真正提交给游戏的仍是 skin["name"]（原始内部名），这里只影响显示。
+                string internalName = skin["name"].ToString();
+                string displayName = skin["displayName"].ToString();
+                string shownName = internalName.StartsWith("$", StringComparison.Ordinal)
+                    ? "$" + displayName
+                    : internalName;
+                labels.Add(displayName + " |" + shownName);
+            }
             int? selected = SelectMenu(title, labels.ToArray(), 0);
             return selected.HasValue ? skins[selected.Value] : null;
         }
@@ -2915,9 +3213,614 @@ namespace HeadlessRenderingMod
         /// 远端无头服务器没有人去点游戏内界面，这个菜单是运维唯一能改它的入口。
         /// 调用走反射（见 Server/HeadlessSuMultiplayerBridge.cs），本 mod 不引用 SuMultiplayer。
         /// </summary>
-        private void ConfigureMultiplayerLogMode()
+        // ── Host Room：把当前世界开成房间 ─────────────────────────────────
+
+        /// <summary>
+        /// `Host Room` 的动态标签：未开房显示 `Host Room`，已开房显示 `Host Room-[hosting]`。
+        /// 与游戏内 CR 按钮同一语义（把当前世界开成房间），不是"启动时自动开房"。
+        /// </summary>
+        private string GetHostRoomMenuLabel()
+        {
+            try
+            {
+                HeadlessSuMultiplayerBridge.RoomStatus status =
+                    HeadlessSuMultiplayerBridge.ReadRoomStatus();
+                return status.Hosting ? "Host Room-[hosting]" : "Host Room";
+            }
+            catch
+            {
+                return "Host Room";
+            }
+        }
+
+        /// <summary>
+        /// 建房：把**当前正在玩的世界**开成房间（等价于游戏内按 CR）。
+        /// 已在开房时如实告知，不重复建；失败时把联机 Mod 给的原因原样显示。
+        /// </summary>
+        private void RunHostRoom()
+        {
+            try
+            {
+                if (HeadlessSuMultiplayerBridge.TryHostRoom(out bool already, out string note))
+                {
+                    Console.WriteLine();
+                    Console.WriteLine(already
+                        ? "Already hosting: " + note
+                        : "Room created: " + note);
+                    Pause();
+                    return;
+                }
+                Console.WriteLine();
+                Console.WriteLine("Room not created: " + note);
+                Pause();
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine();
+                Console.WriteLine("Host Room failed: " + ex.Message);
+                Pause();
+            }
+        }
+
+        // ── ChatRoom：控制台聊天室 ─────────────────────────────────────────
+
+        // 规格（用户 2026-11-08 定）：每行显示一条，只显示游戏内的聊天；
+        // 顶部两个选项——第一个"发送消息"、第二个"返回"。
+        //
+        // 数据来自 SuMultiplayer 的 ChatModule.History（**不受 HUD 的 8 秒淡出限制**，
+        // 纯内存、不落盘）。用 since 游标增量读取，避免每次搬全量。
+        private void RunChatRoom()
+        {
+            var lines = new List<HeadlessSuMultiplayerBridge.ChatLine>();
+            long cursor = 0;
+            bool inSession = false;
+            string lastRendered = null;
+            int selected = 0;
+            var options = new[] { "Send Message", "Back" };
+
+            while (m_running)
+            {
+                // 每帧拉增量：一次成功读取就把游标推进，失败只提示一次不刷屏。
+                try
+                {
+                    List<HeadlessSuMultiplayerBridge.ChatLine> added =
+                        HeadlessSuMultiplayerBridge.ReadChatLines(cursor, out cursor,
+                            out inSession);
+                    if (added.Count > 0)
+                    {
+                        lines.AddRange(added);
+                        // 控制台侧也留一个上限，防止长时间挂机把内存撑大。
+                        const int MaxLines = 500;
+                        if (lines.Count > MaxLines) lines.RemoveRange(0, lines.Count - MaxLines);
+                    }
+                }
+                catch (Exception ex)
+                {
+                    if (!string.Equals(lastRendered, "error", StringComparison.Ordinal))
+                    {
+                        Console.WriteLine();
+                        Console.WriteLine("Chat unavailable: " + ex.Message);
+                        Pause();
+                        lastRendered = "error";
+                    }
+                }
+
+                string frame = BuildChatRoomFrame(lines, selected, inSession);
+                if (!string.Equals(frame, lastRendered, StringComparison.Ordinal))
+                {
+                    RenderChatRoom(lines, selected, inSession, options);
+                    lastRendered = frame;
+                }
+
+                ConsoleKeyInfo keyInfo = Console.ReadKey(true);
+                if (keyInfo.Key == ConsoleKey.UpArrow)
+                    selected = selected == 0 ? options.Length - 1 : selected - 1;
+                else if (keyInfo.Key == ConsoleKey.DownArrow)
+                    selected = (selected + 1) % options.Length;
+                else if (keyInfo.Key == ConsoleKey.Escape)
+                    return;
+                else if (keyInfo.Key == ConsoleKey.Enter)
+                {
+                    if (selected == options.Length - 1) return;
+                    SendChatFromConsole();
+                    lastRendered = null;
+                }
+                else if (keyInfo.Key == ConsoleKey.PageUp ||
+                         keyInfo.Key == ConsoleKey.PageDown)
+                {
+                    // 翻看更早的消息：只影响显示上限，不重新拉取。
+                    lastRendered = null;
+                }
+            }
+        }
+
+        /// <summary>输入并发送一条聊天（空输入 = 取消）。</summary>
+        private void SendChatFromConsole()
+        {
+            Console.WriteLine();
+            Console.Write("Message: ");
+            string text = Console.ReadLine();
+            if (string.IsNullOrWhiteSpace(text)) return;
+            try
+            {
+                HeadlessSuMultiplayerBridge.SendChat(text);
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine("Not sent: " + ex.Message);
+                Pause();
+            }
+        }
+
+        /// <summary>帧文本（内容没变就不重绘）。</summary>
+        private static string BuildChatRoomFrame(
+            List<HeadlessSuMultiplayerBridge.ChatLine> lines, int selected, bool inSession)
+        {
+            var builder = new System.Text.StringBuilder();
+            builder.Append(selected).Append('|').Append(inSession ? '1' : '0')
+                .Append('|').Append(lines.Count).Append((char)10);
+            foreach (HeadlessSuMultiplayerBridge.ChatLine line in lines)
+                builder.Append(line.Id).Append(line.Text).Append((char)10);
+            return builder.ToString();
+        }
+
+        private void RenderChatRoom(List<HeadlessSuMultiplayerBridge.ChatLine> lines,
+            int selected, bool inSession, string[] options)
+        {
+            BeginScreen();
+            Console.WriteLine(GetCurrentScreen() + "> ChatRoom" +
+                (inSession ? string.Empty : "  (not in a session)"));
+            Console.WriteLine("Up/Down select  Enter confirm  Esc back");
+            Console.WriteLine();
+
+            ConsoleColor previousForeground = Console.ForegroundColor;
+            ConsoleColor previousBackground = Console.BackgroundColor;
+            ConsoleColor previousLineForeground = Console.ForegroundColor;
+            try
+            {
+                // 顶部两个选项（左对齐成一列）。
+                for (int i = 0; i < options.Length; i++)
+                {
+                    bool isSelected = i == selected;
+                    if (isSelected)
+                    {
+                        Console.ForegroundColor = ConsoleColor.Black;
+                        Console.BackgroundColor = ConsoleColor.Gray;
+                    }
+                    string text = options[i] + new string(' ', ColumnGap);
+                    Console.Write(text);
+                    Console.Write(isSelected ? SelectionMarker : " ");
+                    if (isSelected)
+                    {
+                        Console.ForegroundColor = previousForeground;
+                        Console.BackgroundColor = previousBackground;
+                    }
+                    Console.WriteLine();
+                }
+
+                Console.WriteLine();
+
+                // 聊天正文：每行一条，按可用行数显示**最新**的若干条。
+                int available = Math.Max(3, SafeWindowHeight() - options.Length - 6);
+                int start = Math.Max(0, lines.Count - available);
+                for (int i = start; i < lines.Count; i++)
+                {
+                    HeadlessSuMultiplayerBridge.ChatLine line = lines[i];
+                    // 自己发的用灰底区分，系统提示用暗色（与游戏内观感一致，不引入蓝色）。
+                    if (line.IsSystem)
+                    {
+                        Console.ForegroundColor = ConsoleColor.DarkGray;
+                        Console.Write("* " + line.Text);
+                    }
+                    else if (line.IsSelf)
+                    {
+                        Console.ForegroundColor = ConsoleColor.Gray;
+                        Console.Write(line.Sender + ": " + line.Text);
+                    }
+                    else
+                    {
+                        Console.ForegroundColor = previousLineForeground;
+                        Console.Write(line.Sender + ": " + line.Text);
+                    }
+                    Console.ForegroundColor = previousLineForeground;
+                    Console.WriteLine();
+                }
+
+                if (lines.Count == 0)
+                {
+                    Console.ForegroundColor = ConsoleColor.DarkGray;
+                    Console.WriteLine("(no chat yet)");
+                    Console.ForegroundColor = previousLineForeground;
+                }
+            }
+            finally
+            {
+                Console.ForegroundColor = previousForeground;
+                Console.BackgroundColor = previousBackground;
+            }
+        }
+
+        // ── RoomSetting：游戏内 IF 房间设置的二维表 ─────────────────────────
+
+        // 与游戏内 IF 设置走同一条代码路径（SuMultiplayer 的 *ForUi 回调），
+        // 所以校验、保存时机、失败提示都一致：每项改完立刻生效并落盘到
+        // <世界目录>/SuMultiplayerWorld.xml，没有 Apply 步骤。
+        private void ConfigureRoomSetting()
+        {
+            int selected = 0;
+            string lastRendered = null;
+            while (m_running)
+            {
+                List<RoomSettingItem> items = BuildRoomSettingItems();
+                if (items.Count == 0) return;
+                selected = Math.Clamp(selected, 0, items.Count - 1);
+
+                string frame = BuildRoomSettingFrame(items, selected);
+                if (!string.Equals(frame, lastRendered, StringComparison.Ordinal))
+                {
+                    RenderRoomSettingFrame(items, selected);
+                    lastRendered = frame;
+                }
+
+                ConsoleKey key = Console.ReadKey(true).Key;
+                BuildRoomSettingGrid(items, out int columns);
+                if (columns < 1) columns = 1;
+                if (key == ConsoleKey.UpArrow)
+                    selected = MoveSelectionVertical(items.Count, columns, selected, -1);
+                else if (key == ConsoleKey.DownArrow)
+                    selected = MoveSelectionVertical(items.Count, columns, selected, +1);
+                else if (key == ConsoleKey.LeftArrow)
+                    selected = MoveSelectionHorizontal(items.Count, columns, selected, -1);
+                else if (key == ConsoleKey.RightArrow)
+                    selected = MoveSelectionHorizontal(items.Count, columns, selected, +1);
+                else if (key == ConsoleKey.Home)
+                    selected = 0;
+                else if (key == ConsoleKey.End)
+                    selected = items.Count - 1;
+                else if (key == ConsoleKey.Escape)
+                    return;
+                else if (key == ConsoleKey.Enter)
+                {
+                    items[selected].Edit?.Invoke();
+                    // 值可能变了，清掉缓存强制下一帧重绘。
+                    lastRendered = null;
+                }
+            }
+        }
+
+        /// <summary>一项房间设置：显示标签 + 编辑动作。</summary>
+        private sealed class RoomSettingItem
+        {
+            internal RoomSettingItem(string label, Action edit)
+            {
+                Label = label;
+                Edit = edit;
+            }
+
+            internal string Label { get; }
+            internal Action Edit { get; }
+        }
+
+        /// <summary>构建房间设置项（每次重绘重新读，值变了标签立刻反映）。</summary>
+        private List<RoomSettingItem> BuildRoomSettingItems()
+        {
+            HeadlessSuMultiplayerBridge.WorldJoinSettingsSnapshot settings;
+            try
+            {
+                settings = HeadlessSuMultiplayerBridge.ReadWorldSettings();
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine();
+                Console.WriteLine("Room settings unavailable: " + ex.Message);
+                Pause();
+                return new List<RoomSettingItem>();
+            }
+
+            return new List<RoomSettingItem>
+            {
+                new RoomSettingItem(
+                    "Auto host: " + OnOff(settings.AutoHost),
+                    delegate { ApplyRoomBoolean("AutoHost", !settings.AutoHost); }),
+                new RoomSettingItem(
+                    "Auto approve: " + OnOff(settings.AutoApprove),
+                    delegate { ApplyRoomBoolean("AutoApprove", !settings.AutoApprove); }),
+                new RoomSettingItem(
+                    "Host port: " + DescribeHostPort(settings.HostPort),
+                    EditRoomHostPort),
+                new RoomSettingItem(
+                    "LogMode-[" + DescribeModuleLogMode() + "]",
+                    ConfigureMultiplayerLogMode),
+                new RoomSettingItem(
+                    "Host Body-[" + DescribeHostGhost() + "]",
+                    ToggleHostGhost),
+                new RoomSettingItem(
+                    "Client furniture delete: " + OnOff(settings.AllowFurnitureDelete),
+                    delegate
+                    {
+                        ApplyRoomBoolean("AllowClientFurnitureDelete",
+                            !settings.AllowFurnitureDelete);
+                    }),
+                new RoomSettingItem(
+                    "Client furniture import: " + OnOff(settings.AllowFurnitureImport),
+                    delegate
+                    {
+                        ApplyRoomBoolean("AllowFurnitureImport",
+                            !settings.AllowFurnitureImport);
+                    }),
+                new RoomSettingItem(
+                    "Client furniture export: " + OnOff(settings.AllowFurnitureExport),
+                    delegate
+                    {
+                        ApplyRoomBoolean("AllowFurnitureExport",
+                            !settings.AllowFurnitureExport);
+                    }),
+            };
+        }
+
+        private static string OnOff(bool value) => value ? "ON" : "OFF";
+
+        private static string DescribeHostPort(int port) =>
+            port <= 0
+                ? "Auto"
+                : port.ToString(System.Globalization.CultureInfo.InvariantCulture);
+
+        /// <summary>
+        /// 主机角色幽灵状态的短标签：`Ghost`（不可见/不可攻击/睡眠）或 `Normal`。
+        /// 读不到时返回 `?` —— 不伪装成 Normal（那会让人以为身体还在世界里）。
+        /// </summary>
+        private string DescribeHostGhost()
+        {
+            try
+            {
+                return HeadlessSuMultiplayerBridge.ReadHostGhost() ? "Ghost" : "Normal";
+            }
+            catch
+            {
+                return "?";
+            }
+        }
+
+        /// <summary>
+        /// 切换主机角色的幽灵身体。
+        ///
+        /// 无头服务器的主机没有人操作，那个本机角色会永久站在世界里 ——
+        /// 客户端看到的是一具不动的身体，而且它一直参与碰撞与战斗。
+        /// 幽灵化后：碰撞/渲染/更新全部摘除（别人看不到、打不到、他也打不到别人），
+        /// 但 PlayerData / 背包 / 坐标保留，随时可复原。
+        /// 同时置为睡眠：否则客户端全睡时世界永远不会加速。
+        /// </summary>
+        private void ToggleHostGhost()
         {
             bool current;
+            try
+            {
+                current = HeadlessSuMultiplayerBridge.ReadHostGhost();
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine();
+                Console.WriteLine("Host body unavailable: " + ex.Message);
+                Pause();
+                return;
+            }
+
+            try
+            {
+                bool applied = HeadlessSuMultiplayerBridge.SetHostGhost(!current);
+                Console.WriteLine();
+                Console.WriteLine(!current
+                    ? (applied
+                        ? "Host body is now Ghost (invisible, cannot attack or be attacked, sleeping)."
+                        : "Could not enter ghost mode; see the multiplayer log.")
+                    : (applied
+                        ? "Host body restored to Normal."
+                        : "Could not restore the host body; see the multiplayer log."));
+                Pause();
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine();
+                Console.WriteLine("Host body change failed: " + ex.Message);
+                Pause();
+            }
+        }
+
+        /// <summary>改一个布尔设置（走 SuMultiplayer 的 *ForUi 回调，立即保存）。</summary>
+        private void ApplyRoomBoolean(string key, bool value)
+        {
+            try
+            {
+                string note = HeadlessSuMultiplayerBridge.SetWorldBoolean(key, value);
+                if (!string.IsNullOrWhiteSpace(note))
+                {
+                    Console.WriteLine();
+                    Console.WriteLine(note);
+                }
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine();
+                Console.WriteLine("Not changed: " + ex.Message);
+                Pause();
+            }
+        }
+
+        /// <summary>改主机端口：留空 = 自动分配。</summary>
+        private void EditRoomHostPort()
+        {
+            int current;
+            try
+            {
+                current = HeadlessSuMultiplayerBridge.ReadWorldSettings().HostPort;
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine();
+                Console.WriteLine("Host port unavailable: " + ex.Message);
+                Pause();
+                return;
+            }
+
+            string entered = PromptText("Host port (empty = auto)", DescribeHostPort(current));
+            int port;
+            if (string.IsNullOrWhiteSpace(entered) ||
+                string.Equals(entered, "Auto", StringComparison.OrdinalIgnoreCase))
+            {
+                port = 0;
+            }
+            else if (!int.TryParse(entered, out port) || port < 0 || port > 65535)
+            {
+                Console.WriteLine();
+                Console.WriteLine("Use 1-65535, or leave empty for automatic.");
+                Pause();
+                return;
+            }
+
+            try
+            {
+                string note = HeadlessSuMultiplayerBridge.SetHostPort(port);
+                Console.WriteLine();
+                if (!string.IsNullOrWhiteSpace(note)) Console.WriteLine(note);
+                Pause();
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine();
+                Console.WriteLine("Host port not changed: " + ex.Message);
+                Pause();
+            }
+        }
+
+        /// <summary>房间设置格：文本 + 对应项下标（-1 = 空格位）。</summary>
+        private readonly struct RoomSettingCell
+        {
+            internal RoomSettingCell(string text, int itemIndex)
+            {
+                Text = text;
+                ItemIndex = itemIndex;
+            }
+
+            internal string Text { get; }
+            internal int ItemIndex { get; }
+        }
+
+        /// <summary>把设置项切成 2 列、每列左对齐的行优先网格（列宽按该列最长标签算）。</summary>
+        private static List<List<RoomSettingCell>> BuildRoomSettingGrid(
+            List<RoomSettingItem> items, out int columns)
+        {
+            var labels = new List<string>(items.Count);
+            foreach (RoomSettingItem item in items)
+                labels.Add("[" + item.Label + "]");
+
+            int maxByCount = Math.Max(1, items.Count);
+            columns = Math.Clamp(2, 1, maxByCount);
+
+            int rowCount = (items.Count + columns - 1) / columns;
+            var indexRows = new List<int[]>(rowCount);
+            for (int r = 0; r < rowCount; r++)
+            {
+                var row = new int[columns];
+                for (int c = 0; c < columns; c++)
+                {
+                    int index = r * columns + c;
+                    row[c] = index < items.Count ? index : -1;
+                }
+                indexRows.Add(row);
+            }
+
+            var columnWidths = new int[columns];
+            for (int c = 0; c < columns; c++)
+            {
+                foreach (int[] row in indexRows)
+                {
+                    if (row[c] < 0) continue;
+                    columnWidths[c] = Math.Max(columnWidths[c],
+                        DisplayWidth(labels[row[c]]));
+                }
+            }
+
+            var grid = new List<List<RoomSettingCell>>(rowCount);
+            for (int r = 0; r < rowCount; r++)
+            {
+                var row = new List<RoomSettingCell>(columns);
+                for (int c = 0; c < columns; c++)
+                {
+                    int index = indexRows[r][c];
+                    if (index < 0)
+                    {
+                        row.Add(new RoomSettingCell(string.Empty, -1));
+                        continue;
+                    }
+                    string label = labels[index];
+                    int pad = columnWidths[c] - DisplayWidth(label);
+                    row.Add(new RoomSettingCell(label + new string(' ', pad), index));
+                }
+                grid.Add(row);
+            }
+            return grid;
+        }
+
+        /// <summary>帧文本（用于"内容没变就不重绘"的比较）。</summary>
+        private static string BuildRoomSettingFrame(
+            List<RoomSettingItem> items, int selected)
+        {
+            List<List<RoomSettingCell>> grid = BuildRoomSettingGrid(items, out int columns);
+            var builder = new System.Text.StringBuilder();
+            builder.Append(selected).Append('|').Append(columns).Append((char)10);
+            foreach (List<RoomSettingCell> row in grid)
+            {
+                foreach (RoomSettingCell cell in row)
+                    builder.Append(cell.Text).Append((char)10);
+            }
+            return builder.ToString();
+        }
+
+        private void RenderRoomSettingFrame(List<RoomSettingItem> items, int selected)
+        {
+            List<List<RoomSettingCell>> grid = BuildRoomSettingGrid(items, out int columns);
+            BeginScreen();
+            Console.WriteLine(GetCurrentScreen() + "> RoomSetting  (" + columns + " columns)");
+            Console.WriteLine("Arrows move  Enter edit  Esc back");
+            Console.WriteLine();
+
+            ConsoleColor previousForeground = Console.ForegroundColor;
+            ConsoleColor previousBackground = Console.BackgroundColor;
+            try
+            {
+                foreach (List<RoomSettingCell> row in grid)
+                {
+                    for (int c = 0; c < row.Count; c++)
+                    {
+                        if (c > 0) Console.Write(new string(' ', ColumnGap));
+                        RoomSettingCell cell = row[c];
+                        bool isSelected = cell.ItemIndex == selected;
+                        if (isSelected)
+                        {
+                            Console.ForegroundColor = ConsoleColor.Black;
+                            Console.BackgroundColor = ConsoleColor.Gray;
+                        }
+                        Console.Write(cell.Text);
+                        Console.Write(isSelected ? SelectionMarker : " ");
+                        if (isSelected)
+                        {
+                            Console.ForegroundColor = previousForeground;
+                            Console.BackgroundColor = previousBackground;
+                        }
+                    }
+                    Console.WriteLine();
+                }
+            }
+            finally
+            {
+                Console.ForegroundColor = previousForeground;
+                Console.BackgroundColor = previousBackground;
+            }
+        }
+
+        private void ConfigureMultiplayerLogMode()
+        {
+            HeadlessSuMultiplayerBridge.LogMode current;
             try
             {
                 current = HeadlessSuMultiplayerBridge.ReadModuleLogMode();
@@ -2930,19 +3833,28 @@ namespace HeadlessRenderingMod
                 return;
             }
 
-            int? choice = SelectMenu("Multiplayer Log Mode",
-                new[]
-                {
-                    "Online (memory only, no log files" + (current ? "" : ", current") + ")",
-                    "Debug (write role logs to disk" + (current ? ", current" : "") + ")",
-                    "Back"
-                }, current ? 1 : 0);
-            if (!choice.HasValue || choice.Value == 2) return;
+            var modes = new[]
+            {
+                HeadlessSuMultiplayerBridge.LogMode.Runtime,
+                HeadlessSuMultiplayerBridge.LogMode.OnlySelf,
+                HeadlessSuMultiplayerBridge.LogMode.AllPlayers
+            };
+            var labels = new[]
+            {
+                "Runtime (memory only, no log files" + (current == modes[0] ? ", current" : "") + ")",
+                "Only Self (host writes logs" + (current == modes[1] ? ", current" : "") + ")",
+                "All Players (host + clients write logs" + (current == modes[2] ? ", current" : "") + ")",
+                "Back"
+            };
+            int currentIndex = Array.IndexOf(modes, current);
+            int? choice = SelectMenu("Multiplayer Log Mode", labels,
+                currentIndex >= 0 ? currentIndex : 0);
+            if (!choice.HasValue || choice.Value == 3) return;
 
-            bool persist = choice.Value == 1;
+            HeadlessSuMultiplayerBridge.LogMode target = modes[choice.Value];
             try
             {
-                if (!HeadlessSuMultiplayerBridge.TrySetModuleLogMode(persist, out string note))
+                if (!HeadlessSuMultiplayerBridge.TrySetModuleLogMode(target, out string note))
                 {
                     // 明确失败：例如本端不是主机，联机模块会拒（客户端不能本地决定日志模式）。
                     Console.WriteLine();
@@ -2951,7 +3863,7 @@ namespace HeadlessRenderingMod
                     return;
                 }
                 Console.WriteLine();
-                Console.WriteLine("Log mode: " + (persist ? "Debug (persisting)" : "Online (memory only)"));
+                Console.WriteLine("Log mode: " + DescribeLogMode(target));
                 if (!string.IsNullOrEmpty(note)) Console.WriteLine(note);
                 Pause();
             }
@@ -2962,6 +3874,16 @@ namespace HeadlessRenderingMod
                 Pause();
             }
         }
+
+        /// <summary>把日志模式枚举翻成控制台显示文字。</summary>
+        private static string DescribeLogMode(HeadlessSuMultiplayerBridge.LogMode mode) =>
+            mode switch
+            {
+                HeadlessSuMultiplayerBridge.LogMode.Runtime => "Runtime (memory only)",
+                HeadlessSuMultiplayerBridge.LogMode.OnlySelf => "Only Self (host writes logs)",
+                HeadlessSuMultiplayerBridge.LogMode.AllPlayers => "All Players (host + clients)",
+                _ => "Unknown"
+            };
 
         private void ConfigureMultiplayerBandwidth()
         {

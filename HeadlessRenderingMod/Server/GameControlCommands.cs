@@ -288,26 +288,39 @@ namespace HeadlessRenderingMod
             return result;
         }
 
-        // Source: Mod/ScMultiplayer/Modules/Player/ScMultiplayerNetworkPlayerAdministration.cs:
-        // ScMultiplayer.HandleNetworkPlayersEvent
+        // 联机角色来自 SuMultiplayer 的**主机端角色记录**
+        // `<世界目录>/SuMultiplayerPlayers.xml`（见 SuMultiplayer/Players/PlayerRecords.cs），
+        // 所以离线玩家也在列表里，且能改名 / 改皮肤 / 改数值 / 删除。
+        // 通道是 IModEventBus 事件 `SuMultiplayer.Control`（两边不引用程序集）。
         private List<Dictionary<string, object>> ListNetworkPlayers()
         {
-            object[][] responses = m_eventBus.TriggerEvent(
-                "ScMultiplayer.NetworkPlayers",
-                new object[]
-                {
-                    new Dictionary<string, object>(StringComparer.Ordinal)
-                    {
-                        ["operation"] = "list"
-                    }
-                });
-            foreach (object[] response in responses)
+            var result = new List<Dictionary<string, object>>();
+            foreach (HeadlessSuMultiplayerBridge.NetworkPlayerInfo player
+                in HeadlessSuMultiplayerBridge.ListNetworkPlayers())
             {
-                if (response != null && response.Length > 0 &&
-                    response[0] is List<Dictionary<string, object>> players)
-                    return players;
+                result.Add(new Dictionary<string, object>(StringComparer.Ordinal)
+                {
+                    // networkKey = 记录键：后续 update / delete 都按它定位记录。
+                    ["networkKey"] = player.RecordKey,
+                    ["name"] = player.Name,
+                    ["playerClass"] = player.PlayerClass,
+                    ["skinDisplayName"] = player.SkinName,
+                    ["online"] = player.Online,
+                    ["clientId"] = player.ClientId,
+                    ["level"] = player.Level,
+                    ["health"] = player.Health,
+                    ["air"] = player.Air,
+                    ["food"] = player.Food,
+                    ["stamina"] = player.Stamina,
+                    ["sleep"] = player.Sleep,
+                    ["temperature"] = player.Temperature,
+                    ["wetness"] = player.Wetness,
+                    ["positionX"] = player.PositionX,
+                    ["positionY"] = player.PositionY,
+                    ["positionZ"] = player.PositionZ
+                });
             }
-            return new List<Dictionary<string, object>>();
+            return result;
         }
 
         // Source: Survivalcraft/Game/CharacterSkinsManager.cs:CharacterSkinsManager.UpdateCharacterSkinsList
@@ -579,27 +592,59 @@ namespace HeadlessRenderingMod
             };
         }
 
+        // 联机角色的改动走 SuMultiplayer 的角色记录（<世界目录>/SuMultiplayerPlayers.xml），
+        // 记录键就是 networkKey；改完立即落盘。字段名从控制命令的 x/y/z 映射到记录的位置分量。
         private Dictionary<string, object> UpdateNetworkPlayer(
             ControlRequest request, string networkKey)
         {
-            Dictionary<string, object> values = BuildNetworkRequest(request, "update");
-            values["networkKey"] = networkKey;
-            return ReadNetworkResponse(m_eventBus.TriggerEvent(
-                "ScMultiplayer.NetworkPlayers", new object[] { values }));
+            var changes = new Dictionary<string, object>(StringComparer.Ordinal);
+            CopyOptionalString(request, changes, "name");
+            // 控制命令用 skin（= 皮肤名），记录侧叫 skinName。
+            if (request.TryGetString("skin", out string skinName))
+                changes["skinName"] = skinName;
+            CopyOptionalFloat(request, changes, "level");
+            CopyOptionalFloat(request, changes, "health");
+            CopyOptionalFloat(request, changes, "air");
+            CopyOptionalFloat(request, changes, "food");
+            CopyOptionalFloat(request, changes, "stamina");
+            CopyOptionalFloat(request, changes, "sleep");
+            CopyOptionalFloat(request, changes, "temperature");
+            CopyOptionalFloat(request, changes, "wetness");
+            HeadlessSuMultiplayerBridge.UpdateNetworkPlayer(networkKey, changes);
+            // 回读一条最新记录当结果（与旧实现返回的形态一致）。
+            return BuildNetworkPlayerResult(networkKey);
         }
 
         private Dictionary<string, object> DeleteNetworkPlayer(string networkKey)
         {
-            return ReadNetworkResponse(m_eventBus.TriggerEvent(
-                "ScMultiplayer.NetworkPlayers",
-                new object[]
+            HeadlessSuMultiplayerBridge.DeleteNetworkPlayer(networkKey);
+            return new Dictionary<string, object>(StringComparer.Ordinal)
+            {
+                ["deleted"] = true,
+                ["networkKey"] = networkKey
+            };
+        }
+
+        /// <summary>按记录键回读一条联机角色（不存在就明确报错，不返回空壳）。</summary>
+        private static Dictionary<string, object> BuildNetworkPlayerResult(string networkKey)
+        {
+            foreach (HeadlessSuMultiplayerBridge.NetworkPlayerInfo player
+                in HeadlessSuMultiplayerBridge.ListNetworkPlayers())
+            {
+                if (!string.Equals(player.RecordKey, networkKey, StringComparison.Ordinal))
+                    continue;
+                return new Dictionary<string, object>(StringComparer.Ordinal)
                 {
-                    new Dictionary<string, object>(StringComparer.Ordinal)
-                    {
-                        ["operation"] = "delete",
-                        ["networkKey"] = networkKey
-                    }
-                }));
+                    ["networkKey"] = player.RecordKey,
+                    ["name"] = player.Name,
+                    ["playerClass"] = player.PlayerClass,
+                    ["skinDisplayName"] = player.SkinName,
+                    ["online"] = player.Online,
+                    ["clientId"] = player.ClientId
+                };
+            }
+            throw new ControlCommandException("network_player_missing",
+                "No such player record: " + networkKey);
         }
 
         private static Dictionary<string, object> ReadNetworkResponse(object[][] responses)

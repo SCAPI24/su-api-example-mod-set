@@ -477,6 +477,24 @@ namespace SuMultiplayer.Players
         }
 
         /// <summary>
+        /// 删除一条角色记录（主机专属，与 <see cref="Put"/> 同一道守卫）。
+        /// 返回 false = 不是主机 / 键为空 / 记录不存在（三条原因都会写诊断日志或由调用方给出）。
+        /// </summary>
+        public bool Remove(string recordKey)
+        {
+            if (!m_isHost)
+            {
+                m_diagnostics?.Error(m_ownerId,
+                    "拒绝删除角色记录：本端不是主机（只有主机写 SuMultiplayerPlayers.xml）", null);
+                return false;
+            }
+            if (string.IsNullOrEmpty(recordKey)) return false;
+            if (!m_records.Remove(recordKey)) return false;
+            m_dirty = true;
+            return true;
+        }
+
+        /// <summary>
         /// <see cref="SaveIfDirtyResult"/>：区分"没东西要存（正常）"和"真的存失败了"。
         ///
         /// 为什么需要它（用户 2026-11-08 定）：旧接口 <see cref="SaveIfDirty"/> 把两种情况都返回
