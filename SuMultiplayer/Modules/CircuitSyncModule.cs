@@ -308,6 +308,11 @@ namespace SuMultiplayer.Modules
         private ICircuitUseAuthorityPort m_useAuthority;
         private ICircuitInteractionHostPort m_interactionHost;
         private bool m_attached;
+        /// <summary>
+        /// 上一次因"世界未就绪"而跳过同步的原因（null = 已就绪 / 从未跳过）。
+        /// 只在**状态切换**时写一行日志，不每帧刷屏。
+        /// </summary>
+        private string m_notReadyReason;
         private bool m_clientScopeRequested;
         private bool m_clientScopeAcknowledged;
         private bool m_clientScopeResponseReceived;
@@ -664,6 +669,30 @@ namespace SuMultiplayer.Modules
         public void Tick(in ModuleTickContext tick)
         {
             if (!m_attached || m_transport == null) return;
+            // 世界没加载完成就**不做任何电路同步**：不泵帧、不应用权威消息、不请求 scope。
+            //
+            // 为什么必须有这道门禁（实测缺陷）：地形同步在 UpdateInterest 里等地形
+            // （Project + SubsystemPlayers + 本机角色 + ComponentBody）全部就绪才开始；
+            // 电路此前只有 m_world.IsReady（子系统齐全），它比"角色身体已生成"更早成立，
+            // 于是世界还没装好时电路就已在应用权威消息 → ApplyCellPresentation 拿不到
+            // terrain → 启动期刷出数千条 "terrain is unavailable for predicted cell"。
+            //
+            // 判据与地形**同一口径**（方案 A：跳过 IAvatarTerrainLink 那项，因为电路不需要
+            // 区分本机角色与远端化身，只需要"世界已经可以落地方块"）。
+            //
+            // 只影响本模块：地形同步是另一个模块的 Tick，且宿主按注册顺序逐个调用
+            // （ModuleHost.Tick 里每个模块独立 try/catch），这里提前返回不会阻塞地形。
+            if (!IsSyncWorldReady(out string notReadyReason))
+            {
+                m_notReadyReason = notReadyReason;
+                return;
+            }
+            if (m_notReadyReason != null)
+            {
+                // 刚就绪：写一行，便于把"电路为什么之前没动"对上时间线。
+                Warn("电路同步恢复：世界已就绪（" + notReadyReason + "）");
+                m_notReadyReason = null;
+            }
             m_activeProbe = m_transport.IsHosting ? m_hostProbe : m_probe;
             m_probeTrigger = m_world is CircuitWorldEngine circuitWorld
                 ? circuitWorld.LastPumpTrigger : "none";
@@ -2532,6 +2561,9 @@ namespace SuMultiplayer.Modules
         // Source: Mod/SuMultiplayer/Engine/CircuitStateCodec.cs:CircuitStateCodec.ApplyOperationEvent
         private bool ApplyClientEvent(CircuitEvent circuitEvent)
         {
+            // 世界没就绪：不应用（返回 false = 未处理，调用方按"尚未应用"处理，
+            // 不会推进任何序号）。
+            if (!IsSyncWorldReady(out _)) return false;
             ChunkKey chunk = new ChunkKey(circuitEvent.X >> 4, circuitEvent.Z >> 4);
             if (circuitEvent.Cancelled)
             {
@@ -2698,6 +2730,9 @@ namespace SuMultiplayer.Modules
         private void HandleFrame(int clientId, ReceivedFrame frame)
         {
             if (!m_attached || frame.Payload == null) return;
+            // 世界没就绪：帧直接丢弃（不解析、不应用）。地形在该状态下同样不处理，
+            // 但帧会在链路层排队/背压，而不是被"应用到一个不存在的地形上"。
+            if (!IsSyncWorldReady(out _)) return;
             if (m_transport.IsHosting)
             {
                 if (clientId <= 0 || !m_transport.IsHostCircuitAttached(clientId))
@@ -5078,6 +5113,66 @@ namespace SuMultiplayer.Modules
             if (ReferenceEquals(left, right)) return true;
             if (left == null || right == null || left.Length != right.Length) return false;
             for (int i = 0; i < left.Length; i++) if (left[i] != right[i]) return false;
+            return true;
+        }
+
+        /// <summary>
+        /// 世界是否已经加载到**可以落地电路数据**的程度。
+        ///
+        /// 与 <c>TerrainSyncModule.TryGetLocalPlayerCell</c>（地形同步的唯一门禁，:2495）
+        /// **同一口径**，四项依次检查：
+        ///   ① <c>GameManager.Project</c> 存在（世界已加载）；
+        ///   ② <c>SubsystemPlayers</c> 存在（玩家子系统已建）；
+        ///   ③ <c>PlayersData</c> 里至少有一个角色（角色已被创建）；
+        ///   ④ 该角色的 <c>ComponentPlayer.ComponentBody</c> 已生成（身体存在 = 坐标可用、
+        ///      地形已经能容纳该角色，也就是"世界真的装好了"）。
+        ///
+        /// 为什么不做地形那第 5 项（<c>IAvatarTerrainLink.IsNetworkAvatar</c> 排除远端化身）：
+        /// 地形要它是因为必须精确算出**本机**角色的兴趣中心；电路不需要知道"本机是哪一个"，
+        /// 只需要知道"世界已经可以落地方块"。而且 <c>IAvatarTerrainLink</c> 是由
+        /// <c>PlayerAvatarModule</c> 通过 <c>BindAvatarTerrainLink</c> 单点绑定给地形模块的，
+        /// 电路模块拿不到（它只取 ITransportPort 等端口），强行拉这条依赖会引入装配时序问题。
+        ///
+        /// 本方法只读，不修改任何状态；调用方提前返回即可（不影响其他模块的 Tick）。
+        /// </summary>
+        private bool IsSyncWorldReady(out string reason)
+        {
+            // ① 世界已加载
+            GameEntitySystem.Project project = Game.GameManager.Project;
+            if (project == null)
+            {
+                reason = "世界未加载（GameManager.Project 为空）";
+                return false;
+            }
+            // ② 玩家子系统
+            Game.SubsystemPlayers players =
+                project.FindSubsystem<Game.SubsystemPlayers>(false);
+            if (players == null)
+            {
+                reason = "玩家子系统未就绪（SubsystemPlayers 为空）";
+                return false;
+            }
+            // ③ 至少一个角色
+            var list = players.PlayersData;
+            Game.PlayerData localPlayer = null;
+            for (int i = 0; i < list.Count; i++)
+            {
+                if (list[i] == null) continue;
+                localPlayer = list[i];
+                break;
+            }
+            if (localPlayer == null)
+            {
+                reason = "世界里还没有任何角色（PlayersData 为空）";
+                return false;
+            }
+            // ④ 角色身体已生成
+            if (localPlayer.ComponentPlayer?.ComponentBody == null)
+            {
+                reason = "本机角色还没有 ComponentBody（世界尚未装完）";
+                return false;
+            }
+            reason = "角色 " + localPlayer.PlayerIndex + " 已生成身体";
             return true;
         }
 

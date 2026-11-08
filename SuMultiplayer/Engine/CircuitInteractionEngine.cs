@@ -312,7 +312,8 @@ namespace SuMultiplayer.Engine
                 m_pending.Add(key, operations);
             }
             operations.Add(operation);
-            ApplyPresentation(key, m_authoritativeValues[key], operations);
+            // A 路径（点击预测）：宿主就是这个类缓存下来的 m_project（世界在点击时必然有效）。
+            ApplyPresentation(m_project, key, m_authoritativeValues[key], operations);
             PlayClick(electricity?.SubsystemAudio, face.Point);
             return true;
         }
@@ -347,30 +348,44 @@ namespace SuMultiplayer.Engine
                 m_pending.Remove(key);
                 return;
             }
-            ApplyOrForget(key, operations, m_authoritativeValues[key]);
+            // B 路径（主机裁决回来）：权威值永远属于当前世界。
+            ApplyOrForget(GameManager.Project, key, operations, m_authoritativeValues[key]);
         }
 
-        /// <summary>Applies an authoritative CellChange and clears predictions for its cell.</summary>
+        /// <summary>
+        /// Applies an authoritative CellChange and clears predictions for its cell.
+        ///
+        /// **这是 B 路径（应用主机权威值）的入口，与"点击预测"（A 路径）无关。**
+        /// 它必须用 <see cref="GameManager.Project"/>（当前世界的唯一权威来源），
+        /// 不能用 <c>m_project</c> —— 后者是 A 路径"点击预测的宿主 Project"，只在
+        /// <see cref="TryAcceptInteract"/> 里赋值，玩家没点过开关时恒为 null。
+        /// 主机推送的电路事件（灯亮、门开…）不需要任何点击，因此以前会在这里
+        /// 拿到 null → terrain 不可用 → 启动期刷出数千条 "terrain is unavailable"。 
+        /// </summary>
         public void ApplyAuthoritativeCell(int x, int y, int z, int mountingFace,
             int authoritativeCellValue)
         {
+            Project project = GameManager.Project;
             var key = new CircuitCellKey(new Point3(x, y, z), mountingFace);
             m_authoritativeValues[key] = authoritativeCellValue;
             if (m_pending.TryGetValue(key, out List<PendingOperation> operations))
             {
-                ApplyPresentation(key, authoritativeCellValue, operations);
+                ApplyPresentation(project, key, authoritativeCellValue, operations);
             }
             else
             {
-                ApplyCellPresentation(key.Point, authoritativeCellValue);
+                ApplyCellPresentation(project, key.Point, authoritativeCellValue);
                 m_authoritativeValues.Remove(key);
             }
         }
 
         public void DetachPresentation()
         {
+            // 会话结束：把预测期间写过的格子回滚成权威值。
+            // 用当前世界的 Project（不是 m_project）：退出/换世界时 m_project 可能已经失效。
+            Project project = GameManager.Project;
             foreach (KeyValuePair<CircuitCellKey, int> pair in m_authoritativeValues)
-                ApplyCellPresentation(pair.Key.Point, pair.Value);
+                ApplyCellPresentation(project, pair.Key.Point, pair.Value);
             m_pending.Clear();
             m_authoritativeValues.Clear();
             m_project = null;
@@ -381,24 +396,24 @@ namespace SuMultiplayer.Engine
             return m_authoritativeValues.TryGetValue(key, out int value) ? value : currentValue;
         }
 
-        private void ApplyOrForget(CircuitCellKey key, List<PendingOperation> operations,
-            int authoritativeValue)
+        private void ApplyOrForget(Project project, CircuitCellKey key,
+            List<PendingOperation> operations, int authoritativeValue)
         {
-            SubsystemTerrain subsystem = m_project?.FindSubsystem<SubsystemTerrain>(false);
+            SubsystemTerrain subsystem = project?.FindSubsystem<SubsystemTerrain>(false);
             if (subsystem == null || operations.Count == 0)
             {
-                ApplyCellPresentation(key.Point, authoritativeValue);
+                ApplyCellPresentation(project, key.Point, authoritativeValue);
                 m_pending.Remove(key);
                 m_authoritativeValues.Remove(key);
                 return;
             }
-            ApplyPresentation(key, authoritativeValue, operations);
+            ApplyPresentation(project, key, authoritativeValue, operations);
         }
 
         // Source: Survivalcraft/Game/SwitchBlock.cs:SwitchBlock.SetLeverState
         // Source: Survivalcraft/Game/RotateableMountedElectricElementBlock.cs:SetRotation
-        private void ApplyPresentation(CircuitCellKey key, int authoritativeValue,
-            List<PendingOperation> operations)
+        private void ApplyPresentation(Project project, CircuitCellKey key,
+            int authoritativeValue, List<PendingOperation> operations)
         {
             int value = authoritativeValue;
             for (int i = 0; i < operations.Count; i++)
@@ -425,19 +440,22 @@ namespace SuMultiplayer.Engine
                             .GetRotation(data) + 1));
                 }
             }
-            Game.Terrain terrain = m_project?.FindSubsystem<SubsystemTerrain>(false)?.Terrain;
+            Game.Terrain terrain = project?.FindSubsystem<SubsystemTerrain>(false)?.Terrain;
             if (terrain == null || terrain.GetCellValue(key.Point.X, key.Point.Y,
                     key.Point.Z) == value)
                 return;
-            ApplyCellPresentation(key.Point, value);
+            ApplyCellPresentation(project, key.Point, value);
         }
 
-        private bool ApplyCellPresentation(Point3 point, int value)
+        private bool ApplyCellPresentation(Project project, Point3 point, int value)
         {
-            Game.Terrain terrain = m_project?.FindSubsystem<SubsystemTerrain>(false)?.Terrain;
+            Game.Terrain terrain = project?.FindSubsystem<SubsystemTerrain>(false)?.Terrain;
             if (terrain == null)
             {
-                LogProblem("presentation-world", "terrain is unavailable for predicted cell " +
+                // 调用方传进来的 project 没有地形：说明世界确实还没装好。
+                // 这条日志曾经在启动期刷数千条（B 路径误用了 click-only 的 m_project），
+                // 现在 B 路径一律用 GameManager.Project，正常情况下不该再出现。
+                LogProblem("presentation-world", "terrain is unavailable at " +
                     point.X + "," + point.Y + "," + point.Z);
                 return false;
             }
@@ -451,7 +469,7 @@ namespace SuMultiplayer.Engine
             TerrainChunk chunk = terrain.GetChunkAtCell(point.X, point.Z);
             if (chunk != null)
             {
-                m_project.FindSubsystem<SubsystemTerrain>(false)?.TerrainUpdater?
+                project.FindSubsystem<SubsystemTerrain>(false)?.TerrainUpdater?
                     .DowngradeChunkNeighborhoodState(chunk.Coords, 0,
                         TerrainChunkState.InvalidVertices1, forceGeometryRegeneration: true);
             }
