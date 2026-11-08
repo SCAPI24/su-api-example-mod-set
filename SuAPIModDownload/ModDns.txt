@@ -20,6 +20,9 @@
 #    **本文件默认只启用一个版本**：上一版以行首 `#` 注释保留，需要回退时把那一行的 `#` 去掉即可。
 #    （一行一个版本；若同时启用两行，下载列表里该 Mod 会显示两行。）
 #
+# ⚠️ 1.6.49 于 2026-11-08 重新打包（内容更新，版本号不变）：三端 release 的旧资产已删除后重传，
+#   包 126808 B、sha256 72693a85…（旧包 128064 B 作废）；下载回验三端一致。
+#   本次内容：中文翻译界面文本 + TranslationMod 程序集按当前 SuAPI 0.1.7.0 / net10.0 重建。
 TranslationMod | su-zh | ["0.1.6.0"] | 1.6.49 | gitee:"https://gitee.com/SC-SPM/su-api-example-mod-set/releases/download/0.1.6.0/%5BSuAPI%5DChinesePak-1.6.49.scmod";github:"https://github.com/SCAPI24/su-api-example-mod-set/releases/download/0.1.6.0/SuAPI.ChinesePak-1.6.49.scmod";cnb:"https://cnb.cool/suceru.cb/SC-SPM/SuAPIMod/-/releases/download/0.1.6.0/[SuAPI]ChinesePak-1.6.49.scmod" | *zh_CN=中文翻译;en_US=Chinese Translation
 # 1.1.21（2026-10-01）：修**自报版本长期停在 1.1.15** —— `CommandRouter.ModVersion` 没跟 `ModInfo.xml`
 #   同步，于是"装的是 1.1.20、`cmd.status` 却报 1.1.15"（排查时容易被误判成旧包装没生效）；本版两者
