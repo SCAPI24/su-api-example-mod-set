@@ -702,7 +702,9 @@ namespace SuMultiplayer.UI
         private void EditHostPort()
         {
             int current = m_hostPort != null ? m_hostPort() : 0;
-            var dialog = new TextBoxDialog("Host port (0 = auto 51459..51468)",
+            // 文案不硬编码端口段：段起点/数量写在 mod 配置里（SyncConfig.PortRangeStart/Count），
+            // UI 层拿不到那份配置，写死会和实际配置不一致。这里只说"自动分配段内槽位"。
+            var dialog = new TextBoxDialog("Host port (0 = auto, pick a free slot in the configured port range)",
                 current.ToString(), 5, text =>
                 {
                     if (!int.TryParse((text ?? string.Empty).Trim(), out int port) ||

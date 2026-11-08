@@ -13,8 +13,12 @@ namespace CmdBridgeMod
     /// 定位（Mod/doc/cmd-bridge-plan.md）：
     ///   · 允许无限查看游戏内数据；一切交互都必须通过玩家控制器（视角/键盘/鼠标/UI 点击）。
     ///   · 优势（无限读取、超人输入速度）允许；特权（直接改游戏状态）禁止。
-    ///   · 不替换任何 Subsystem/Component/Parameter，不注册 Injector，不碰渲染与帧率，
+    ///   · 不替换任何 Subsystem/Parameter、不注册 Injector、不改帧率，
     ///     因此玩家可以照常操作界面，AI/脚本同时通过本桥操作。
+    ///   · **唯一的渲染**是 `Server/BridgeOverlayDrawable`（`box.*` 命令画的固定坐标边框，
+    ///     DrawOrder=2001）。它只在**确实有边框要画**时才挂到本机玩家实体上（无边框时连组件
+    ///     都不创建 = 零开销），不替换任何子系统、不碰数据库节点，与其他 Mod 的绘制互不影响
+    ///     （各自的 draw order 不同）。纯内存、不落盘。
     /// </summary>
     public sealed class CmdBridgeMod : IMod
     {
@@ -116,6 +120,10 @@ namespace CmdBridgeMod
         {
             m_eventRecorder?.Tick();
 
+            // 边框绘制组件：幂等挂载（只在有边框时动作，无边框直接返回）。
+            // 放在帧末这里而不是某个子系统的 Update，避免与任何 Mod 抢更新顺序。
+            BridgeOverlayState.EnsureAttached();
+
             // 帧末：控件树刚按"界面是否需要光标"写过 Mouse.IsMouseVisible，
             // 脱离模式必须在此刻覆盖它，否则下一帧 Mouse.BeforeFrame() 会隐藏系统光标。
             m_injector?.Focus?.ApplyFrameEnd();
@@ -183,6 +191,9 @@ namespace CmdBridgeMod
             Input = null;
             if (ReferenceEquals(Instance, this))
                 Instance = null;
+
+            // 边框是纯内存状态：卸载即清空，不留任何残留。
+            BridgeOverlayState.Reset();
 
             m_router = null;
             m_invoker = null;

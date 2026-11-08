@@ -18,10 +18,18 @@ namespace SuMultiplayer.Net
     {
         public string Key;
         public string Host;
-        public int DiscoveryPort;
+        /// <summary>该地址要探测的 UDP 端口列表（端口段 / 单端口 / 区间展开后）。</summary>
+        public int[] ProbePorts = System.Array.Empty<int>();
         public string DisplayAddress;
         public string Name;
         public RoomSource Source;
+        /// <summary>
+        /// 地址里是否写明了端口。决定两件事：
+        ///   ① 探测失败时是否仍在列表里保留离线行（个人服务器写明端口 → 保留，可 TCP 强连）；
+        ///   ② TCP 兜底连接该用哪个端口（写明端口 → 用这个端口）。
+        /// </summary>
+        public bool HasExplicitPort;
+        /// <summary>TCP 兜底端口：写明端口 = 该端口；否则 = 端口段起点。</summary>
         public int FallbackGamePort;
     }
 
@@ -32,6 +40,8 @@ namespace SuMultiplayer.Net
         public int PingMs = -1;
         public bool Online;
         public string TargetHost;
+        /// <summary>本次探测的端口（同号方案下 = 该槽位的游戏端口）。</summary>
+        public int Port;
     }
 
     /// <summary>
@@ -55,8 +65,8 @@ namespace SuMultiplayer.Net
             "https://raw.githubusercontent.com/SCAPI24/su-api-example-mod-set/master/ScMultiplayer/ServerDns.txt"
         };
 
-        private readonly int m_defaultDiscoveryPort;
-        private readonly int m_defaultGamePort;
+        private readonly int m_probePortStart;
+        private readonly int m_probePortCount;
         private readonly object m_gate = new object();
         private readonly List<DirectoryEndpoint> m_endpoints = new List<DirectoryEndpoint>();
         private readonly ConcurrentQueue<DirectoryProbeResult> m_results =
@@ -68,10 +78,20 @@ namespace SuMultiplayer.Net
         private long m_nextRefreshMs;
         private int m_refreshFailures;
 
-        public ServerCatalog(int defaultDiscoveryPort, int defaultGamePort)
+        /// <param name="probePortStart">地址没写端口时，默认从哪个端口开始扫。</param>
+        /// <param name="probePortCount">地址没写端口时，默认扫多少个端口。</param>
+        public ServerCatalog(int probePortStart, int probePortCount)
         {
-            m_defaultDiscoveryPort = defaultDiscoveryPort;
-            m_defaultGamePort = defaultGamePort;
+            m_probePortStart = probePortStart;
+            m_probePortCount = Math.Max(1, Math.Min(256, probePortCount));
+        }
+
+        /// <summary>地址没写明端口时使用的默认探测端口段（起点 + 数量）。</summary>
+        private int[] DefaultProbePorts()
+        {
+            var ports = new int[m_probePortCount];
+            for (int i = 0; i < ports.Length; i++) ports[i] = m_probePortStart + i;
+            return ports;
         }
 
         public void Start()
@@ -180,17 +200,22 @@ namespace SuMultiplayer.Net
             m_personalRevision = revision;
             foreach (PersonalServerRecord record in PersonalServers.Records)
             {
-                if (!TrySplitAddress(record.Address, out string host, out int port))
+                if (!TrySplitAddress(record.Address, out string host, out int port, out _))
                     continue;
+                // From Link（个人服务器）只支持 host / host:P，**不支持** host:P-N。
+                // 没写端口 → 按默认端口段扫描（UDP 在线才显示）；写了端口 → 只扫该端口。
+                int[] probePorts = port > 0 ? new[] { port } : DefaultProbePorts();
                 var endpoint = new DirectoryEndpoint
                 {
                     Key = "personal:" + record.Address,
                     Host = host,
-                    DiscoveryPort = port > 0 ? port : m_defaultDiscoveryPort,
+                    ProbePorts = probePorts,
                     DisplayAddress = record.Address,
                     Name = record.Name,
                     Source = RoomSource.Personal,
-                    FallbackGamePort = m_defaultGamePort
+                    HasExplicitPort = port > 0,
+                    // 写了端口 → TCP 兜底就连这个端口；没写 → 连端口段起点。
+                    FallbackGamePort = port > 0 ? port : m_probePortStart
                 };
                 lock (m_gate) RemoveLocked(endpoint.Key);
                 lock (m_gate) m_endpoints.Add(endpoint);
@@ -224,18 +249,22 @@ namespace SuMultiplayer.Net
             foreach (string raw in hosts)
             {
                 if (valid.Count >= MaxHosts) break;
-                if (!TrySplitAddress(raw, out string host, out int port)) continue;
-                string key = "dir:" + raw;
-                if (!seen.Add(key)) continue;
+                if (!TrySplitAddress(raw, out string host, out int port, out int count)) continue;
+                if (!seen.Add("dir:" + host)) continue;
+                // ServerDns 支持三种写法：host（默认端口段）/ host:P / host:P-N（P 起 N 个）。
+                int[] probePorts = count > 0
+                    ? BuildPortRange(port, count)
+                    : port > 0 ? new[] { port } : DefaultProbePorts();
                 valid.Add(new DirectoryEndpoint
                 {
-                    Key = key,
+                    Key = "dir:" + host + ":" + (count > 0 ? port + "-" + count : port.ToString()),
                     Host = host,
-                    DiscoveryPort = port > 0 ? port : m_defaultDiscoveryPort,
+                    ProbePorts = probePorts,
                     DisplayAddress = host,
                     Name = string.Empty,
                     Source = RoomSource.Directory,
-                    FallbackGamePort = m_defaultGamePort
+                    HasExplicitPort = port > 0,
+                    FallbackGamePort = port > 0 ? port : m_probePortStart
                 });
             }
             lock (m_gate)
@@ -250,40 +279,49 @@ namespace SuMultiplayer.Net
         private void Probe(DirectoryEndpoint endpoint)
         {
             string targetHost = endpoint.Host;
-            int discoveryPort = endpoint.DiscoveryPort;
+            int[] probePorts = endpoint.ProbePorts ?? System.Array.Empty<int>();
             try
             {
-                bool proxy = ProxyRouter.TryChooseUdp(targetHost, discoveryPort, out bool useProxy,
-                    out _) && useProxy;
-                long nonce = Environment.TickCount64;
-                byte[] probe = RoomBeaconCodec.EncodeProbe(nonce);
-                RoomBeaconInfo info = null;
-                int ping = -1;
-                if (proxy)
+                // 一个地址可能对应多个端口（端口段 / 区间）：**逐个探测，每个端口一条结果**。
+                // 不因为某个端口失败就跳过其余端口 —— 同一台机器可能在不同槽位开多个房间。
+                for (int i = 0; i < probePorts.Length; i++)
                 {
-                    if (Socks5Proxy.TryUdpProbe(targetHost, discoveryPort, probe, 1500,
-                            out byte[] reply, out string proxyError) &&
-                        RoomBeaconCodec.TryDecodeReply(reply, reply.Length, out info, out _))
-                        ping = (int)(Environment.TickCount64 - nonce);
-                    else if (!string.IsNullOrEmpty(proxyError))
-                        ModLog.Info("[catalog] 代理 UDP 探测失败：" +
-                            targetHost + " · " + proxyError);
+                    int discoveryPort = probePorts[i];
+                    long nonce = Environment.TickCount64;
+                    byte[] probe = RoomBeaconCodec.EncodeProbe(nonce);
+                    RoomBeaconInfo info = null;
+                    int ping = -1;
+                    bool proxy = ProxyRouter.TryChooseUdp(targetHost, discoveryPort,
+                        out bool useProxy, out _) && useProxy;
+                    if (proxy)
+                    {
+                        if (Socks5Proxy.TryUdpProbe(targetHost, discoveryPort, probe, 1500,
+                                out byte[] reply, out string proxyError) &&
+                            RoomBeaconCodec.TryDecodeReply(reply, reply.Length, out info, out _))
+                            ping = (int)(Environment.TickCount64 - nonce);
+                        else if (!string.IsNullOrEmpty(proxyError))
+                            ModLog.Info("[catalog] 代理 UDP 探测失败：" +
+                                targetHost + ":" + discoveryPort + " · " + proxyError);
+                    }
+                    else if (!TryDirectProbe(targetHost, discoveryPort, probe, nonce, out info,
+                            out ping, out string directError))
+                    {
+                        // 离线是常态（端口段里只有少数槽位有房间），只记非空错误。
+                        if (!string.IsNullOrEmpty(directError))
+                            ModLog.Info("[catalog] 探测失败：" + targetHost + ":" +
+                                discoveryPort + " · " + directError);
+                    }
+                    m_results.Enqueue(new DirectoryProbeResult
+                    {
+                        Endpoint = endpoint,
+                        Info = info,
+                        PingMs = ping,
+                        Online = info != null,
+                        TargetHost = targetHost,
+                        // 探测端口 = 该槽位的游戏端口（同号方案）→ 房间条目直接用它。
+                        Port = discoveryPort
+                    });
                 }
-                else if (TryDirectProbe(targetHost, discoveryPort, probe, nonce, out info,
-                        out ping, out string directError) == false &&
-                    !string.IsNullOrEmpty(directError))
-                {
-                    ModLog.Info("[catalog] 探测失败：" + targetHost +
-                        " · " + directError);
-                }
-                m_results.Enqueue(new DirectoryProbeResult
-                {
-                    Endpoint = endpoint,
-                    Info = info,
-                    PingMs = ping,
-                    Online = info != null,
-                    TargetHost = targetHost
-                });
             }
             catch (Exception error)
             {
@@ -352,10 +390,19 @@ namespace SuMultiplayer.Net
             }
         }
 
-        private static bool TrySplitAddress(string text, out string host, out int port)
+        /// <summary>
+        /// 解析地址写法（ServerDns 行 / 个人服务器记录）：
+        ///   <c>host</c>           → port=0, count=0（用默认端口段）
+        ///   <c>host:P</c>         → port=P, count=0（只该端口）
+        ///   <c>host:P-N</c>       → port=P, count=N（P 起连续 N 个端口；N=数量，不是结束端口）
+        /// IPv6 用 <c>[v6]</c> / <c>[v6]:P</c> / <c>[v6]:P-N</c>。
+        /// </summary>
+        private static bool TrySplitAddress(string text, out string host, out int port,
+            out int count)
         {
             host = string.Empty;
             port = 0;
+            count = 0;
             if (string.IsNullOrWhiteSpace(text)) return false;
             string value = text.Trim();
             if (value.StartsWith("[", StringComparison.Ordinal))
@@ -363,21 +410,52 @@ namespace SuMultiplayer.Net
                 int closing = value.IndexOf(']');
                 if (closing <= 1) return false;
                 host = value.Substring(1, closing - 1);
-                if (closing + 1 < value.Length &&
-                    !int.TryParse(value.Substring(closing + 2), out port))
-                    return false;
+                if (closing + 1 < value.Length)
+                {
+                    if (value[closing + 1] != ':') return false;
+                    if (!TryParsePortSpec(value.Substring(closing + 2), out port, out count))
+                        return false;
+                }
                 return true;
             }
             int first = value.IndexOf(':');
             int last = value.LastIndexOf(':');
-            if (first > 0 && first == last && int.TryParse(value.Substring(last + 1), out port))
+            if (first > 0 && first == last)
             {
+                if (!TryParsePortSpec(value.Substring(last + 1), out port, out count))
+                    return false;
                 host = value.Substring(0, last);
                 return host.Length > 0;
             }
+            if (first >= 0) return false;   // 多个冒号且不是 [v6] 形式：非法
             host = value;
             return Uri.CheckHostName(host) != UriHostNameType.Unknown ||
                 IPAddress.TryParse(host, out _);
+        }
+
+        /// <summary>解析 <c>P</c> 或 <c>P-N</c>（N = 数量，1..256）。</summary>
+        private static bool TryParsePortSpec(string spec, out int port, out int count)
+        {
+            port = 0;
+            count = 0;
+            if (string.IsNullOrEmpty(spec)) return false;
+            int dash = spec.IndexOf('-');
+            if (dash < 0)
+                return int.TryParse(spec, out port) && port > 0 && port <= 65535;
+            if (!int.TryParse(spec.Substring(0, dash), out port) || port <= 0 || port > 65535)
+                return false;
+            if (!int.TryParse(spec.Substring(dash + 1), out count) || count <= 0) return false;
+            count = Math.Min(count, 256);
+            if (port + count - 1 > 65535) count = 65535 - port + 1;
+            return count > 0;
+        }
+
+        /// <summary>把「起点 + 数量」展开成端口数组。</summary>
+        private static int[] BuildPortRange(int start, int count)
+        {
+            var ports = new int[count];
+            for (int i = 0; i < count; i++) ports[i] = start + i;
+            return ports;
         }
     }
 }

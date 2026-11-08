@@ -234,6 +234,11 @@ namespace CmdBridgeClient
                                 ("paused", string.Equals(args[1], "pause", StringComparison.OrdinalIgnoreCase))));
                         throw new ArgumentException("circuit status|pause|resume");
 
+                    // 调试辅助：在世界上画固定坐标的边框（服务端 CmdBridgeMod 的 box.* 命令）。
+                    // 纯内存、不落盘、默认绿色；用于肉眼确认"某个方块/区域在世界里的位置"。
+                    case "box":
+                        return BoxCommand(client, args);
+
                     // 进世界：循环驱动服务端 `act.enter`（主菜单 → 世界列表 → 创建/加载 → 角色界面 → 游戏）
                     case "enter":
                     case "enterworld":
@@ -1295,6 +1300,76 @@ AI 内存态改写与导出（只改内存；原 .scbtpak 字节永远不变）
         }
 
         // ---------------------------------------------------------------- 工具
+
+        /// <summary>
+        /// `box` 子命令 → 服务端 `box.*`。
+        ///   box block x y z [--color RRGGBB|AARRGGBB]
+        ///   box area x1 y1 z1 x2 y2 z2 [--color ...]
+        ///   box list | box clear | box remove N
+        /// 颜色不传时服务端用默认绿色。
+        /// </summary>
+        private static int BoxCommand(BridgeClient client, List<string> args)
+        {
+            Require(args.Count >= 2, "box block x y z | box area x1 y1 z1 x2 y2 z2 | box list | box clear | box remove N");
+            string sub = args[1].ToLowerInvariant();
+            if (sub == "list")
+                return Print(client, "box.list", null);
+            if (sub == "clear")
+                return Print(client, "box.clear", null);
+            if (sub == "remove")
+            {
+                Require(args.Count >= 3, "box remove <id>");
+                Require(int.TryParse(args[2], out int removeId), "box remove <id>：id 必须是整数");
+                return Print(client, "box.remove", Args(("id", removeId)));
+            }
+
+            // 颜色：`--color RRGGBB` / `--color AARRGGBB`（两种位置都接受：参数尾部）
+            string color = null;
+            int colorIndex = args.IndexOf("--color");
+            if (colorIndex >= 0)
+            {
+                Require(args.Count > colorIndex + 1, "--color 后面缺少颜色值");
+                color = args[colorIndex + 1];
+                args = new List<string>(args);
+                args.RemoveRange(colorIndex, 2);
+            }
+
+            if (sub == "block")
+            {
+                Require(args.Count >= 5, "box block x y z [--color RRGGBB]");
+                var pairs = new List<(string Key, object Value)>
+                {
+                    ("x", ParseIntArg(args[2], "x")),
+                    ("y", ParseIntArg(args[3], "y")),
+                    ("z", ParseIntArg(args[4], "z"))
+                };
+                if (color != null) pairs.Add(("color", color));
+                return Print(client, "box.block", Args(pairs.ToArray()));
+            }
+            if (sub == "area")
+            {
+                Require(args.Count >= 8, "box area x1 y1 z1 x2 y2 z2 [--color RRGGBB]");
+                var pairs = new List<(string Key, object Value)>
+                {
+                    ("x1", ParseIntArg(args[2], "x1")),
+                    ("y1", ParseIntArg(args[3], "y1")),
+                    ("z1", ParseIntArg(args[4], "z1")),
+                    ("x2", ParseIntArg(args[5], "x2")),
+                    ("y2", ParseIntArg(args[6], "y2")),
+                    ("z2", ParseIntArg(args[7], "z2"))
+                };
+                if (color != null) pairs.Add(("color", color));
+                return Print(client, "box.area", Args(pairs.ToArray()));
+            }
+            throw new ArgumentException("box block|area|list|clear|remove");
+        }
+
+        private static int ParseIntArg(string text, string name)
+        {
+            if (!int.TryParse(text, out int value))
+                throw new ArgumentException(name + " 必须是整数，收到 '" + text + "'");
+            return value;
+        }
 
         private static Dictionary<string, object> Args(params (string Key, object Value)[] pairs)
         {

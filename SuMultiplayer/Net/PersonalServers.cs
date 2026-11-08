@@ -138,11 +138,18 @@ namespace SuMultiplayer.Net
             {
                 int colon = value.LastIndexOf(':');
                 int first = value.IndexOf(':');
-                if (colon > 0 && colon == first && int.TryParse(value.Substring(colon + 1),
-                        out int parsedPort))
+                if (colon > 0 && colon == first &&
+                    int.TryParse(value.Substring(colon + 1), out int parsedPort))
                 {
                     host = value.Substring(0, colon);
                     port = parsedPort;
+                }
+                else if (colon > 0 && colon == first && value.Substring(colon + 1).Contains('-'))
+                {
+                    // From Link（个人服务器）**只支持 host / host:P**。
+                    // P-N 区间写法只有 ServerDns 支持（从链接进来的地址不该一次性铺开多个端口行）。
+                    error = "个人服务器地址只支持 host 或 host:端口，不支持端口区间（host:P-N）";
+                    return false;
                 }
                 else
                 {

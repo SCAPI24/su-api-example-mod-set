@@ -159,7 +159,10 @@ namespace SuMultiplayer.Net
             try
             {
                 m_socket = new UdpClient();
-                m_socket.Client.SetSocketOption(SocketOptionLevel.Socket, SocketOptionName.ReuseAddress, true);
+                // 刻意**不设** ReuseAddress：端口占用判据依赖"UDP 绑不上"。
+                // 设了 ReuseAddress 的话，同一台机器上两个实例能同时绑同一条 UDP 端口
+                // → 既判不出槽位占用，客户端还会收到"同端口两个房间"的混乱应答。
+                // UDP 没有 TIME_WAIT，Dispose 后端口立刻可用，所以去掉它没有副作用。
                 m_socket.Client.Bind(new IPEndPoint(IPAddress.Any, m_port));
                 m_running = true;
                 m_thread = new Thread(Loop) { IsBackground = true, Name = "SuMP-Beacon" };
@@ -217,7 +220,8 @@ namespace SuMultiplayer.Net
     /// </summary>
     public sealed class RoomBeaconClient : IDisposable
     {
-        private readonly int m_port;
+        /// <summary>要探测的端口段（槽位从 start 起连续 count 个）。</summary>
+        private readonly int[] m_ports;
         private UdpClient m_socket;
         private Thread m_thread;
         private volatile bool m_running;
@@ -235,7 +239,17 @@ namespace SuMultiplayer.Net
         /// <summary>发现房间（info, 来源地址）。</summary>
         public event Action<RoomBeaconInfo, string> RoomFound;
 
-        public RoomBeaconClient(int discoveryPort) { m_port = discoveryPort; }
+        /// <param name="portStart">端口段起点。</param>
+        /// <param name="portCount">端口段槽位数。</param>
+        public RoomBeaconClient(int portStart, int portCount)
+        {
+            int count = Math.Max(1, Math.Min(256, portCount));
+            m_ports = new int[count];
+            for (int i = 0; i < count; i++) m_ports[i] = portStart + i;
+        }
+
+        /// <summary>本客户端要探测的端口（只读，诊断用）。</summary>
+        public IReadOnlyList<int> Ports => m_ports;
 
         public bool Start()
         {
@@ -260,25 +274,30 @@ namespace SuMultiplayer.Net
         private void Loop()
         {
             var remote = new IPEndPoint(IPAddress.Any, 0);
-            var broadcast = new IPEndPoint(IPAddress.Broadcast, m_port);
             while (m_running)
             {
                 long now = Environment.TickCount64;
                 if (now - m_lastProbeMs >= ProbeIntervalMs)
                 {
                     m_lastProbeMs = now;
-                    try
+                    byte[] probe = RoomBeaconCodec.EncodeProbe(now);
+                    // 端口段的每个槽位各发一次广播：同一局域网里可能有多台主机、
+                    // 每台主机可能在不同槽位开房间（51459 / 51460 …），只发一个端口会漏掉。
+                    for (int i = 0; i < m_ports.Length; i++)
                     {
-                        byte[] probe = RoomBeaconCodec.EncodeProbe(now);
-                        m_socket.Send(probe, probe.Length, broadcast);
-                        ProbesSent++;
-                        if (m_pendingProbes.Count >= MaxPendingProbes) m_pendingProbes.Clear();
-                        m_pendingProbes[now] = now;
+                        try
+                        {
+                            m_socket.Send(probe, probe.Length,
+                                new IPEndPoint(IPAddress.Broadcast, m_ports[i]));
+                            ProbesSent++;
+                        }
+                        catch (Exception)
+                        {
+                            // 广播被系统拒绝（某些网络禁广播）：不致命，等下一轮
+                        }
                     }
-                    catch (Exception)
-                    {
-                        // 广播被系统拒绝（某些网络禁广播）：不致命，等下一轮
-                    }
+                    if (m_pendingProbes.Count >= MaxPendingProbes) m_pendingProbes.Clear();
+                    m_pendingProbes[now] = now;
                 }
                 try
                 {
@@ -329,14 +348,18 @@ namespace SuMultiplayer.Net
             if (addresses == null) return 0;
             foreach (string address in addresses)
             {
-                try
+                if (!IPAddress.TryParse(address, out IPAddress target)) continue;
+                for (int i = 0; i < m_ports.Length; i++)
                 {
-                    byte[] probe = RoomBeaconCodec.EncodeProbe();
-                    m_socket.Send(probe, probe.Length, new IPEndPoint(IPAddress.Parse(address), m_port));
-                    sent++;
-                }
-                catch (Exception)
-                {
+                    try
+                    {
+                        byte[] probe = RoomBeaconCodec.EncodeProbe();
+                        m_socket.Send(probe, probe.Length, new IPEndPoint(target, m_ports[i]));
+                        sent++;
+                    }
+                    catch (Exception)
+                    {
+                    }
                 }
             }
             return sent;

@@ -27,7 +27,6 @@ namespace SuMultiplayer.Engine
     /// </summary>
     public sealed class SyncConfig
     {
-        public int Port = 26760;
         public int Radius = 3;
         public bool VerboseLog = false;
         /// <summary>主机侧是否把收到的客户端位置当作兴趣中心（实机 MVP 里两端各跑一个世界，故允许）。</summary>
@@ -36,8 +35,22 @@ namespace SuMultiplayer.Engine
         // —— 房间（会话）相关 ——
         /// <summary>房间名（主机应答发现探测时广播的名字）。</summary>
         public string RoomName = "SuMP Room";
-        /// <summary>LAN 发现端口（UDP 探测/应答）。</summary>
-        public int DiscoveryPort = 26761;
+        /// <summary>
+        /// 房间端口段的起始端口（默认 51459）。房间槽位 = <see cref="PortRangeStart"/> + i。
+        /// **同一个槽位同时承载 TCP（游戏通道）与 UDP（房间发现）** —— 探测到在线即可直接 TCP 连上，
+        /// 不需要额外信息（Source: Mod/ScMultiplayer/Modules/Session/ScMultiplayerLifecycle.cs:232-249
+        /// 旧实现的 BindFirstAvailableServerPort：UDP 与 TCP 同号，两者都绑成功才算占用）。
+        /// 服务端改这里 = 决定房间能落在哪；客户端改这里 = 地址没写范围时的默认扫描范围。
+        /// </summary>
+        public int PortRangeStart = DefaultPortRangeStart;
+        /// <summary>房间端口段的槽位数（默认 10）。同一台机器上最多能开这么多个房间。</summary>
+        public int PortRangeCount = DefaultPortRangeCount;
+        /// <summary>端口段起始默认值。</summary>
+        public const int DefaultPortRangeStart = 51459;
+        /// <summary>端口段槽位默认值。</summary>
+        public const int DefaultPortRangeCount = 10;
+        /// <summary>端口段槽位上限（防止配置写错导致扫几千个端口）。</summary>
+        public const int MaximumPortRangeCount = 256;
         public int MaxPlayers = 8;
 
         /// <summary>
@@ -99,8 +112,9 @@ namespace SuMultiplayer.Engine
         public static string SettingsPath => Storage.CombinePaths("data:/Mods", FileName);
 
         public string Describe() =>
-            "port=" + Port + " radius=" + Radius + " room=\"" + RoomName + "\" discovery=" +
-            DiscoveryPort + " maxplayers=" + MaxPlayers + " maxReach=" +
+            "ports=" + PortRangeStart + ".." + (PortRangeStart + PortRangeCount - 1) +
+            "(" + PortRangeCount + " slots, tcp+udp) radius=" + Radius + " room=\"" + RoomName +
+            "\" maxplayers=" + MaxPlayers + " maxReach=" +
             MaxInteractionReach.ToString("0.##", CultureInfo.InvariantCulture) + "m meleeReach=" +
             MeleeMaxReach.ToString("0.##", CultureInfo.InvariantCulture) + "m meleePrediction=" +
             MeleePrediction + " verbose=" +
@@ -195,7 +209,19 @@ namespace SuMultiplayer.Engine
                                 "加入走 Play 屏房间行");
                     break;
                 case "port":
-                    if (int.TryParse(value, out int port) && port > 0 && port < 65536) config.Port = port;
+                    // 旧键：已由端口段取代。明确警告，避免"改了配置却没变化"。
+                    Log.Warning("[SuMP] 配置里的 \"port\" 已不再生效：房间端口由 portrangestart / " +
+                                "portrangecount 决定（0 = 自动分配端口段内的槽位）");
+                    break;
+                case "portrangestart":
+                case "portstart":
+                    if (int.TryParse(value, out int rangeStart) && rangeStart > 0 && rangeStart < 65536)
+                        config.PortRangeStart = rangeStart;
+                    break;
+                case "portrangecount":
+                case "portcount":
+                    if (int.TryParse(value, out int rangeCount))
+                        config.PortRangeCount = Math.Max(1, Math.Min(MaximumPortRangeCount, rangeCount));
                     break;
                 case "radius":
                     if (int.TryParse(value, out int radius)) config.Radius = Math.Max(1, Math.Min(32, radius));
@@ -210,8 +236,9 @@ namespace SuMultiplayer.Engine
                     break;
                 case "discoveryport":
                 case "discoverport":
-                    if (int.TryParse(value, out int discoveryPort) && discoveryPort > 0 && discoveryPort < 65536)
-                        config.DiscoveryPort = discoveryPort;
+                    // 旧键：发现端口已与游戏端口同号（都在端口段内），不再单独配置。
+                    Log.Warning("[SuMP] 配置里的 \"" + key + "\" 已不再生效：发现端口与游戏端口同号，" +
+                                "都在 portrangestart..portrangestart+portrangecount-1 段内");
                     break;
                 case "maxplayers":
                     if (int.TryParse(value, out int maxPlayers)) config.MaxPlayers = Math.Max(1, maxPlayers);
@@ -343,8 +370,8 @@ namespace SuMultiplayer.Engine
                 using (var writer = new StreamWriter(stream, new UTF8Encoding(false)))
                 {
                     writer.WriteLine("{");
-                    writer.WriteLine("  \"port\": " + Port + ",");
-                    writer.WriteLine("  \"discoveryport\": " + DiscoveryPort + ",");
+                    writer.WriteLine("  \"portrangestart\": " + PortRangeStart + ",");
+                    writer.WriteLine("  \"portrangecount\": " + PortRangeCount + ",");
                     writer.WriteLine("  \"room\": \"" + RoomName + "\",");
                     writer.WriteLine("  \"radius\": " + Radius + ",");
                     writer.WriteLine("  \"maxplayers\": " + MaxPlayers + ",");

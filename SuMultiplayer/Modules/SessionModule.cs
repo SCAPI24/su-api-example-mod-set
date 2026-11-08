@@ -101,13 +101,13 @@ namespace SuMultiplayer.Modules
                 Log("暂不寻找房间（Play 屏不可见；进入地图列表时才开始探测）");
                 return;
             }
-            m_serverCatalog = new Net.ServerCatalog(m_config.DiscoveryPort, m_config.Port);
+            m_serverCatalog = new Net.ServerCatalog(m_config.PortRangeStart, m_config.PortRangeCount);
             m_serverCatalog.Start();
-            m_beaconClient = new RoomBeaconClient(m_config.DiscoveryPort);
+            m_beaconClient = new RoomBeaconClient(m_config.PortRangeStart, m_config.PortRangeCount);
             m_beaconClient.RoomFound += HandleRoomFound;
             if (m_beaconClient.Start())
             {
-                Log("开始寻找房间（" + why + "）：发现端口 " + m_config.DiscoveryPort + " · 每 " +
+                Log("开始寻找房间（" + why + "）：端口段 " + DescribePortRange() + " · 每 " +
                     m_beaconClient.ProbeIntervalMs + " ms 广播一次（发现的房间会进入 Play 屏世界列表）");
                 m_join.Discover(Environment.TickCount64);
             }
@@ -132,6 +132,28 @@ namespace SuMultiplayer.Modules
             Log("停止寻找房间（" + why + "）");
         }
 
+        /// <summary>端口段的可读描述（日志 / UI 提示共用）。</summary>
+        private string DescribePortRange() =>
+            m_config.PortRangeStart + ".." + (m_config.PortRangeStart + m_config.PortRangeCount - 1) +
+            "（" + m_config.PortRangeCount + " 个槽位）";
+
+        /// <summary>
+        /// 在**已经绑好 TCP 的同一个端口号**上启动发现应答（UDP）。
+        /// 同号方案下，UDP 绑不上就意味着这个槽位不可用（可能是别的实例占了 UDP），
+        /// 返回 false 时调用方必须释放 TCP 并换下一个槽位。
+        /// </summary>
+        private bool TryStartBeaconOn(int port, out string reason)
+        {
+            reason = null;
+            m_beaconHost?.Dispose();
+            m_beaconHost = new RoomBeaconHost(port, BuildRoomInfo);
+            if (m_beaconHost.Start()) return true;
+            m_beaconHost.Dispose();
+            m_beaconHost = null;
+            reason = "发现端口(UDP) " + port + " 绑定失败 → 该槽位不可用（房间端口需要 TCP 与 UDP 同号）";
+            return false;
+        }
+
         // ------------------------------------------------------------ 建房（CR）
 
         /// <summary>
@@ -141,8 +163,9 @@ namespace SuMultiplayer.Modules
         private int m_hostPort;
         public int HostingPort => m_hostPort;
 
+        /// <summary>建房（自动分配端口段内的空闲槽位）。</summary>
         public bool CreateRoom(string worldName, string gameMode, out string reason) =>
-            CreateRoom(worldName, gameMode, m_config.Port, out reason);
+            CreateRoom(worldName, gameMode, WorldJoinSettings.AutoPort, out reason);
 
         public bool CreateRoom(string worldName, string gameMode, int requestedPort, out string reason)
         {
@@ -165,21 +188,32 @@ namespace SuMultiplayer.Modules
             int selectedPort = 0;
             if (requestedPort == WorldJoinSettings.AutoPort)
             {
-                for (int i = 0; i < WorldJoinSettings.AutoPortCount; i++)
+                // 自动分配：在配置的端口段内逐槽位尝试。
+                // **同一槽位必须 TCP + UDP 都绑成功才算占用**（发现端口与游戏端口同号）；
+                // 顺序是「先 TCP 后 UDP」：TCP 是可靠的占用判据（不允许重复绑定），
+                // UDP 因为历史上开过 ReuseAddress 可能被占也能绑成功，所以只能作为第二道校验。
+                for (int i = 0; i < m_config.PortRangeCount; i++)
                 {
-                    int candidate = WorldJoinSettings.AutoPortBase + i;
-                    if (m_transportControl.StartHostServer(candidate, out string attemptReason))
+                    int candidate = m_config.PortRangeStart + i;
+                    if (!m_transportControl.StartHostServer(candidate, out string attemptReason))
                     {
-                        selectedPort = candidate;
-                        reason = null;
-                        break;
+                        reason = attemptReason;
+                        continue;
                     }
-                    reason = attemptReason;
+                    if (!TryStartBeaconOn(candidate, out string beaconReason))
+                    {
+                        // UDP 绑不上：释放 TCP，明确换下一个槽位（不占用半个槽位）。
+                        reason = beaconReason;
+                        m_transportControl.StopChannel();
+                        continue;
+                    }
+                    selectedPort = candidate;
+                    reason = null;
+                    break;
                 }
                 if (selectedPort == 0)
                 {
-                    reason = "Automatic port allocation failed (" + WorldJoinSettings.AutoPortBase +
-                        ".." + (WorldJoinSettings.AutoPortBase + WorldJoinSettings.AutoPortCount - 1) +
+                    reason = "Automatic port allocation failed (" + DescribePortRange() +
                         " are all unavailable): " + reason;
                     return false;
                 }
@@ -191,30 +225,24 @@ namespace SuMultiplayer.Modules
                     reason = "Invalid port " + requestedPort + " (0 = automatic, 1..65535 = explicit).";
                     return false;
                 }
+                // 手动指定端口（存在世界目录的 SuMultiplayerWorld.xml 里）：允许落在端口段之外，
+                // 但同样要求 TCP + UDP 都绑成功，否则明确失败（不自动跳到别的端口）。
                 if (!m_transportControl.StartHostServer(requestedPort, out reason)) return false;
+                if (!TryStartBeaconOn(requestedPort, out string beaconReason))
+                {
+                    m_transportControl.StopChannel();
+                    reason = beaconReason;
+                    return false;
+                }
                 selectedPort = requestedPort;
             }
             m_hostPort = selectedPort;
             m_roomWorldName = worldName;
             m_roomGameMode = gameMode ?? string.Empty;
-            m_beaconHost = new RoomBeaconHost(m_config.DiscoveryPort, BuildRoomInfo);
-            if (!m_beaconHost.Start())
-            {
-                // 发现端口绑不上：房间本身（TCP）已经开了，但局域网里看不到。
-                // 明确失败并回滚，避免出现"有房间但没人能发现"的半成品状态。
-                string bindReason = "Discovery port " + m_config.DiscoveryPort +
-                    " could not be bound (the room would not be visible on the LAN).";
-                m_beaconHost.Dispose();
-                m_beaconHost = null;
-                m_transportControl.StopChannel();
-                reason = bindReason;
-                return false;
-            }
             Log("room-created-success source=game-world name=" + m_config.RoomName +
-                " world=" + worldName + " mapPort=" + m_hostPort +
-                " discoveryPort=" + m_config.DiscoveryPort);
-            Log("房间已创建：名称「" + m_config.RoomName + "」· 世界「" + worldName + "」· 地图端口 " +
-                m_hostPort + " · 发现端口 " + m_config.DiscoveryPort + "（有人探测就应答，不周期广播）");
+                " world=" + worldName + " mapPort=" + m_hostPort + "（TCP+UDP 同号）");
+            Log("房间已创建：名称「" + m_config.RoomName + "」· 世界「" + worldName + "」· 端口 " +
+                m_hostPort + "（TCP 游戏 + UDP 发现同号；有人探测就应答，不周期广播）");
             // 主持期间不浏览房间：否则自己的房间会出现在自己的 Play 屏里。
             StopDiscovery("本机已在主持房间");
             return true;
@@ -398,15 +426,25 @@ namespace SuMultiplayer.Modules
                 if (endpoint == null) continue;
                 RoomBeaconInfo info = result.Info;
                 bool personal = endpoint.Source == RoomSource.Personal;
-                if (info == null && !personal) continue;
+                // 显示规则（用户口径）：
+                //   · ServerDns 来源 → **UDP 在线才显示**（探测不到就当这个地址没有房间，自然也无法连接）；
+                //   · 个人服务器（From Link）写明端口 → UDP 离线也保留一行，可点它做 TCP 强制连接；
+                //   · 个人服务器没写端口（走默认端口段）→ 与 ServerDns 同样只显示在线的。
+                bool keepOffline = personal && endpoint.HasExplicitPort;
+                if (info == null && !keepOffline) continue;
+                // 同号方案：探测用的端口就是该槽位的游戏端口；探测在线时以主机应答里的端口为准。
+                int gamePort = info?.Port > 0 ? info.Port : result.Port;
+                if (gamePort <= 0) gamePort = endpoint.FallbackGamePort;
                 var entry = new RoomEntry
                 {
-                    Key = endpoint.Key,
+                    // 一个地址可能展开成多个端口（端口段/区间）：Key 必须带端口，
+                    // 否则同一主机的多个房间会互相覆盖。
+                    Key = endpoint.Key + ":" + gamePort,
                     Name = info == null || string.IsNullOrEmpty(info.RoomName)
-                        ? (personal ? endpoint.Name : endpoint.Host)
+                        ? (personal ? endpoint.Name + ":" + gamePort : endpoint.Host + ":" + gamePort)
                         : info.RoomName,
                     HostAddress = result.TargetHost ?? endpoint.Host,
-                    Port = info?.Port ?? endpoint.FallbackGamePort,
+                    Port = gamePort,
                     Source = endpoint.Source,
                     DisplayAddress = endpoint.DisplayAddress,
                     Online = info != null,

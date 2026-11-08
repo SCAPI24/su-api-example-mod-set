@@ -95,6 +95,9 @@ Read-only: `ping` (also reports `dispatcherReady`), `status`, `obs.snapshot`, `o
 `obs.messages`, `obs.dialogs`, `obs.events`, `obs.world.time`, `obs.world.entities`,
 `obs.world.blocks`, `ui.reachability`, `obs.selftest`, `obs.waitFor`.
 
+Debug overlay (draws in-world, memory only): `box.block`, `box.area`, `box.list`, `box.clear`,
+`box.remove` — see "Drawing boxes on the world" below.
+
 Actions: `act.look`, `act.lookdelta`, `act.lookat`, `act.key`, `act.hold`, `act.chord`,
 `act.mouse`, `act.wheel`, `act.uiclick`, `act.text`, `act.releaseAll`.
 
@@ -112,6 +115,142 @@ all three are the same `PlayerInput.Interact` edge, and `ComponentPlayer.Update`
 `act.aim start|release|cancel` holds / releases / cancels `PlayerInput.Aim`
 (`ComponentInput.cs:185`, `ComponentPlayer.cs:183-227`). See
 `doc/cmdbridge-ui-automation.md` section 13 for the full mapping and caveats.
+
+## Drawing boxes on the world: `box.*`
+
+Debug helper: draw a **fixed-coordinate** wireframe box around a block or an area so you can
+see with your own eyes where a coordinate actually is.
+
+```
+box block x y z [--color <name|RRGGBB|AARRGGBB>]
+box area  x1 y1 z1 x2 y2 z2 [--color <name|RRGGBB|AARRGGBB>]
+box list
+box clear
+box remove <id>
+```
+
+- **Fixed coordinates.** Boxes stay where you put them; they do not follow the block and the
+  draw path never reads terrain.
+- **Memory only.** Nothing is written to the save or to any file; a restart clears everything.
+- Default colour is green (`40FF60FF`); `box list` echoes the cell ranges and the colour.
+- **Colour may be a name** taken from the engine's own palette (`Engine/Color.cs`), so you do
+  not have to type RGB. Matching is case-insensitive and ignores `_` / `-` / spaces
+  (`dark_green`, `Dark-Green` and `darkgreen` are the same). Hex still works.
+
+  ```
+  black gray white red green yellow blue cyan magenta
+  darkgray darkred darkgreen darkyellow darkblue darkcyan darkmagenta
+  lightgray lightred lightgreen lightyellow lightblue lightcyan lightmagenta
+  orange pink chartreuse violet mintgreen skyblue brown purple olive indigo
+  mutedgreen inkblue
+  ```
+
+  `box block -76 65 -101 --color red` and `box block -76 65 -101 --color FF0000` are equivalent.
+- `box area` accepts the two corners in any order (each axis is sorted to min/max).
+- Cap is 256 simultaneous boxes; exceeding it fails with `overlay_limit` rather than silently
+  dropping.
+
+### Why it does not interfere with other mods
+
+| Layer | Isolation |
+|---|---|
+| Data | Private static list inside `Server/BridgeOverlayState.cs`; `internal` types, unreachable from other mods |
+| Draw registration | `SubsystemDrawing.AddDrawable(IDrawable)` (public API). **No** subsystem replacement, **no** `Pak/Database.xml` node, **no** injector |
+| Draw order | `2001` — distinct from CircuitAutoRouter `100`, MiniMap `1246`, ScMultiplayer territory overlay `2000`, engine block highlight `1`/`2000` |
+| Lifetime | The drawable is registered only while at least one box exists; zero boxes = nothing added to the world, zero overhead. `OnUnload` detaches and clears |
+
+**Do not attach the drawable as an entity component.** `Entity` has no public `AddComponent`,
+and `Project` has no component-add API either (`Project.cs` only exposes `CreateEntity` /
+`AddEntity` / `RemoveEntity`); adding a component to a live entity means rebuilding its
+`ValuesDictionary`. `subsystemDrawing.AddDrawable` is the supported path.
+
+## Pitfalls learned the hard way
+
+### 1. The packaged DLL must come from `Obfuscar/`, not from the plain `bin` folder
+
+`CmdBridgeMod.csproj` runs Obfuscar as a `PostBuild` target:
+
+```
+InPath  = $(TargetDir)
+OutPath = $(TargetDir)Obfuscar
+```
+
+So `bin/Release/net10.0/CmdBridgeMod.dll` is the **pre-obfuscation** intermediate artifact and
+`bin/Release/net10.0/Obfuscar/CmdBridgeMod.dll` is the one that actually ships. They have
+different sizes and hashes and **both look plausible**, so picking the wrong one silently
+produces a package that loads an older-looking build.
+
+Observed symptom: the new command is absent at runtime, `status` still reports the new
+`modVersion` (both files carry it), and no error is logged anywhere — the package simply
+contains the wrong assembly.
+
+Rule: after `dotnet build -c Release`, always package
+`bin/Release/<tfm>/Obfuscar/<Assembly>.dll`, and verify the packaged hash equals the
+**Obfuscar** output:
+
+```bash
+python3 - <<'EOF'
+import zipfile, hashlib
+src = 'bin/Release/net10.0/Obfuscar/CmdBridgeMod.dll'
+with zipfile.ZipFile('[SuAPI]CmdBridgeMod-x.y.z.scmod') as z:
+    inner = z.read('Lib/CmdBridgeMod.dll')
+print(hashlib.sha256(open(src,'rb').read()).hexdigest() ==
+      hashlib.sha256(inner).hexdigest())
+EOF
+```
+
+### 2. Grepping a packed/obfuscated assembly for command strings proves nothing
+
+Obfuscar stores string literals in a compressed/encrypted form, so **no** command name —
+not even a long-standing one like `obs.world.blocks` — appears as ASCII or UTF-16 in the output
+DLL. A search that finds nothing is not evidence that the command is missing.
+
+To check whether a command is really registered, ask the running game:
+
+```
+sccmd raw box.block x=-76 y=65 z=-101     # reaches the server even for brand-new commands
+sccmd commands                            # full list from `cmd.list`
+```
+
+`sccmd raw <command> key=value ...` bypasses the client's own command table, so it is the
+authoritative test for "did my server-side command register".
+
+### 3. Adding a server command also requires updating the `sccmd` client
+
+`CmdBridgeClient/Program.cs` dispatches on a hard-coded `switch`, so a new `box.*` command is
+invisible to `sccmd` until the client is rebuilt — the server side is fine, but `sccmd box.block`
+reports `Unknown command`. Either extend the client's `switch`, or test with `raw`.
+
+### 4. `Engine.Color(uint)` is little-endian ARGB, not `0xRRGGBB`
+
+`Color(uint packedValue)` stores the value straight into `PackedValue`, and the packing order is
+**little-endian ARGB** — `(a << 24) | (b << 16) | (g << 8) | r` (`Engine/Color.cs:142`, matching
+`Color(byte r, byte g, byte b, byte a)`).
+
+So `new Color(0xFF000000u | 0xFF3030u)` produces `R=0x30, G=0x30, B=0xFF` — **red and blue are
+swapped**. Parsing `--color` must shift out the bytes and use the four-argument constructor:
+
+```csharp
+byte a = len == 8 ? (byte)((raw >> 24) & 0xFF) : (byte)0xFF;
+byte r = (byte)((raw >> 16) & 0xFF);
+byte g = (byte)((raw >> 8)  & 0xFF);
+byte b = (byte) (raw        & 0xFF);
+return new Color(r, g, b, a);
+```
+
+Symptom to watch for: `--color FF3030` comes back as `3030FF` in `box list`.
+
+### 5. `adb push` of a package path with brackets needs care
+
+Inside Git Bash the argument can be path-translated and the push lands somewhere unintended
+(`remote secure_mkdirs() failed`). Push the **absolute** path and quote the destination:
+
+```bash
+adb -s "$SERIAL" push "P:/.../[SuAPI]CmdBridgeMod-1.1.39.scmod" /sdcard/Download/Survivalcraft/Mods/
+```
+
+Then compare hashes on both ends before restarting the game — a silent partial deploy looks
+exactly like a code bug.
 
 ## All players: `players.all` / `obs.players`
 
@@ -297,5 +436,6 @@ Hotbar
 优势 ≠ 特权。已实测覆盖：界面元素与可达性（含 `hittable` 与 `clickable` 的区分）、虚拟列表项、
 玩家状态与按键意图、准星目标、背包、睡眠（含"困到昏睡"与自然回血）、世界方块/实体/时间、
 游戏自身提示消息、事件环（一次点击恰好一条事件）、瞬时转视角、按键/鼠标/滚轮注入、
-引擎内 UI 点击（注入前二次校验、不可跳级）、文本输入。
+引擎内 UI 点击（注入前二次校验、不可跳级）、文本输入、世界内固定坐标线框（`box.*`，纯内存、
+DrawOrder 2001，与其他 Mod 的绘制互不干涉）。
 设计与全部实测记录见 `../doc/cmd-bridge-plan.md`。

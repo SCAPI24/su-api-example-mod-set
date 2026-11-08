@@ -37,7 +37,7 @@ namespace CmdBridgeMod
         /// ⚠️ **必须与 `ModInfo.xml` 的 `&lt;Version&gt;` 同步**：漏同步就会出现
         /// "装的是 1.1.20、状态里报 1.1.15"（本文件实际踩过一次，排查时容易误判成旧包装没生效）。
         /// </summary>
-        internal const string ModVersion = "1.1.38";
+        internal const string ModVersion = "1.1.39";
 
         /// <summary>
         /// 内建命令名（`cmd.list` 用）。加命令时**必须同步这里**：
@@ -52,6 +52,9 @@ namespace CmdBridgeMod
             // `players.all` 是主名，`obs.players` 是只读观察面的别名。
             "players.all", "obs.players",
             "obs.world.blocks", "obs.world.entities", "obs.world.time", "obs.messages", "obs.chat",
+            // 调试辅助：在世界上画固定坐标的边框（纯内存、不落盘、默认绿色）。
+            // 唯一一个会渲染的桥命令；隔离方式见 `Server/BridgeOverlayState.cs` 类头。
+            "box.block", "box.area", "box.list", "box.clear", "box.remove",
             "obs.dialogs",
             "obs.waitfor", "ui.elements", "ui.reachability",
             "circuit.pause", "circuit.status",
@@ -221,6 +224,16 @@ namespace CmdBridgeMod
                     return OnGameThread(WorldObserver.DescribeTime);
                 case "obs.world.fire":
                     return OnGameThread(WorldObserver.DescribeFire);
+                case "box.block":
+                    return OnGameThread(() => AddOverlayBlock(request));
+                case "box.area":
+                    return OnGameThread(() => AddOverlayArea(request));
+                case "box.list":
+                    return OnGameThread(DescribeOverlayBoxes);
+                case "box.clear":
+                    return OnGameThread(ClearOverlayBoxes);
+                case "box.remove":
+                    return OnGameThread(() => RemoveOverlayBox(request));
                 case "obs.messages":
                     return OnGameThread(MessageObserver.Describe);
                 case "obs.chat":
@@ -2001,6 +2014,235 @@ namespace CmdBridgeMod
                 x, y, z,
                 request.GetInteger("radius", 4),
                 request.GetInteger("max", 256));
+        }
+
+        // ---------------------------------------------------------------- 边框（box.*）
+        //
+        // 调试辅助：把"某个方块 / 某个区域"在世界里的位置**画出来**，方便肉眼确认坐标。
+        //   · 固定坐标：画上去就不动（不跟随方块，不读地形）；
+        //   · 纯内存：不写存档、不写任何文件，游戏重启即清空；
+        //   · 隔离：只注册一个 internal 绘制器（DrawOrder 2001），不替换子系统、不注册注入器。
+
+        private Dictionary<string, object> AddOverlayBlock(BridgeRequest request)
+        {
+            int x = RequireOverlayInt(request, "x");
+            int y = RequireOverlayInt(request, "y");
+            int z = RequireOverlayInt(request, "z");
+            Color color = ParseOverlayColor(request, BridgeOverlayState.DefaultColor);
+            // 单方块 = 该格 [x,x+1]×[y,y+1]×[z,z+1]
+            var bounds = new BoundingBox(x, y, z, x + 1, y + 1, z + 1);
+            return CommitOverlayBox(bounds, color, "block", new[] { x, y, z });
+        }
+
+        private Dictionary<string, object> AddOverlayArea(BridgeRequest request)
+        {
+            int x1 = RequireOverlayInt(request, "x1");
+            int y1 = RequireOverlayInt(request, "y1");
+            int z1 = RequireOverlayInt(request, "z1");
+            int x2 = RequireOverlayInt(request, "x2");
+            int y2 = RequireOverlayInt(request, "y2");
+            int z2 = RequireOverlayInt(request, "z2");
+            Color color = ParseOverlayColor(request, BridgeOverlayState.DefaultColor);
+            // 两个角点都算在内 → 各轴 max 侧 +1；顺序无关（取 min/max）。
+            var bounds = new BoundingBox(
+                Math.Min(x1, x2), Math.Min(y1, y2), Math.Min(z1, z2),
+                Math.Max(x1, x2) + 1, Math.Max(y1, y2) + 1, Math.Max(z1, z2) + 1);
+            return CommitOverlayBox(bounds, color, "area",
+                new[] { Math.Min(x1, x2), Math.Min(y1, y2), Math.Min(z1, z2),
+                        Math.Max(x1, x2), Math.Max(y1, y2), Math.Max(z1, z2) });
+        }
+
+        private static Dictionary<string, object> CommitOverlayBox(BoundingBox bounds,
+            Color color, string kind, int[] cells)
+        {
+            int id = BridgeOverlayState.Add(bounds, color);
+            if (id < 0)
+            {
+                throw new BridgeCommandException("overlay_limit",
+                    "Too many boxes (limit " + BridgeOverlayState.MaximumBoxes +
+                    "). Clear some with box.clear first.");
+            }
+            // 挂载是幂等的：这里主动调一次，绘制器下一帧就在画了。
+            BridgeOverlayState.EnsureAttached();
+            var result = new Dictionary<string, object>(StringComparer.Ordinal);
+            result["ok"] = true;
+            result["id"] = id;
+            result["kind"] = kind;
+            result["cells"] = cells;
+            result["color"] = DescribeOverlayColor(color);
+            result["total"] = BridgeOverlayState.Count;
+            return result;
+        }
+
+        private static Dictionary<string, object> DescribeOverlayBoxes()
+        {
+            BridgeOverlayBox[] boxes = BridgeOverlayState.List();
+            var items = new List<Dictionary<string, object>>(boxes.Length);
+            for (int i = 0; i < boxes.Length; i++)
+            {
+                BridgeOverlayBox box = boxes[i];
+                var item = new Dictionary<string, object>(StringComparer.Ordinal);
+                item["id"] = box.Id;
+                item["min"] = new[] {
+                    Terrain.ToCell(box.Bounds.Min.X), Terrain.ToCell(box.Bounds.Min.Y),
+                    Terrain.ToCell(box.Bounds.Min.Z) };
+                // max 存的是"格子坐标 +1"，回显时减回格子坐标，和输入口径一致。
+                item["max"] = new[] {
+                    Terrain.ToCell(box.Bounds.Max.X) - 1, Terrain.ToCell(box.Bounds.Max.Y) - 1,
+                    Terrain.ToCell(box.Bounds.Max.Z) - 1 };
+                item["color"] = DescribeOverlayColor(box.Color);
+                items.Add(item);
+            }
+            var result = new Dictionary<string, object>(StringComparer.Ordinal);
+            result["count"] = items.Count;
+            result["boxes"] = items;
+            return result;
+        }
+
+        private static Dictionary<string, object> ClearOverlayBoxes()
+        {
+            int cleared = BridgeOverlayState.Clear();
+            var result = new Dictionary<string, object>(StringComparer.Ordinal);
+            result["ok"] = true;
+            result["cleared"] = cleared;
+            return result;
+        }
+
+        private static Dictionary<string, object> RemoveOverlayBox(BridgeRequest request)
+        {
+            int id = RequireOverlayInt(request, "id");
+            bool removed = BridgeOverlayState.Remove(id);
+            var result = new Dictionary<string, object>(StringComparer.Ordinal);
+            result["ok"] = removed;
+            result["id"] = id;
+            result["total"] = BridgeOverlayState.Count;
+            if (!removed)
+                result["reason"] = "no box with that id (see box.list)";
+            return result;
+        }
+
+        private static int RequireOverlayInt(BridgeRequest request, string name)
+        {
+            if (!request.TryGetInteger(name, out int value))
+            {
+                throw new BridgeCommandException("bad_request",
+                    "Missing required integer parameter '" + name + "'.");
+            }
+            return value;
+        }
+
+        /// <summary>
+        /// 解析 `--color`：
+        ///   · 颜色名（不区分大小写）：`red` / `darkgreen` / `skyblue` … —— 取自引擎
+        ///     `Engine.Color` 的内置命名色（`Engine/Color.cs:8-80`），共 34 个；
+        ///     也接受 `dark_green` / `dark-green` / `DarkGreen` 这类写法；
+        ///   · `RRGGBB` / `AARRGGBB` 十六进制（可用 `#` 前缀）。
+        /// 不传就用默认色（绿色）。写错明确报错，不做"猜一个颜色"的兜底。
+        ///
+        /// 十六进制分支必须按字节拆开再构造：`Engine.Color(uint)` 直接把参数存成 PackedValue，
+        /// 而它的打包序是小端 ARGB（(a&lt;&lt;24)|(b&lt;&lt;16)|(g&lt;&lt;8)|r，见 Engine/Color.cs:142），
+        /// 所以 `new Color(0xFF000000u | 0xFF3030u)` 得到的是 R=0x30 G=0x30 B=0xFF（红蓝颠倒）。
+        /// </summary>
+        private static Color ParseOverlayColor(BridgeRequest request, Color fallback)
+        {
+            if (!request.TryGetString("color", out string text) || string.IsNullOrWhiteSpace(text))
+                return fallback;
+            string value = text.Trim();
+            string hex = value.TrimStart('#');
+            if ((hex.Length == 6 || hex.Length == 8) &&
+                uint.TryParse(hex, System.Globalization.NumberStyles.HexNumber,
+                    System.Globalization.CultureInfo.InvariantCulture, out uint raw))
+            {
+                byte a = hex.Length == 8 ? (byte)((raw >> 24) & 0xFF) : (byte)0xFF;
+                byte r = (byte)((raw >> 16) & 0xFF);
+                byte g = (byte)((raw >> 8) & 0xFF);
+                byte b = (byte)(raw & 0xFF);
+                return new Color(r, g, b, a);
+            }
+            Color? named = ParseNamedOverlayColor(value);
+            if (named.HasValue) return named.Value;
+            throw new BridgeCommandException("bad_request",
+                "Invalid color '" + text + "'. Use a color name (" +
+                string.Join(", ", OverlayColorNames) + ") or RRGGBB / AARRGGBB.");
+        }
+
+        /// <summary>引擎内置命名色（`Engine/Color.cs`），供错误信息里列出可用名字。</summary>
+        private static readonly string[] OverlayColorNames =
+        {
+            "black", "darkgray", "gray", "lightgray", "white",
+            "red", "green", "yellow", "blue", "magenta", "cyan",
+            "darkred", "darkgreen", "darkyellow", "darkblue", "darkmagenta", "darkcyan",
+            "lightred", "lightgreen", "lightyellow", "lightblue", "lightmagenta", "lightcyan",
+            "orange", "pink", "chartreuse", "violet", "mintgreen", "skyblue",
+            "brown", "purple", "olive", "indigo", "mutedgreen", "inkblue"
+        };
+
+        private static Color? ParseNamedOverlayColor(string text)
+        {
+            switch (NormalizeOverlayColorName(text))
+            {
+                case "black": return Color.Black;
+                case "darkgray": case "darkgrey": return Color.DarkGray;
+                case "gray": case "grey": return Color.Gray;
+                case "lightgray": case "lightgrey": return Color.LightGray;
+                case "white": return Color.White;
+                case "red": return Color.Red;
+                case "green": return Color.Green;
+                case "yellow": return Color.Yellow;
+                case "blue": return Color.Blue;
+                case "magenta": return Color.Magenta;
+                case "cyan": return Color.Cyan;
+                case "darkred": return Color.DarkRed;
+                case "darkgreen": return Color.DarkGreen;
+                case "darkyellow": return Color.DarkYellow;
+                case "darkblue": return Color.DarkBlue;
+                case "darkmagenta": return Color.DarkMagenta;
+                case "darkcyan": return Color.DarkCyan;
+                case "lightred": return Color.LightRed;
+                case "lightgreen": return Color.LightGreen;
+                case "lightyellow": return Color.LightYellow;
+                case "lightblue": return Color.LightBlue;
+                case "lightmagenta": return Color.LightMagenta;
+                case "lightcyan": return Color.LightCyan;
+                case "orange": return Color.Orange;
+                case "pink": return Color.Pink;
+                case "chartreuse": return Color.Chartreuse;
+                case "violet": return Color.Violet;
+                case "mintgreen": return Color.MintGreen;
+                case "skyblue": return Color.SkyBlue;
+                case "brown": return Color.Brown;
+                case "purple": return Color.Purple;
+                case "olive": return Color.Olive;
+                case "indigo": return Color.Indigo;
+                case "mutedgreen": return Color.MutedGreen;
+                case "inkblue": return Color.InkBlue;
+                default: return null;
+            }
+        }
+
+        /// <summary>名字归一化：转小写并去掉空格 / 下划线 / 连字符（`Dark_Green` → `darkgreen`）。</summary>
+        private static string NormalizeOverlayColorName(string text)
+        {
+            var builder = new System.Text.StringBuilder(text.Length);
+            for (int i = 0; i < text.Length; i++)
+            {
+                char c = text[i];
+                if (c == ' ' || c == '_' || c == '-') continue;
+                builder.Append(char.ToLowerInvariant(c));
+            }
+            return builder.ToString();
+        }
+
+        private static Dictionary<string, object> DescribeOverlayColor(Color color)
+        {
+            var result = new Dictionary<string, object>(StringComparer.Ordinal);
+            result["r"] = (int)color.R;
+            result["g"] = (int)color.G;
+            result["b"] = (int)color.B;
+            result["a"] = (int)color.A;
+            result["hex"] = color.R.ToString("X2") + color.G.ToString("X2") +
+                color.B.ToString("X2") + color.A.ToString("X2");
+            return result;
         }
 
         private static ComponentPlayer GetPlayerOrNull()
