@@ -330,37 +330,6 @@ namespace HeadlessRenderingMod
             return 0;
         }
 
-        // ── 主机角色幽灵身体 ──────────────────────────────────────────────
-
-        /// <summary>
-        /// 主机自己的角色是否处于幽灵状态（不可见 / 不可攻击 / 睡眠）。
-        /// 只针对主机本机角色；客户端角色不受影响。
-        /// </summary>
-        internal static bool ReadHostGhost()
-        {
-            Dictionary<string, object> result = Call(new Dictionary<string, object>(
-                StringComparer.Ordinal)
-            {
-                ["operation"] = "ghost.get"
-            });
-            return ReadBool(result, "ghost");
-        }
-
-        /// <summary>
-        /// 进入 / 退出幽灵状态。幽灵化同时把主机角色置为睡眠
-        /// —— 否则客户端全部睡觉时世界不会加速（引擎要求至少一人真的在睡）。
-        /// </summary>
-        internal static bool SetHostGhost(bool ghost)
-        {
-            Dictionary<string, object> result = Call(new Dictionary<string, object>(
-                StringComparer.Ordinal)
-            {
-                ["operation"] = "ghost.set",
-                ["ghost"] = ghost
-            });
-            return ReadBool(result, "ok");
-        }
-
         // ── 联机角色（主机端 SuMultiplayerPlayers.xml 记录）──────────────────
 
         /// <summary>

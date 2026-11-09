@@ -3583,9 +3583,7 @@ namespace HeadlessRenderingMod
                 new RoomSettingItem(
                     "LogMode-[" + DescribeModuleLogMode() + "]",
                     ConfigureMultiplayerLogMode),
-                new RoomSettingItem(
-                    "Host Body-[" + DescribeHostGhost() + "]",
-                    ToggleHostGhost),
+
                 new RoomSettingItem(
                     "Client furniture delete: " + OnOff(settings.AllowFurnitureDelete),
                     delegate
@@ -3616,67 +3614,6 @@ namespace HeadlessRenderingMod
             port <= 0
                 ? "Auto"
                 : port.ToString(System.Globalization.CultureInfo.InvariantCulture);
-
-        /// <summary>
-        /// 主机角色幽灵状态的短标签：`Ghost`（不可见/不可攻击/睡眠）或 `Normal`。
-        /// 读不到时返回 `?` —— 不伪装成 Normal（那会让人以为身体还在世界里）。
-        /// </summary>
-        private string DescribeHostGhost()
-        {
-            try
-            {
-                return HeadlessSuMultiplayerBridge.ReadHostGhost() ? "Ghost" : "Normal";
-            }
-            catch
-            {
-                return "?";
-            }
-        }
-
-        /// <summary>
-        /// 切换主机角色的幽灵身体。
-        ///
-        /// 无头服务器的主机没有人操作，那个本机角色会永久站在世界里 ——
-        /// 客户端看到的是一具不动的身体，而且它一直参与碰撞与战斗。
-        /// 幽灵化后：碰撞/渲染/更新全部摘除（别人看不到、打不到、他也打不到别人），
-        /// 但 PlayerData / 背包 / 坐标保留，随时可复原。
-        /// 同时置为睡眠：否则客户端全睡时世界永远不会加速。
-        /// </summary>
-        private void ToggleHostGhost()
-        {
-            bool current;
-            try
-            {
-                current = HeadlessSuMultiplayerBridge.ReadHostGhost();
-            }
-            catch (Exception ex)
-            {
-                Console.WriteLine();
-                Console.WriteLine("Host body unavailable: " + ex.Message);
-                Pause();
-                return;
-            }
-
-            try
-            {
-                bool applied = HeadlessSuMultiplayerBridge.SetHostGhost(!current);
-                Console.WriteLine();
-                Console.WriteLine(!current
-                    ? (applied
-                        ? "Host body is now Ghost (invisible, cannot attack or be attacked, sleeping)."
-                        : "Could not enter ghost mode; see the multiplayer log.")
-                    : (applied
-                        ? "Host body restored to Normal."
-                        : "Could not restore the host body; see the multiplayer log."));
-                Pause();
-            }
-            catch (Exception ex)
-            {
-                Console.WriteLine();
-                Console.WriteLine("Host body change failed: " + ex.Message);
-                Pause();
-            }
-        }
 
         /// <summary>改一个布尔设置（走 SuMultiplayer 的 *ForUi 回调，立即保存）。</summary>
         private void ApplyRoomBoolean(string key, bool value)

@@ -169,8 +169,7 @@ namespace SuMultiplayer
         /// <summary>多人聊天（主机权威 / 瞬态）：协议模块 + 底部 HUD（消息流 / 输入 / 触摸按钮）。</summary>
         private ChatModule m_chatModule;
         private ChatOverlayAttacher m_chatOverlay;
-        /// <summary>主机角色幽灵身体（不可见 / 不可攻击 / 睡眠），供无头服务器使用。</summary>
-        private HostGhostModule m_hostGhostModule;
+
         /// <summary>实时语音：OpenAL 采集/播放（P/Invoke）+ 纯逻辑模块 + 游戏内 HUD。</summary>
         private VoiceAudioEngine m_voiceAudio;
         private VoiceChatModule m_voiceModule;
@@ -254,7 +253,7 @@ namespace SuMultiplayer
             }
             catch (Exception error)
             {
-                ModLog.Warn("[SuMP][personal] 注册 Add Net World From Link 失败：" +
+                ModLog.Warn("[SuMP][personal] Failed to register Add Net World From Link: " +
                     error.GetType().Name + " " + error.Message);
             }
             m_config = SyncConfig.Load(out string note);
@@ -287,7 +286,7 @@ namespace SuMultiplayer
             m_terrainModule.ModuleLogModeApplied += persistToFile =>
             {
                 ModLog.Configure(persistToFile);
-                ModLog.Info("[SuMP] 模块日志模式 ← 主机运行时调度：" + (persistToFile
+                ModLog.Info("[SuMP] Module log mode <- host runtime dispatch: " + (persistToFile
                     ? "Debug（落盘）" : "上线（不落盘）"));
             };
             // G10：主机正常退出游戏时通知房间里的客户端（让它们立即退出，而不是等 30 秒重连窗口）。
@@ -300,7 +299,7 @@ namespace SuMultiplayer
             }
             catch (Exception e)
             {
-                ModLog.Warn("[SuMP][host-shutdown] 订阅 Window.Closed 失败 → 主机正常关闭时" +
+                ModLog.Warn("[SuMP][host-shutdown] Failed to subscribe Window.Closed -> normal host shutdown" +
                     "客户端只能等重连窗口耗尽（仍会退出）：" + e.GetType().Name + " " + e.Message);
             }
             // 客户端引信表现：挂在桥的 ApplyCells 漏斗上（主机 / 单机不会进入该分支）。
@@ -358,7 +357,7 @@ namespace SuMultiplayer
                 // 旧写法把这两种情况都当失败，实机日志里刷出一堆假"保存失败"（用户 2026-11-08 定）。
                 var outcome = m_avatarModule.Records.SaveIfDirtyDetailed(out string failureReason);
                 if (outcome == SuMultiplayerPlayersXml.SaveIfDirtyResult.Failed)
-                    ModLog.Warn("[SuMP] 世界导出前保存 SuMultiplayerPlayers.xml 失败（角色记录保持" +
+                    ModLog.Warn("[SuMP] Failed to save SuMultiplayerPlayers.xml before world export (records kept" +
                         " dirty，后续重试）：" + failureReason);
             };
             // 统计 / 成就：统计只有玩家自己的那一端算得准 —— 每个玩家端把自己的 PlayerStats
@@ -450,7 +449,7 @@ namespace SuMultiplayer
             m_timeFlow = new Engine.MultiplayerTimeFlow(engineModManager.ModParentField);
             if (!m_timeFlow.IsBound)
             {
-                ModLog.Warn("[SuMP][time-flow] 世界时钟维护绑定失败 → " + m_timeFlow.BindFailureReason +
+                ModLog.Warn("[SuMP][time-flow] Failed to bind world clock maintenance -> " + m_timeFlow.BindFailureReason +
                     "；联机时打开菜单仍会冻结世界（其余功能不受影响）");
             }
             m_circuitCodec = new CircuitStateCodec(engineModManager.ModParentField);
@@ -797,17 +796,6 @@ namespace SuMultiplayer
                 delegate { return PlayerIdentity.LocalName(); },
                 delegate { return PlayerIdentity.LocalIdentity(); });
             m_moduleHost.Register(m_chatModule);
-            // 主机角色"幽灵身体"：无头服务器的主机没人操作，那个本机角色会永久站在世界里
-            // （客户端看到的是一具不动的身体，还参与碰撞与战斗）。幽灵化后它退出世界表现，
-            // 但 PlayerData / 背包 / 坐标全部保留，随时可复原。
-            // 同时把主机角色置为睡眠：否则客户端全部睡觉时世界永远不会加速
-            // （Survivalcraft/Game/SubsystemTime.cs:87-100 要求"至少一人真的在睡觉"）。
-            m_hostGhostModule = new HostGhostModule(
-                engineModManager.ModParentField,
-                engineModManager.ModParentMethod,
-                message => ModLog.Info(message),
-                message => ModLog.Warn(message));
-            m_moduleHost.Register(m_hostGhostModule);
             // 实时语音：引擎侧 OpenAL 采集/播放端口 + 纯逻辑模块（VAD / 可配置 ADPCM /
             // 1-bit CVSD / 主机中继 / 静音表 / jitter）。端口必须先于模块注册
             // （Attach 里就要拿到）。档位与 VAD 挂起来自 SuMultiplayer.json。
@@ -878,17 +866,6 @@ namespace SuMultiplayer
                 {
                     SetModuleLogModeRuntime(persistToFile, out string logModeNote);
                     return logModeNote;
-                },
-                // 主机角色幽灵身体（用户 2026-11-08 定）：只针对主机自己的角色。
-                // 幽灵 = 不可见 / 不可攻击 / 睡眠（客户端全睡时世界才会加速）。
-                delegate { return m_hostGhostModule?.IsGhost ?? false; },
-                delegate
-                {
-                    if (m_hostGhostModule == null) return;
-                    if (m_hostGhostModule.IsGhost)
-                        m_hostGhostModule.ExitGhost(out _);
-                    else
-                        m_hostGhostModule.EnterGhost(out _);
                 });
             // 引擎 Edit Players（PlayerScreen）进入/退出钩子：名字/皮肤统一走引擎自己的编辑屏。
             // 进入抓快照、退出比较；主机广播改名后的本机角色，客户端按 (clientId, slot) 提交资料。
@@ -935,7 +912,7 @@ namespace SuMultiplayer
             }
             catch (Exception e)
             {
-                ModLog.Warn("[SuMP] 触发 SuMultiplayer.MessageRegistry 失败（第三方消息模块可能收不到注册表）：" +
+                ModLog.Warn("[SuMP] Failed to trigger SuMultiplayer.MessageRegistry (third-party message modules may miss the registry): " +
                     e.GetType().Name + " " + e.Message);
             }
             // 加载顺序兜底（不是功能兜底）：后加载的第三方模块可以主动请求一次注册表。
@@ -1001,7 +978,7 @@ namespace SuMultiplayer
             ModLog.Info("[SuMP] " + m_authorityModule.StatusLine());
             ModLog.Info("[SuMP] " + m_chatModule.StatusLine());
             ModLog.Info("[SuMP] " + m_voiceModule.StatusLine());
-            ModLog.Info("[SuMP] 交互距离：serverMax=" +
+            ModLog.Info("[SuMP] Interaction reach: serverMax=" +
                 m_reachGate.ServerMaxMeters.ToString("0.##", CultureInfo.InvariantCulture) +
                 "m tolerance=" + InteractionReachGate.ToleranceMeters.ToString("0.##",
                     CultureInfo.InvariantCulture) + "m · " + m_reachGate.Counters.Describe());
@@ -1219,7 +1196,7 @@ namespace SuMultiplayer
                     return new object[] { false, null };
                 modInjector.Apply(database, "SuMultiplayer");
                 DatabaseApplied = true;
-                ModLog.Info("[SuMP] 引擎注入已应用（SubsystemTerrain 外壳 + 客户端副本闸门：水/岩浆/水下/水草/海参 + 火/草/植物/… + 活塞/电路）");
+                ModLog.Info("[SuMP] Engine injection applied (SubsystemTerrain shell + client-replica gates: water/lava/underwater/seagrass/sea cucumber + fire/grass/plants/... + piston/circuit)");
                 return new object[] { false, database };
             }, EventPriority.HIGHEST);
 
@@ -1265,7 +1242,7 @@ namespace SuMultiplayer
                         "没有找到 Loading 项 'Initialize SettingsCompatibilityScreen'：" +
                         "兼容性设置屏无法追加 Network Proxy 行");
                 }
-                ModLog.Info("[SuMP] Play 屏已替换；兼容性设置屏已追加 Network Proxy 行" +
+                ModLog.Info("[SuMP] Play screen replaced; compatibility settings screen appended a Network Proxy row" +
                     "（代理配置 " + ProxySettings.SettingsPath + "）");
                 return args;
             }, EventPriority.HIGHEST);
@@ -1386,6 +1363,7 @@ namespace SuMultiplayer
                     // 世界作用域的联机设置（加入审批）：换世界重读；文件不存在 = 手动审批。
                     try { RefreshWorldJoinSettings(inWorld); }
                     catch (Exception e) { NoteFrameStepFailure("world-join-settings", e); }
+
                     // 周期性打一行各模块状态（组合根是唯一同时知道两个模块的地方，
                     // 模块之间不互相读状态）。实机排查全靠这几行。
                     long nowMs = (long)(Time.RealTime * 1000.0);
@@ -1599,27 +1577,7 @@ m_terrainModule?.Bridge.BlockBehaviorNotify.Describe());
                                 ["error"] = sent ? string.Empty : (reason ?? "Send failed.")
                             };
                         }
-                    case "ghost.get":
-                        return new Dictionary<string, object>(StringComparer.Ordinal)
-                        {
-                            ["ok"] = true,
-                            ["ghost"] = m_hostGhostModule?.IsGhost ?? false
-                        };
-                    case "ghost.set":
-                        {
-                            bool want = ReadControlBool(request, "ghost");
-                            if (m_hostGhostModule == null)
-                                return ControlError("Host ghost module is unavailable.");
-                            bool applied = want
-                                ? m_hostGhostModule.EnterGhost(out string reason)
-                                : m_hostGhostModule.ExitGhost(out reason);
-                            return new Dictionary<string, object>(StringComparer.Ordinal)
-                            {
-                                ["ok"] = applied,
-                                ["ghost"] = m_hostGhostModule.IsGhost,
-                                ["error"] = applied ? string.Empty : (reason ?? string.Empty)
-                            };
-                        }
+
                     case "players.list":
                         return BuildNetworkPlayersControlResult();
                     case "players.update":
@@ -2008,13 +1966,13 @@ m_terrainModule?.Bridge.BlockBehaviorNotify.Describe());
             if (project == null)
             {
                 m_worldJoinSettings = new WorldJoinSettings();
-                ModLog.Info("[SuMP] 加入审批：世界已卸载 → 回到默认（手动审批）");
+                ModLog.Info("[SuMP] Join approval: world unloaded -> back to default (manual approval)");
                 return;
             }
             string directory = project.FindSubsystem<SubsystemGameInfo>(false)?.DirectoryName ??
                 string.Empty;
             m_worldJoinSettings = WorldJoinSettings.Load(directory, out string note);
-            ModLog.Info("[SuMP] 加入审批配置：" + note);
+            ModLog.Info("[SuMP] Join approval config: " + note);
         }
 
         private IReadOnlyList<HostPeerInfo> CaptureHostPeersForUi() =>
@@ -2139,7 +2097,7 @@ m_terrainModule?.Bridge.BlockBehaviorNotify.Describe());
         /// <summary>主机在角色创建阶段踢人 / Ban：关闭角色创建屏并回 Play，不自动重连。</summary>
         private void HandleClientJoinConnectionAborted(string reason)
         {
-            ModLog.Warn("[SuMP][join] 主机在角色创建阶段关闭连接：" + (reason ?? string.Empty) +
+            ModLog.Warn("[SuMP][join] Host closed the connection during character creation: " + (reason ?? string.Empty) +
                 " → 取消本次加入");
             try { m_sessionModule?.LeaveRoom(); } catch (Exception) { }
             try
@@ -2153,7 +2111,7 @@ m_terrainModule?.Bridge.BlockBehaviorNotify.Describe());
             }
             catch (Exception e)
             {
-                ModLog.Warn("[SuMP][join] 退出角色创建屏失败：" + e.GetType().Name + " " + e.Message);
+                ModLog.Warn("[SuMP][join] Failed to leave the character creation screen: " + e.GetType().Name + " " + e.Message);
             }
         }
 
@@ -2166,11 +2124,11 @@ m_terrainModule?.Bridge.BlockBehaviorNotify.Describe());
                 string own = PlayerIdentity.LocalIdentity() ?? string.Empty;
                 text += " | Your user ID: " + (own.Length == 0 ? "(unavailable)" : own);
             }
-            ModLog.Warn("[SuMP][join-approval] 加入被主机拒绝：" + text + " → 回 Play 屏（不再自动重连）");
+            ModLog.Warn("[SuMP][join-approval] Join was rejected by the host: " + text + " → 回 Play 屏（不再自动重连）");
             try { m_sessionModule?.NotifyJoinRejected(reason); }
             catch (Exception e)
             {
-                ModLog.Warn("[SuMP][join-approval] 重置加入流程失败：" + e.GetType().Name + " " +
+                ModLog.Warn("[SuMP][join-approval] Failed to reset the join flow: " + e.GetType().Name + " " +
                     e.Message + "（通道可能仍在运行；请从 Play 屏重新加入）");
             }
             try
@@ -2181,7 +2139,7 @@ m_terrainModule?.Bridge.BlockBehaviorNotify.Describe());
             }
             catch (Exception e)
             {
-                ModLog.Warn("[SuMP][join-approval] 显示拒绝提示失败：" + e.GetType().Name + " " +
+                ModLog.Warn("[SuMP][join-approval] Failed to show the rejection prompt: " + e.GetType().Name + " " +
                     e.Message + "（原因已写入日志：加入被拒绝）");
             }
         }
@@ -2243,7 +2201,7 @@ m_terrainModule?.Bridge.BlockBehaviorNotify.Describe());
                 //   这里拒绝后 Terrain 层会按 HelloAck.rejected 落地，客户端看到明确原因。
                 if (CheckRoomCapacity(out string capacityText))
                 {
-                    ModLog.Info("[SuMP][join-approval] 拒绝加入（容量）：clientId=" + clientId +
+                    ModLog.Info("[SuMP][join-approval] Join rejected (capacity): clientId=" + clientId +
                         " · " + label + " · " + capacityText);
                     decided(false, capacityText);
                     return;
@@ -2253,7 +2211,7 @@ m_terrainModule?.Bridge.BlockBehaviorNotify.Describe());
                     m_owner.m_worldJoinSettings.IsBanned(identity))
                 {
                     string bannedText = "Banned user ID: " + (identity ?? string.Empty);
-                    ModLog.Info("[SuMP][join-approval] 拒绝被 Ban 的用户：clientId=" + clientId +
+                    ModLog.Info("[SuMP][join-approval] Rejected a banned user: clientId=" + clientId +
                         " · " + label + " · 用户ID=" + identity);
                     decided(false, bannedText);
                     return;
@@ -2266,7 +2224,7 @@ m_terrainModule?.Bridge.BlockBehaviorNotify.Describe());
                 bool enqueued = Queue.TryEnqueue(Requests.HostRequestKind.Join, clientId,
                     label, shortIdentity, Time.RealTime, decided,
                     out Requests.HostRequestEntry entry);
-                ModLog.Info("[SuMP][join-approval] 加入请求入队：" + clientId + " · " + label +
+                ModLog.Info("[SuMP][join-approval] Join request queued: " + clientId + " · " + label +
                     " · 身份=" + shortIdentity + " → " + (enqueued
                         ? "队列 " + Queue.Describe()
                         : "队列已满（容量 " + Requests.HostRequestQueue.Capacity + "）→ 按 busy 拒绝"));
@@ -2301,14 +2259,14 @@ m_terrainModule?.Bridge.BlockBehaviorNotify.Describe());
                             ClearActiveDialog();
                             if (kind == "Allow")
                             {
-                                ModLog.Info("[SuMP][join-approval] 主机同意加入：clientId=" +
+                                ModLog.Info("[SuMP][join-approval] Host approved the join: clientId=" +
                                     entry.ClientId + " · " + entry.Name);
                                 Queue.Approve(entry.Id, string.Empty);
                                 Dispatcher.Dispatch(ShowLatestJoinDialog);
                             }
                             else if (kind == "Reject")
                             {
-                                ModLog.Info("[SuMP][join-approval] 主机拒绝加入：clientId=" +
+                                ModLog.Info("[SuMP][join-approval] Host rejected the join: clientId=" +
                                     entry.ClientId + " · " + entry.Name);
                                 Queue.Reject(entry.Id, "The host rejected the join request.");
                                 Dispatcher.Dispatch(ShowLatestJoinDialog);
@@ -2316,7 +2274,7 @@ m_terrainModule?.Bridge.BlockBehaviorNotify.Describe());
                             else
                             {
                                 // Later：条目留在队列；不自动重开同一个框，由 IF 队列页再处理。
-                                ModLog.Info("[SuMP][join-approval] 主机稍后处理：clientId=" +
+                                ModLog.Info("[SuMP][join-approval] Host deferred the request: clientId=" +
                                     entry.ClientId + " · " + entry.Name + "（条目留在队列）");
                                 Queue.Hold(entry.Id);
                             }
@@ -2415,7 +2373,7 @@ m_terrainModule?.Bridge.BlockBehaviorNotify.Describe());
             }
             catch (Exception e)
             {
-                ModLog.Warn("[SuMP][host-shutdown] 广播主机退出通知失败：" +
+                ModLog.Warn("[SuMP][host-shutdown] Failed to broadcast the host exit notice: " +
                     e.GetType().Name + " " + e.Message);
             }
         }
@@ -2558,7 +2516,7 @@ m_terrainModule?.Bridge.BlockBehaviorNotify.Describe());
             bool copied = m_editableItemBridge.TryCopyItemDataToBlock(x, y, z, contents,
                 itemDataId, out string reason);
             if (!string.IsNullOrEmpty(reason))
-                ModLog.Info("[SuMP][editable-item] 放置方块内容复制失败 @" +
+                ModLog.Info("[SuMP][editable-item] Failed to copy placed block contents @" +
                     x + "," + y + "," + z + " contents=" + contents + " dataId=" +
                     itemDataId + "：" + reason);
             if (copied)

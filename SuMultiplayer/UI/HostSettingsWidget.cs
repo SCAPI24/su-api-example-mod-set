@@ -28,10 +28,7 @@ namespace SuMultiplayer.UI
         private readonly Func<bool> m_moduleLogPersist;
         private readonly Action m_toggleModuleLog;
         private readonly BevelledButtonWidget m_moduleLogButton;
-        /// <summary>主机角色幽灵身体（不可见 / 不可攻击 / 睡眠）。只对主机自己的角色生效。</summary>
-        private readonly Func<bool> m_hostGhost;
-        private readonly Action m_toggleHostGhost;
-        private readonly BevelledButtonWidget m_hostGhostButton;
+
         private readonly CanvasWidget m_panel;
         private readonly BevelledButtonWidget[] m_row1;
         private readonly BevelledButtonWidget[] m_row2;
@@ -41,11 +38,8 @@ namespace SuMultiplayer.UI
         public HostSettingsWidget(Func<bool> autoHost, Func<bool> autoApprove,
             Action setAutoHost, Action setAutoApprove, Action advanced,
             Action banKick, Action banId, Action kick, Action removeBan, Action close,
-            Func<bool> moduleLogPersist = null, Action toggleModuleLog = null,
-            Func<bool> hostGhost = null, Action toggleHostGhost = null)
+            Func<bool> moduleLogPersist = null, Action toggleModuleLog = null)
         {
-            m_hostGhost = hostGhost;
-            m_toggleHostGhost = toggleHostGhost;
             m_moduleLogPersist = moduleLogPersist;
             m_toggleModuleLog = toggleModuleLog;
             m_autoHost = autoHost;
@@ -81,7 +75,6 @@ namespace SuMultiplayer.UI
                 Children.Find<BevelledButtonWidget>("Close")
             };
             m_moduleLogButton = Children.Find<BevelledButtonWidget>("ModuleLog");
-            m_hostGhostButton = Children.Find<BevelledButtonWidget>("HostBody");
         }
 
         public override void Update()
@@ -104,12 +97,6 @@ namespace SuMultiplayer.UI
             if (Children.Find<BevelledButtonWidget>("Advanced").IsClicked) m_advanced?.Invoke();
             if (Children.Find<BevelledButtonWidget>("Close").IsClicked) m_close?.Invoke();
             if (m_moduleLogButton != null && m_moduleLogButton.IsClicked) m_toggleModuleLog?.Invoke();
-            if (m_hostGhostButton != null)
-            {
-                m_hostGhostButton.Text = "HOST BODY: " +
-                    (m_hostGhost?.Invoke() == true ? "GHOST" : "NORMAL");
-                if (m_hostGhostButton.IsClicked) m_toggleHostGhost?.Invoke();
-            }
         }
 
         /// <summary>
