@@ -120,7 +120,7 @@ namespace SuMultiplayer.Engine
                     if (!m_bindFailureLogged)
                     {
                         m_bindFailureLogged = true;
-                        ModLog.Warn("[SuMP] SuSubsystemPickables 客户端拿不到 " +
+                        ModLog.Warn("[SuMP] SuSubsystemPickables: client cannot get " +
                             "SubsystemPlayers.m_componentPlayers（反射失败 / ParentField 未注入）" +
                             "→ 本帧不跑 base.Update（宁可副本不动，也不让客户端本地拾取主机物品）");
                     }
@@ -173,7 +173,7 @@ namespace SuMultiplayer.Engine
                 if (!m_bindFailureLogged)
                 {
                     m_bindFailureLogged = true;
-                    ModLog.Warn("[SuMP] SuSubsystemPickables 主机拿不到 " +
+                    ModLog.Warn("[SuMP] SuSubsystemPickables: host cannot get " +
                         "SubsystemPlayers.m_componentPlayers（反射失败 / ParentField 未注入）→ " +
                         "本帧按原生行为跑 base.Update（化身不在玩家表里，拾取不会替它们发生）");
                 }
@@ -292,7 +292,7 @@ namespace SuMultiplayer.Engine
                 if (!m_loggedClientSkip)
                 {
                     m_loggedClientSkip = true;
-                    ModLog.Info("[SuMP] 客户端投射物子系统：不跑原生 Update（不写地形 / 不伤人 / " +
+                    ModLog.Info("[SuMP] Client projectile subsystem: native Update is skipped (no terrain writes / no damage / " +
                         "不生成掉落物 / 不触发爆炸），位置由主机快照插值；" +
                         "客户端武器本地预测的投射物会被清除（开火必须由主机创建）");
                 }

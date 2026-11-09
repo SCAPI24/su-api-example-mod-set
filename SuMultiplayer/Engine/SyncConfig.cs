@@ -205,13 +205,13 @@ namespace SuMultiplayer.Engine
                 case "mode":
                 case "role":
                     // 旧配置里的模式字段：不再作为入口，明确警告一次，避免"改了配置却没变化"。
-                    ModLog.Warn("[SuMP] 配置里的 \"" + key + "\" 已不再生效：建房走游戏内 CR 按钮，" +
-                                "加入走 Play 屏房间行");
+                    ModLog.Warn("[SuMP] Config key \"" + key + "\" no longer takes effect: hosting now goes " +
+                                "through the in-game CR button, joining through the Play screen");
                     break;
                 case "port":
                     // 旧键：已由端口段取代。明确警告，避免"改了配置却没变化"。
-                    ModLog.Warn("[SuMP] 配置里的 \"port\" 已不再生效：房间端口由 portrangestart / " +
-                                "portrangecount 决定（0 = 自动分配端口段内的槽位）");
+                    ModLog.Warn("[SuMP] Config key \"port\" no longer takes effect: the room port comes from "
+                                + "portrangestart / portrangecount (0 = auto-assign within the range)");
                     break;
                 case "portrangestart":
                 case "portstart":
@@ -237,8 +237,8 @@ namespace SuMultiplayer.Engine
                 case "discoveryport":
                 case "discoverport":
                     // 旧键：发现端口已与游戏端口同号（都在端口段内），不再单独配置。
-                    ModLog.Warn("[SuMP] 配置里的 \"" + key + "\" 已不再生效：发现端口与游戏端口同号，" +
-                                "都在 portrangestart..portrangestart+portrangecount-1 段内");
+                    ModLog.Warn("[SuMP] Config key \"" + key + "\" no longer takes effect: discovery uses the " +
+                                "same port as the game (inside portrangestart..portrangestart+portrangecount-1)");
                     break;
                 case "maxplayers":
                     if (int.TryParse(value, out int maxPlayers)) config.MaxPlayers = Math.Max(1, maxPlayers);
@@ -252,16 +252,16 @@ namespace SuMultiplayer.Engine
                             Math.Min(InteractionReachGate.MaxServerMaxMeters, reachCap));
                         if (Math.Abs(clamped - reachCap) > 0.0001f)
                         {
-                            ModLog.Warn("[SuMP] 配置 " + key + "=" + value + " 超出允许范围 " +
+                            ModLog.Warn("[SuMP] Config " + key + "=" + value + " is out of range " +
                                 InteractionReachGate.MinServerMaxMeters + ".." +
-                                InteractionReachGate.MaxServerMaxMeters + " m → 已夹到 " +
+                                InteractionReachGate.MaxServerMaxMeters + " m -> clamped to " +
                                 clamped.ToString("0.##", CultureInfo.InvariantCulture) + " m");
                         }
                         config.MaxInteractionReach = clamped;
                     }
                     else
                     {
-                        ModLog.Warn("[SuMP] 配置 " + key + "=" + value + " 不是数字 → 使用默认 " +
+                        ModLog.Warn("[SuMP] Config " + key + "=" + value + " is not a number -> using default " +
                             InteractionReachGate.DefaultServerMaxMeters + " m");
                     }
                     break;
@@ -274,9 +274,9 @@ namespace SuMultiplayer.Engine
                             Math.Min(InteractionReachGate.MaxServerMaxMeters, meleeCap));
                         if (Math.Abs(clampedMelee - meleeCap) > 0.0001f)
                         {
-                            ModLog.Warn("[SuMP] 配置 " + key + "=" + value + " 超出允许范围 " +
+                            ModLog.Warn("[SuMP] Config " + key + "=" + value + " is out of range " +
                                 InteractionReachGate.MinServerMaxMeters + ".." +
-                                InteractionReachGate.MaxServerMaxMeters + " m → 已夹到 " +
+                                InteractionReachGate.MaxServerMaxMeters + " m -> clamped to " +
                                 clampedMelee.ToString("0.##", CultureInfo.InvariantCulture) + " m");
                         }
                         config.MeleeMaxReach = clampedMelee;
@@ -284,7 +284,7 @@ namespace SuMultiplayer.Engine
                     }
                     else
                     {
-                        ModLog.Warn("[SuMP] 配置 " + key + "=" + value + " 不是数字 → 跟随交互上限 " +
+                        ModLog.Warn("[SuMP] Config " + key + "=" + value + " is not a number -> following the reach cap " +
                             InteractionReachGate.DefaultServerMaxMeters + " m");
                     }
                     break;
@@ -310,8 +310,8 @@ namespace SuMultiplayer.Engine
                              string.Equals(value, "vad", StringComparison.OrdinalIgnoreCase))
                         config.VoicePushToTalk = false;
                     else
-                        ModLog.Warn("[SuMP] 配置 " + key + "=" + value +
-                            " 不是 open / ptt → 保持默认（open）");
+                        ModLog.Warn("[SuMP] Config " + key + "=" + value
+                            + " is not open / ptt -> keeping default (open)");
                     break;
                 case "pushtotalk":
                 case "voicepushtotalk":
@@ -337,8 +337,8 @@ namespace SuMultiplayer.Engine
                     if (VoiceProfiles.TryParse(value, out VoiceQuality quality))
                         config.VoiceQuality = quality;
                     else
-                        ModLog.Warn("[SuMP] 配置 " + key + "=" + value +
-                            " 不是 high / standard / low / ultra → 保持默认 " +
+                        ModLog.Warn("[SuMP] Config " + key + "=" + value
+                            + " is not high / standard / low / ultra -> keeping default " +
                             VoiceProfiles.Name(VoiceProfiles.Default));
                     break;
                 case "voicevadhangover":
@@ -348,13 +348,13 @@ namespace SuMultiplayer.Engine
                         int clamped = Math.Max(0,
                             Math.Min(VoiceFormat.VadHangoverMaxMs, vadHangoverMs));
                         if (clamped != vadHangoverMs)
-                            ModLog.Warn("[SuMP] 配置 " + key + "=" + value + " 超出 0.." +
-                                VoiceFormat.VadHangoverMaxMs + " ms → 已夹到 " + clamped + " ms");
+                            ModLog.Warn("[SuMP] Config " + key + "=" + value + " is out of 0.." +
+                                VoiceFormat.VadHangoverMaxMs + " ms -> clamped to " + clamped + " ms");
                         config.VoiceVadHangoverMs = clamped;
                     }
                     else
                     {
-                        ModLog.Warn("[SuMP] 配置 " + key + "=" + value + " 不是毫秒数字 → 保持默认 " +
+                        ModLog.Warn("[SuMP] Config " + key + "=" + value + " is not a millisecond number -> keeping default " +
                             VoiceFormat.VadHangoverDefaultMs + " ms");
                     }
                     break;

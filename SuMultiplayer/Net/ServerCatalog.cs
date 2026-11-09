@@ -137,7 +137,7 @@ namespace SuMultiplayer.Net
                 }
                 catch (Exception error)
                 {
-                    ModLog.Warn("[SuMP][catalog] 刷新异常：" + error.Message);
+                    ModLog.Warn("[SuMP][catalog] Refresh threw: " + error.Message);
                 }
                 for (int i = 0; i < 10 && m_running; i++) Thread.Sleep(100);
             }
@@ -158,7 +158,7 @@ namespace SuMultiplayer.Net
             }
             catch (Exception error)
             {
-                ModLog.Warn("[SuMP][catalog] 内嵌 ServerDns 读取失败：" + error.Message);
+                ModLog.Warn("[SuMP][catalog] Failed to read embedded ServerDns: " + error.Message);
             }
             ApplyDirectoryHosts(hosts, "embedded");
             RefreshPersonal();
@@ -183,7 +183,7 @@ namespace SuMultiplayer.Net
                 }
                 catch (Exception error)
                 {
-                    ModLog.Info("[catalog] ServerDns 源不可用：" + url +
+                    ModLog.Info("[catalog] ServerDns source unavailable: " + url +
                         " · " + error.Message);
                 }
             }
@@ -272,7 +272,7 @@ namespace SuMultiplayer.Net
                 m_endpoints.RemoveAll(endpoint => endpoint.Source == RoomSource.Directory);
                 m_endpoints.AddRange(valid);
             }
-            ModLog.Info("[catalog] ServerDns 合并完成（" + source +
+            ModLog.Info("[catalog] ServerDns merged (" + source +
                 "）：" + valid.Count + " 个服务地址");
         }
 
@@ -300,7 +300,7 @@ namespace SuMultiplayer.Net
                             RoomBeaconCodec.TryDecodeReply(reply, reply.Length, out info, out _))
                             ping = (int)(Environment.TickCount64 - nonce);
                         else if (!string.IsNullOrEmpty(proxyError))
-                            ModLog.Info("[catalog] 代理 UDP 探测失败：" +
+                            ModLog.Info("[catalog] Proxy UDP probe failed: " +
                                 targetHost + ":" + discoveryPort + " · " + proxyError);
                     }
                     else if (!TryDirectProbe(targetHost, discoveryPort, probe, nonce, out info,
@@ -308,7 +308,7 @@ namespace SuMultiplayer.Net
                     {
                         // 离线是常态（端口段里只有少数槽位有房间），只记非空错误。
                         if (!string.IsNullOrEmpty(directError))
-                            ModLog.Info("[catalog] 探测失败：" + targetHost + ":" +
+                            ModLog.Info("[catalog] Probe failed: " + targetHost + ":" +
                                 discoveryPort + " · " + directError);
                     }
                     m_results.Enqueue(new DirectoryProbeResult
@@ -325,7 +325,7 @@ namespace SuMultiplayer.Net
             }
             catch (Exception error)
             {
-                ModLog.Info("[catalog] 探测异常：" + targetHost +
+                ModLog.Info("[catalog] Probe threw: " + targetHost +
                     " · " + error.Message);
                 m_results.Enqueue(new DirectoryProbeResult
                 {

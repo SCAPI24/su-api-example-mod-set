@@ -3649,7 +3649,7 @@ namespace SuMultiplayer.Terrain
             }
             catch (Exception e)
             {
-                ModLog.Warn("[SuMP][terrain] 构造 HostShutdown 消息失败：" +
+                ModLog.Warn("[SuMP][terrain] Failed to build the HostShutdown message: " +
                     e.GetType().Name + " " + e.Message + " → 客户端只能等重连窗口耗尽（仍会退出）");
                 return;
             }
@@ -3670,11 +3670,11 @@ namespace SuMultiplayer.Terrain
                 }
                 catch (Exception e)
                 {
-                    ModLog.Warn("[SuMP][terrain] HostShutdown 发送失败（clientId=" +
+                    ModLog.Warn("[SuMP][terrain] Failed to send HostShutdown (clientId=" +
                         targets[i] + "）：" + e.GetType().Name + " " + e.Message);
                 }
             }
-            ModLog.Info("[SuMP][terrain] 主机正常退出 → 已向 " + sent + "/" +
+            ModLog.Info("[SuMP][terrain] Host shutting down normally -> notified " + sent + "/" +
                 targets.Count + " 条连接广播 HostShutdown（" + text + "）；客户端会立即退出世界");
             SessionTrace?.Invoke("主机正常退出：广播 HostShutdown 给 " + sent + "/" + targets.Count +
                 " 条连接（客户端不做重连）");
@@ -3718,7 +3718,7 @@ namespace SuMultiplayer.Terrain
             catch (Exception e)
             {
                 // 交接失败不阻断踢出：踢掉死连接本身更重要，日志里如实记原因。
-                ModLog.Warn("[SuMP][terrain] 同身份接管交接会话记录失败（旧 clientId=" +
+                ModLog.Warn("[SuMP][terrain] Failed to hand over the session record on same-identity takeover (old clientId=" +
                     supersededClientId + " → 新 clientId=" + newClientId + "）：" +
                     e.GetType().Name + " " + e.Message + " → 仍继续踢掉旧连接");
             }
@@ -3747,7 +3747,7 @@ namespace SuMultiplayer.Terrain
                 }
                 catch (Exception e)
                 {
-                    ModLog.Warn("[SuMP][terrain] 握手期踢出通知发送失败（clientId=" +
+                    ModLog.Warn("[SuMP][terrain] Failed to send the handshake-phase kick notice (clientId=" +
                         supersededClientId + "）：" + e.GetType().Name + " " + e.Message +
                         " → 仍继续踢出");
                 }
@@ -9750,7 +9750,7 @@ namespace SuMultiplayer.Terrain
                 string kickReason = string.IsNullOrEmpty(ack.KickReason)
                     ? "host-kicked"
                     : ack.KickReason;
-                ModLog.Warn("[SuMP][terrain] 主机在握手期踢出本连接：" +
+                ModLog.Warn("[SuMP][terrain] Host kicked this connection during handshake: " +
                     kickReason + " → 直接退出世界，不重连");
                 KickedByHost?.Invoke(kickReason, false);
                 return;

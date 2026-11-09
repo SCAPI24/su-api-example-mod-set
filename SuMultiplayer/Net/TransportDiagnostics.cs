@@ -225,7 +225,7 @@ namespace SuMultiplayer.Net
                 // 日志失败本身不能影响传输；用最小代价留下明确原因（不静默）。
                 try
                 {
-                    ModLog.Warn("[SuMP] transport 统计日志写入失败：" +
+                    ModLog.Warn("[SuMP] Failed to write the transport stats log: " +
                         e.GetType().Name + " " + e.Message);
                 }
                 catch (Exception)

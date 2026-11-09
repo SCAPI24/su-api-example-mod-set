@@ -247,12 +247,12 @@ namespace SuMultiplayer.Modules
         {
             if (!context.TryGetPort(out m_transport) || m_transport == null)
             {
-                ModLog.Warn("[SuMP][voice] 没有传输端口（transport）→ 语音模块不启用");
+                ModLog.Warn("[SuMP][voice] No transport port -> voice module disabled");
                 return;
             }
             if (!context.TryGetPort(out m_control) || m_control == null)
             {
-                ModLog.Warn("[SuMP][voice] 没有通道控制端口（ITransportControlPort）→ 无法判断" +
+                ModLog.Warn("[SuMP][voice] No transport control port (ITransportControlPort) -> cannot decide" +
                     "主机/客户端，语音不启用（不猜方向）");
                 return;
             }
@@ -271,7 +271,7 @@ namespace SuMultiplayer.Modules
             }
             else
             {
-                ModLog.Warn("[SuMP][voice] 没有消息注册表（IMessageRegistryPort）→ " +
+                ModLog.Warn("[SuMP][voice] No message registry (IMessageRegistryPort) -> " +
                     "收不到任何语音消息，语音不启用");
                 return;
             }
@@ -287,7 +287,7 @@ namespace SuMultiplayer.Modules
                 SuMultiplayer.Engine.ModLog.Info("[SuMP][voice] playback context unavailable at attach (no multiplayer session): " +
                     m_audio.Describe());
             }
-            SuMultiplayer.Engine.ModLog.Info("[SuMP][voice] 就绪：" + m_options.Describe() + " · " +
+            SuMultiplayer.Engine.ModLog.Info("[SuMP][voice] Ready: " + m_options.Describe() + " · " +
                 VoiceFormat.SampleRate + " Hz mono16 · " +
                 VoiceProfiles.Describe(m_options.Quality) + " · " + m_audio.Describe());
         }
@@ -335,7 +335,7 @@ namespace SuMultiplayer.Modules
             m_rejectedFormats.Clear();
             m_streams.Clear();
             m_attached = false;
-            SuMultiplayer.Engine.ModLog.Info("[SuMP][voice] 下线（" + reason + "）：" + summary);
+            SuMultiplayer.Engine.ModLog.Info("[SuMP][voice] Offline (" + reason + "）：" + summary);
         }
 
         public void Tick(in ModuleTickContext tick)
@@ -364,7 +364,7 @@ namespace SuMultiplayer.Modules
             {
                 m_lastSentQuality = (int)m_options.Quality;
                 SendVoiceState(force: true);
-                SuMultiplayer.Engine.ModLog.Info("[SuMP][voice] 编码档位切换 → " +
+                SuMultiplayer.Engine.ModLog.Info("[SuMP][voice] Codec profile switched -> " +
                     VoiceProfiles.Describe(m_options.Quality));
             }
 
@@ -468,7 +468,7 @@ namespace SuMultiplayer.Modules
 
             if (!connected)
             {
-                SuMultiplayer.Engine.ModLog.Info("[SuMP][voice] 连接断开 → 语音已自动 OFF，采集已停止 / 麦克风已释放，" +
+                SuMultiplayer.Engine.ModLog.Info("[SuMP][voice] Connection lost -> voice auto-OFF, capture stopped / microphone released, " +
                     "播放流与名册已清空");
                 return;
             }
@@ -487,7 +487,7 @@ namespace SuMultiplayer.Modules
                 m_rosterDirty = true;
             }
             // 客户端 VoiceState 由下一次 Tick 发送：默认 OFF → mic_enabled=false reason=voice-off。
-            SuMultiplayer.Engine.ModLog.Info("[SuMP][voice] 连接建立：role=" + (m_hosting ? "host" : "client") +
+            SuMultiplayer.Engine.ModLog.Info("[SuMP][voice] Connection established: role=" + (m_hosting ? "host" : "client") +
                 " localClientId=" + m_localClientId +
                 " · 语音输入默认 OFF（按 U 或点 HUD 的 VOICE 打开）" +
                 (m_permissionGranted ? " · 本会话录音权限已授权" : "") +
@@ -500,7 +500,7 @@ namespace SuMultiplayer.Modules
             m_roster.Upsert(clientId, name, supported: false, micEnabled: false);
             m_lastSequence.Remove(clientId);   // 重连 / id 复用：sequence 从 1 重新开始
             m_rosterDirty = true;
-            SuMultiplayer.Engine.ModLog.Info("[SuMP][voice] 玩家端加入：" + clientId + " name=\"" + name +
+            SuMultiplayer.Engine.ModLog.Info("[SuMP][voice] Player client joined: " + clientId + " name=\"" + name +
                 "\" → 等待 VoiceState（未声明支持前不会收到语音包）");
         }
 
@@ -515,7 +515,7 @@ namespace SuMultiplayer.Modules
             m_acknowledgedStates.Remove(clientId);
             m_rejectedFormats.Remove(clientId);
             m_rosterDirty = true;
-            SuMultiplayer.Engine.ModLog.Info("[SuMP][voice] 玩家端离开：" + clientId + " reason=" + reason +
+            SuMultiplayer.Engine.ModLog.Info("[SuMP][voice] Player client left: " + clientId + " reason=" + reason +
                 " → 名册 / 静音表 / jitter 已清");
         }
 
@@ -640,7 +640,7 @@ namespace SuMultiplayer.Modules
                 m_roster.SetHostMic(true);
                 m_rosterDirty = true;
             }
-            SuMultiplayer.Engine.ModLog.Info("[SuMP][voice] 采集已启动（" + VoiceFormat.SampleRate +
+            SuMultiplayer.Engine.ModLog.Info("[SuMP][voice] Capture started (" + VoiceFormat.SampleRate +
                 " Hz mono16，VAD 挂起 " + m_options.VadHangoverFrames * VoiceFormat.VadFrameMs +
                 " ms，档位 " + VoiceProfiles.Name(m_options.Quality) + "）");
             SendVoiceState(force: true);
@@ -1079,7 +1079,7 @@ namespace SuMultiplayer.Modules
                 LastPumpMs = 0        // 0 = 这条流还没泵过 → 首帧只取 1 包（见 PumpPlayback）
             };
             m_streams[speakerId] = stream;
-            SuMultiplayer.Engine.ModLog.Info("[SuMP][voice] 打开播放流 speaker=" + speakerId + " stream=" +
+            SuMultiplayer.Engine.ModLog.Info("[SuMP][voice] Playback stream opened speaker=" + speakerId + " stream=" +
                 streamId + "（jitter 预灌 " + VoiceFormat.JitterPrefillPackets +
                 " 包 / 缺包等 " + VoiceFormat.JitterGapWaitMs + " ms）");
             return stream;
@@ -1347,7 +1347,7 @@ namespace SuMultiplayer.Modules
             };
             SendToPeer(listener, MessageType.VoiceMuteResult, result.ToByteArray());
             if (accepted)
-                SuMultiplayer.Engine.ModLog.Info("[SuMP][voice] 静音表：listener=" + listener + " speaker=" +
+                SuMultiplayer.Engine.ModLog.Info("[SuMP][voice] Mute table: listener=" + listener + " speaker=" +
                     target + " muted=" + message.Muted + "（" +
                     (message.Muted ? "不再中继" : "恢复中继") + "）");
         }
@@ -1388,7 +1388,7 @@ namespace SuMultiplayer.Modules
             {
                 StopPipeline();
                 SendVoiceState(force: true);
-                ModLog.Warn("[SuMP][voice] 主机禁用语音（" + m_sessionVoiceReason +
+                ModLog.Warn("[SuMP][voice] Host disabled voice (" + m_sessionVoiceReason +
                     "）→ 本端停止采集 / 播放");
             }
         }
@@ -1502,7 +1502,7 @@ namespace SuMultiplayer.Modules
             m_captureStatus = "permission-required";
             m_voiceNotice = "requesting mic permission…";
             m_counters.NotePermissionRequested();
-            SuMultiplayer.Engine.ModLog.Info("[SuMP][voice] 已请求 Android 录音权限（本次会话第 " +
+            SuMultiplayer.Engine.ModLog.Info("[SuMP][voice] Requested Android record permission (attempt " +
                 m_permissionRequestCount + " 次）；授权前不会启动采集");
         }
 
@@ -1521,7 +1521,7 @@ namespace SuMultiplayer.Modules
                     m_permissionGranted = true;
                     m_counters.NotePermissionGranted();
                     m_voiceNotice = string.Empty;
-                    SuMultiplayer.Engine.ModLog.Info("[SuMP][voice] 录音权限已授权（本会话后续开关不再弹窗）");
+                    SuMultiplayer.Engine.ModLog.Info("[SuMP][voice] Record permission granted (no further prompts this session)");
                     if (m_voiceRequested) TurnVoiceOnNow(sendState: false);
                     break;
                 case VoicePermissionState.PermanentlyDenied:
@@ -1556,7 +1556,7 @@ namespace SuMultiplayer.Modules
             m_captureReason = string.Empty;
             m_nextCaptureAttemptMs = 0;
             if (sendState) SendVoiceState(force: true);
-            SuMultiplayer.Engine.ModLog.Info("[SuMP][voice] 语音输入 ON（权限=" + m_permissionState +
+            SuMultiplayer.Engine.ModLog.Info("[SuMP][voice] Voice input ON (permission=" + m_permissionState +
                 "）→ 下一拍启动采集");
         }
 
@@ -1577,7 +1577,7 @@ namespace SuMultiplayer.Modules
                 m_rosterDirty = true;
             }
             SendVoiceState(force: true);
-            SuMultiplayer.Engine.ModLog.Info("[SuMP][voice] 语音输入 OFF（" + reason +
+            SuMultiplayer.Engine.ModLog.Info("[SuMP][voice] Voice input OFF (" + reason +
                 "）：采集已停止 / 麦克风已释放" +
                 (m_permissionPending
                     ? "（系统权限对话框仍由 Android 管理；结果返回后只记录状态，不会自动开麦）"
@@ -1757,7 +1757,7 @@ namespace SuMultiplayer.Modules
                 m_micWindow.LastSkippedDelta != 0;
             if (active)
             {
-                SuMultiplayer.Engine.ModLog.Info("[SuMP][voice] 电平窗口 " + m_micWindow.DescribeWindow() +
+                SuMultiplayer.Engine.ModLog.Info("[SuMP][voice] Level window " + m_micWindow.DescribeWindow() +
                     " captureDelta=" + m_micWindow.LastCaptureDelta +
                     " meterDelta=" + m_micWindow.LastMeterDelta +
                     " rejectedDelta=" + m_micWindow.LastRejectedDelta +

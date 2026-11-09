@@ -247,7 +247,7 @@ namespace SuMultiplayer.Engine
             if (nowLog - m_lastHostWeatherLogMs >= 10000)
             {
                 m_lastHostWeatherLogMs = nowLog;
-                ModLog.VerboseInfo("[SuMP][fog] 主机雾状态：intensity=" +
+                ModLog.VerboseInfo("[SuMP][fog] Host fog state: intensity=" +
                     weather.FogIntensity.ToString("F2") + " progress=" +
                     weather.FogProgress.ToString("F3") + " started=" + weather.IsFogStarted +
                     " seed=" + weather.FogSeed);
@@ -406,7 +406,7 @@ namespace SuMultiplayer.Engine
             if (first)
             {
                 m_weatherProject = project;
-                ModLog.VerboseInfo("[SuMP][fog] 客户端首次天气快照：started=" + snapshot.FogStarted +
+                ModLog.VerboseInfo("[SuMP][fog] Client first weather snapshot: started=" + snapshot.FogStarted +
                     " intensity=" + snapshot.FogIntensity.ToString("F2") + " progress=" +
                     snapshot.FogProgress.ToString("F3") + " ramp=" +
                     snapshot.FogRampTime.ToString("F1") + " 本地 intensity=" +
@@ -473,7 +473,7 @@ namespace SuMultiplayer.Engine
             if (failures > 0 && !m_weatherFailureLogged)
             {
                 m_weatherFailureLogged = true;
-                Log.Warning("[SuMP] 客户端应用世界信息时有 " + failures +
+                ModLog.Warn("[SuMP] Client failed to write " + failures +
                     " 个天气字段写入失败（引擎字段名变化？）→ 已计数，天气仍以主机下发为准");
             }
         }
@@ -501,7 +501,7 @@ namespace SuMultiplayer.Engine
                     if (!SetMember(weather, "FogIntensity", snapshot.FogIntensity,
                             typeof(SubsystemWeather))) failures++;
                     else
-                        ModLog.VerboseInfo("[SuMP][fog] 客户端雾对账：本地 " + localFog.ToString("F2") +
+                        ModLog.VerboseInfo("[SuMP][fog] Client fog reconcile: local " + localFog.ToString("F2") +
                             " → 主机 " + snapshot.FogIntensity.ToString("F2"));
                 }
                 if (weather.FogSeed != snapshot.FogSeed &&
@@ -512,7 +512,7 @@ namespace SuMultiplayer.Engine
                     if (!SetMember(weather, "FogProgress", snapshot.FogProgress,
                             typeof(SubsystemWeather))) failures++;
                     else
-                        ModLog.VerboseInfo("[SuMP][fog] 客户端雾进度对账：本地 " +
+                        ModLog.VerboseInfo("[SuMP][fog] Client fog progress reconcile: local " +
                             localProgress.ToString("F3") + " → 主机 " +
                             snapshot.FogProgress.ToString("F3"));
                 }
@@ -527,7 +527,7 @@ namespace SuMultiplayer.Engine
                 if (!m_weatherFailureLogged)
                 {
                     m_weatherFailureLogged = true;
-                    ModLog.Warn("[SuMP] 客户端雾/降水对账有 " + failures +
+                    ModLog.Warn("[SuMP] Client fog/precipitation reconcile has " + failures +
                         " 个字段写入失败（引擎字段名变化？）→ 已计数");
                 }
             }
@@ -603,7 +603,7 @@ namespace SuMultiplayer.Engine
                 if (!m_randomApplyFailureLogged)
                 {
                     m_randomApplyFailureLogged = true;
-                    Log.Warning("[SuMP] 主机下发的随机数状态为空（seed=" + seed + "，states=" +
+                    ModLog.Warn("[SuMP] Host sent empty random-state (seed=" + seed + "，states=" +
                         (states == null ? -1 : states.Count) + "）→ 客户端不应用（不猜种子）");
                 }
                 return;
@@ -624,7 +624,7 @@ namespace SuMultiplayer.Engine
             m_randomAppliedFields = applied;
             m_randomMissingFields = missing;
             m_randomApplyRuns++;
-            ModLog.VerboseInfo("[SuMP] 随机数状态已应用（每个 Project 一次）：seed=" +
+            ModLog.VerboseInfo("[SuMP] Random state applied (once per Project): seed=" +
                 m_pendingRandomSeed + " · 字段 " + applied + " · 主机表 " +
                 m_pendingRandomStates.Count + " · 缺失/只读 " + missing +
                 " · 第 " + m_randomApplyRuns + " 次");

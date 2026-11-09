@@ -127,7 +127,7 @@ namespace SuMultiplayer.Engine
             long nowMs = (long)(Time.RealTime * 1000.0);
             if (m_lastProblemMs != 0 && nowMs - m_lastProblemMs < ProblemLogMs) return;
             m_lastProblemMs = nowMs;
-            ModLog.Warn("[SuMP] ambientApply: 读取客户端环境音音量失败（" + message +
+            ModLog.Warn("[SuMP] ambientApply: failed to read the client ambient-sound volume (" + message +
                 "）→ 本帧三条循环按 0 处理（累计 " + m_failures + " 次）");
         }
     }

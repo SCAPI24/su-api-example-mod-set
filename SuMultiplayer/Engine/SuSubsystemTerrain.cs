@@ -184,7 +184,7 @@ namespace SuMultiplayer.Engine
             if (m_lastClientBaseWriteLogMs != 0 &&
                 now - m_lastClientBaseWriteLogMs < ClientBaseWriteLogIntervalMs) return;
             m_lastClientBaseWriteLogMs = now;
-            ModLog.Warn("[SuMP] 客户端拦下移动组 base 写格回调 " + count + " 次（来源 " + source +
+            ModLog.Warn("[SuMP] Client intercepted the moving-group base cell-write callback " + count + " 次（来源 " + source +
                 "）→ 已恢复原值并移出本地编辑捕获；clientShellBaseWriteAttempts 累计 " +
                 PistonState.ClientShellBaseWriteAttempts + "（clientBasePistonWriteAttempt " +
                 PistonState.ClientBasePistonWriteAttempts + " · notReverted " +
@@ -294,7 +294,7 @@ namespace SuMultiplayer.Engine
             if (!EnsureModifiedCellsBound())
             {
                 m_captureState.NoteFluidDropped(count);
-                ModLog.Warn("[SuMP] fluidDataCapture: 本次流体 Update 捕获到 " + count +
+                ModLog.Warn("[SuMP] fluidDataCapture: this fluid Update captured " + count +
                     " 格，但引擎改动表绑定失败 → 明确丢弃（不猜、不下发）；累计丢弃 " +
                     m_captureState.FluidCellsDropped + " 格");
                 MaybeLogFluidSummary();
@@ -714,7 +714,7 @@ namespace SuMultiplayer.Engine
                 if (m_framesWithoutBridge == 1 ||
                     m_framesWithoutBridge % CaptureRetryLogFrames == 0)
                 {
-                    ModLog.Warn("[SuMP] captureRetry: 本帧没有地形桥 → 已接住 " +
+                    ModLog.Warn("[SuMP] captureRetry: no terrain bridge this frame -> held " +
                         m_captureState.PendingRescuedCount + " 格待捕获（连续 " +
                         m_framesWithoutBridge + " 帧）→ 桥恢复后合并捕获，不丢");
                 }
@@ -724,7 +724,7 @@ namespace SuMultiplayer.Engine
                     if (dropped > 0)
                     {
                         m_captureDroppedNoBridge += dropped;
-                        ModLog.Warn("[SuMP] captureDropped: 连续 " + m_framesWithoutBridge +
+                        ModLog.Warn("[SuMP] captureDropped: consecutive " + m_framesWithoutBridge +
                             " 帧没有地形桥 → 明确丢弃 " + dropped + " 格已接住的本地写入（累计 " +
                             m_captureDroppedNoBridge + " 格，原因 noBridge）");
                     }
@@ -742,7 +742,7 @@ namespace SuMultiplayer.Engine
                 if (m_framesWithoutBinding == 1 ||
                     m_framesWithoutBinding % CaptureRetryLogFrames == 0)
                 {
-                    ModLog.Warn("[SuMP] captureRetry: 拿不到引擎改动表 m_modifiedCells（连续 " +
+                    ModLog.Warn("[SuMP] captureRetry: cannot read engine modified-cells table m_modifiedCells (consecutive " +
                         m_framesWithoutBinding + " 帧）→ 本帧无法捕获（不假装成功）");
                 }
                 base.Update(dt);
@@ -880,7 +880,7 @@ namespace SuMultiplayer.Engine
             if (m_lastFurnitureEditLogMs != 0 &&
                 now - m_lastFurnitureEditLogMs < 10000) return;
             m_lastFurnitureEditLogMs = now;
-            ModLog.Warn("[SuMP] 客户端丢弃 " + removed + " 条家具格编辑：data 里的设计索引不在" +
+            ModLog.Warn("[SuMP] Client discarded " + removed + " 条家具格编辑：data 里的设计索引不在" +
                 "主机已下发的副本表（clientFurnitureEditsDropped 累计 " +
                 ClientFurnitureEditsDropped + "）→ 该格不会提交给主机");
         }

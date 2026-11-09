@@ -46,10 +46,10 @@ namespace SuMultiplayer.Engine
             if (!(ScreensManager.CurrentScreen is GameScreen))
             {
                 // 登记与执行之间玩家自己退出了世界（LeaveRoom 已把通道停掉）→ 无事可做。
-                ModLog.Info("[SuMP][session] 主机丢失退出：玩家已自行离开世界，不再重复退出");
+                ModLog.Info("[SuMP][session] Host lost: the player already left the world, not leaving again");
                 return false;
             }
-            ModLog.Info("[SuMP][session] 主机丢失，退出联机房间（存盘 → 卸载世界 → 回世界列表）。原因：" +
+            ModLog.Info("[SuMP][session] Host lost, leaving the multiplayer room (save -> unload world -> world list). Reason: " +
                 (string.IsNullOrEmpty(reason) ? "(通道失效)" : reason));
             GameManager.SaveProject(waitForCompletion: true, showErrorDialog: true);
             GameManager.DisposeProject();

@@ -1289,7 +1289,7 @@ namespace SuMultiplayer.Engine
             m_lastLoggedDiscardClears = m_fuseDiscardClears;
             m_lastLoggedDetonator = m_detonatorIgnitions;
             m_lastLoggedFailures = m_fuseTableFailures;
-            ModLog.VerboseInfo("[SuMP] fuseCellCapture: 火药桶写格 " + m_fuseWrites +
+            ModLog.VerboseInfo("[SuMP] fuseCellCapture: gunpowder barrel cell write " + m_fuseWrites +
                 " 次（data-only，剩余 tick 写入格子）· 熄火清位 " + m_fuseClears +
                 " 次 · 区块丢弃清位 " + m_fuseDiscardClears + " 次 · 起爆器点火 " +
                 m_detonatorIgnitions + " 次（DetonatorBlock 的 data 0..5 是挂载面、引擎无引信粒子 ⇒ " +
@@ -1498,7 +1498,7 @@ namespace SuMultiplayer.Engine
                 if (!s_queueLeafParticlesMissingLogged)
                 {
                     s_queueLeafParticlesMissingLogged = true;
-                    ModLog.Warn("[SuMP] evergreen-leaves: 引擎 QueueLeafParticles 不可用 → " +
+                    ModLog.Warn("[SuMP] evergreen-leaves: engine QueueLeafParticles is unavailable -> " +
                         "客户端秋季落叶粒子缺失（明确失败，不静默）");
                 }
                 return;
@@ -1512,7 +1512,7 @@ namespace SuMultiplayer.Engine
                 if (!s_queueLeafParticlesMissingLogged)
                 {
                     s_queueLeafParticlesMissingLogged = true;
-                    ModLog.Warn("[SuMP] evergreen-leaves: QueueLeafParticles 调用失败 → " +
+                    ModLog.Warn("[SuMP] evergreen-leaves: QueueLeafParticles call failed -> " +
                         "客户端秋季落叶粒子缺失：" + e.GetType().Name + " " + e.Message);
                 }
             }
@@ -2150,7 +2150,7 @@ namespace SuMultiplayer.Engine
                     if (!m_clientRampFaultLogged)
                     {
                         m_clientRampFaultLogged = true;
-                        ModLog.Warn("[SuMP] 客户端天气视觉推进的字段反射绑定失败（引擎字段名变化？）" +
+                        ModLog.Warn("[SuMP] Client weather visuals: failed to bind fields by reflection (engine field renamed?)" +
                             " → 雨/雾过渡退回 2Hz 快照阶跃（只记录一次）");
                     }
                     return;
@@ -2178,7 +2178,7 @@ namespace SuMultiplayer.Engine
                     if (nowLog - m_lastFogStatusLogMs >= 10000)
                     {
                         m_lastFogStatusLogMs = nowLog;
-                        ModLog.VerboseInfo("[SuMP][fog] 客户端雾状态：intensity=" +
+                        ModLog.VerboseInfo("[SuMP][fog] Client fog state: intensity=" +
                             FogIntensity.ToString("F2") + " progress=" +
                             FogProgress.ToString("F3") + " started=" + IsFogStarted +
                             " ramp=" + fogRamp.ToString("F1"));
@@ -2203,7 +2203,7 @@ namespace SuMultiplayer.Engine
                 if (!m_clientRampFaultLogged)
                 {
                     m_clientRampFaultLogged = true;
-                    ModLog.Warn("[SuMP] 客户端天气视觉推进异常（" + e.GetType().Name + " " + e.Message +
+                    ModLog.Warn("[SuMP] Client weather visuals advance threw (" + e.GetType().Name + " " + e.Message +
                         "）→ 本会话退回 2Hz 快照阶跃（只记录一次）");
                 }
             }
@@ -2616,7 +2616,7 @@ namespace SuMultiplayer.Engine
             m_isCollapseSupportBlock = typeof(SubsystemCollapsingBlockBehavior).GetMethod(
                 "IsCollapseSupportBlock", BindingFlags.Instance | BindingFlags.NonPublic);
             m_clientMotionHandlersDetached = true;
-            ModLog.VerboseInfo("[SuMP] collapsing 客户端闸门：本地塌落 = " +
+            ModLog.VerboseInfo("[SuMP] collapsing client gate: local collapse = " +
                 "OnNeighborBlockChanged 拒绝 + 移动组落地订阅已摘" +
                 "（stopped=" + stopped.Removed + " collision=" + collision.Removed +
                 "）；引擎工作表 m_toMove=" +
@@ -2787,7 +2787,7 @@ namespace SuMultiplayer.Engine
         {
             if (m_clientCollisionReflectionFailed) return;
             m_clientCollisionReflectionFailed = true;
-            ModLog.Warn("[SuMP] collapsing: 客户端判停条件不可用（" + reason +
+            ModLog.Warn("[SuMP] collapsing: client stop condition unavailable (" + reason +
                 "）→ 塌落组会一直走到目标点（只影响表现；本地仍然绝不写格）");
         }
     }
@@ -2833,7 +2833,7 @@ namespace SuMultiplayer.Engine
             if (!m_pendingGeneratedReplayLogged)
             {
                 m_pendingGeneratedReplayLogged = true;
-                ModLog.VerboseInfo("[SuMP] 营火表现：桥注入前生成的 " + replayed +
+                ModLog.VerboseInfo("[SuMP] Campfire presentation: created before bridge injection " + replayed +
                     " 格已按当前格子值重放（超出上限丢弃 " + dropped + " 格）");
             }
         }
@@ -3019,7 +3019,7 @@ namespace SuMultiplayer.Engine
             if (replayed > 0 && !m_replayLogged)
             {
                 m_replayLogged = true;
-                ModLog.VerboseInfo("[SuMP] 熔炉火焰表现：桥注入前生成的 " + replayed +
+                ModLog.VerboseInfo("[SuMP] Furnace flame presentation: created before bridge injection " + replayed +
                     " 格已按当前格子值重放（超出上限丢弃 " + m_pendingGeneratedDropped + " 格）");
             }
         }
@@ -3034,7 +3034,7 @@ namespace SuMultiplayer.Engine
             long nowMs = (long)(Time.RealTime * 1000.0);
             if (m_lastMissingLogMs != 0 && nowMs - m_lastMissingLogMs < 10000) return;
             m_lastMissingLogMs = nowMs;
-            ModLog.Warn("[SuMP] 熔炉火焰表现层未接线（" + where + " @ " + x + "," + y + "," + z +
+            ModLog.Warn("[SuMP] Furnace flame presentation is not wired (" + where + " @ " + x + "," + y + "," + z +
                 "）→ 本格火焰暂不显示；累计 " + m_missingPresenter +
                 " 次（TerrainBridge.FurnacePresenter == null，检查组合根装配）");
         }
@@ -3059,7 +3059,7 @@ namespace SuMultiplayer.Engine
                     if (!m_dropLogged)
                     {
                         m_dropLogged = true;
-                        ModLog.Warn("[SuMP] 熔炉火焰表现：待重放格子超过上限 " +
+                        ModLog.Warn("[SuMP] Furnace flame presentation: pending replay cells exceed the limit " +
                             PendingGeneratedCap + " → 之后的生成格不再排队（累计丢弃 " +
                             m_pendingGeneratedDropped + " 格；表现层接线后由炉况 / 格子变化重试）");
                     }
@@ -3560,7 +3560,7 @@ namespace SuMultiplayer.Engine
             else
             {
                 shell.PistonState.NoteBaseSubscriptionsDetached(detached);
-                ModLog.VerboseInfo("[SuMP] piston 客户端闸门：base 写格订阅已摘" +
+                ModLog.VerboseInfo("[SuMP] piston client gate: base cell-write subscription removed" +
                     "（Stopped=" + stopped.Removed + " CollidedWithTerrain=" + collision.Removed +
                     "，pistonBaseSubscriptionsDetached=" +
                     shell.PistonState.BaseSubscriptionsDetached +

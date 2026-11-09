@@ -226,7 +226,7 @@ namespace SuMultiplayer.Engine
                 if (dropped > 0)
                 {
                     m_clientCaptureDroppedTotal += dropped;
-                    ModLog.Warn("[SuMP] clientCapture: 角色切换清掉 " + dropped +
+                    ModLog.Warn("[SuMP] clientCapture: character switch cleared " + dropped +
                         " 格待捕获的本地写入（已计入 captureDropped[roleChanged]，不静默）");
                 }
             }
@@ -296,7 +296,7 @@ namespace SuMultiplayer.Engine
                     if (m_lastInboxWarnMs == 0 || nowMs - m_lastInboxWarnMs >= 10000)
                     {
                         m_lastInboxWarnMs = nowMs;
-                        ModLog.Warn("[SuMP][terrain] 网络帧积压超过上限 " +
+                        ModLog.Warn("[SuMP][terrain] Network frame backlog exceeded the limit " +
                             InboxCapacity + " 条 → 丢弃**无序号语义**的帧（" + frame.Type + " seq=" +
                             frame.Sequence + "）；已累计丢弃 " + m_inboxDropped +
                             " 帧、因是关键帧而保留 " + m_inboxCriticalRetained +
@@ -311,7 +311,7 @@ namespace SuMultiplayer.Engine
                 if (m_lastInboxWarnMs == 0 || retainedNow - m_lastInboxWarnMs >= 10000)
                 {
                     m_lastInboxWarnMs = retainedNow;
-                    ModLog.Warn("[SuMP][terrain] 网络帧积压超过上限 " +
+                    ModLog.Warn("[SuMP][terrain] Network frame backlog exceeded the limit " +
                         InboxCapacity + " 条，但到的是**关键帧**（" + frame.Type + " seq=" +
                         frame.Sequence + "）→ 保留不丢（丢它会触发全部内存块强制核对，" +
                         "反而加重同步压力）。当前队列 " + m_inbox.Count +
@@ -1363,7 +1363,7 @@ namespace SuMultiplayer.Engine
         {
             if (m_hostDropSinkMissingLogged) return;
             m_hostDropSinkMissingLogged = true;
-            ModLog.Warn("[SuMP] 主机没有注入方块掉落的引擎端口（TerrainBridge.HostBlockDrops == null）→ " +
+            ModLog.Warn("[SuMP] Host did not inject the block-drop engine port (TerrainBridge.HostBlockDrops == null) -> " +
                 "客户端编辑造成的方块销毁不会补生成拾取物（已计入 dropFromEditSkipped[no-host-drops]）；" +
                 "请检查组合根装配");
         }
@@ -1666,7 +1666,7 @@ namespace SuMultiplayer.Engine
         {
             if (m_coverageUnavailableLogged) return false;
             m_coverageUnavailableLogged = true;
-            ModLog.Warn("[SuMP] 读不到 TerrainUpdater 的地形更新位置（" + reason + "）→ 未定稿块的停滞原因" +
+            ModLog.Warn("[SuMP] Cannot read TerrainUpdater terrain-update position (" + reason + "）→ 未定稿块的停滞原因" +
                 "只能记 locations-unknown（无法判定\"引擎还会不会推进它\"；不拿猜测当原因）");
             return false;
         }
@@ -1750,7 +1750,7 @@ namespace SuMultiplayer.Engine
             long now = Environment.TickCount64;
             if (m_lastHostMissLogMs != 0 && now - m_lastHostMissLogMs < HostMissLogIntervalMs) return;
             m_lastHostMissLogMs = now;
-            ModLog.Warn("[SuMP] hostCellMissed: 主机有 " + count + " 格改动没能捕获（" + reason +
+            ModLog.Warn("[SuMP] hostCellMissed: host had " + count + " 格改动没能捕获（" + reason +
                 "）→ 跳过（不猜值）；累计 " + HostCellMisses + " 格（同原因限流 " +
                 (HostMissLogIntervalMs / 1000) + "s；加载后由摘要核对 / 整块回传收敛）");
         }

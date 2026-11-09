@@ -86,7 +86,7 @@ namespace SuMultiplayer.Engine
                 if (!m_missingLogged)
                 {
                     m_missingLogged = true;
-                    ModLog.Warn("[SuMP] fusePresentation: 找不到 SubsystemParticles → 客户端引信表现不可用" +
+                    ModLog.Warn("[SuMP] fusePresentation: SubsystemParticles not found -> client fuse presentation unavailable" +
                         "（主机权威格子 data 仍然同步；计数 " + m_missingParticlesSubsystem + "）");
                 }
                 return;

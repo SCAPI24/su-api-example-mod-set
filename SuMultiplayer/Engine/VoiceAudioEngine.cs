@@ -339,7 +339,7 @@ namespace SuMultiplayer.Engine
 
             m_captureDevice = device;
             m_captureDeviceName = ReadDeviceName();
-            ModLog.Info("[SuMP][voice] OpenAL 采集设备已打开：" + m_captureDeviceName +
+            ModLog.Info("[SuMP][voice] OpenAL capture device opened: " + m_captureDeviceName +
                 " · " + VoiceFormat.SampleRate + " Hz mono16（库=" + LibraryName + "）");
             return true;
         }
@@ -350,7 +350,7 @@ namespace SuMultiplayer.Engine
             CaptureStop(m_captureDevice);
             CaptureClose(m_captureDevice);
             m_captureDevice = IntPtr.Zero;
-            ModLog.Info("[SuMP][voice] OpenAL 采集设备已关闭");
+            ModLog.Info("[SuMP][voice] OpenAL capture device closed");
         }
 
         public int ReadSamples(short[] target, int offset, int maxSamples, out string reason)
@@ -764,7 +764,7 @@ namespace SuMultiplayer.Engine
                 m_awaitingPermissionResult = true;
                 m_permissionRequestCount++;
                 m_permissionDetail = "requested-" + m_permissionRequestCount;
-                ModLog.Info("[SuMP][voice] 已调用 Activity.RequestPermissions(" +
+                ModLog.Info("[SuMP][voice] Called Activity.RequestPermissions(" +
                     RecordAudioPermission + ", requestCode=" + PermissionRequestCode + ")；" +
                     "等待用户答复");
                 return true;
@@ -840,7 +840,7 @@ namespace SuMultiplayer.Engine
                 object intent = ctor.Invoke(new object[] { action });
                 setData.Invoke(intent, new[] { uri });
                 m_startActivity.Invoke(m_activity, new[] { intent });
-                ModLog.Info("[SuMP][voice] 已打开应用设置页：" + action +
+                ModLog.Info("[SuMP][voice] Opened the app settings page: " + action +
                     " data=package:" + m_packageName);
                 return true;
             }
@@ -941,7 +941,7 @@ namespace SuMultiplayer.Engine
             }
             catch (Exception e)
             {
-                ModLog.Warn("[SuMP][voice] 订阅 EngineActivity.PermissionsChanged " +
+                ModLog.Warn("[SuMP][voice] Subscribed to EngineActivity.PermissionsChanged " +
                     "失败：" + e.GetType().Name + " " + e.Message);
                 m_permissionDetail = "permissions-hook-failed";
             }
@@ -956,7 +956,7 @@ namespace SuMultiplayer.Engine
             }
             catch (Exception e)
             {
-                ModLog.Warn("[SuMP][voice] 取消订阅 PermissionsChanged 失败：" +
+                ModLog.Warn("[SuMP][voice] Failed to unsubscribe PermissionsChanged: " +
                     e.GetType().Name + " " + e.Message);
             }
             m_permissionsHooked = false;
@@ -969,7 +969,7 @@ namespace SuMultiplayer.Engine
             if (requestCode != PermissionRequestCode) return;
             if (!m_awaitingPermissionResult)
             {
-                ModLog.Warn("[SuMP][voice] 收到未在等待中的录音权限结果" +
+                ModLog.Warn("[SuMP][voice] Received a record-permission result that was not awaited" +
                     "（requestCode=" + requestCode + "）→ 忽略");
                 return;
             }
@@ -977,7 +977,7 @@ namespace SuMultiplayer.Engine
             m_permissionResultState = EvaluatePermissionResult(out string detail);
             m_permissionResultDetail = detail;
             m_hasPermissionResult = true;
-            ModLog.Info("[SuMP][voice] 录音权限结果：" +
+            ModLog.Info("[SuMP][voice] Record permission result: " +
                 m_permissionResultState + "（" + detail + "）");
         }
 
@@ -1093,7 +1093,7 @@ namespace SuMultiplayer.Engine
             {
                 // 查询失败不改变 m_permissionDeclared（默认 true）：由 RequestPermissions
                 // 的实际结果说话，不在这里制造"未声明"的假结论。
-                ModLog.Warn("[SuMP][voice] 读取 APK 的 RequestedPermissions 失败：" +
+                ModLog.Warn("[SuMP][voice] Failed to read the APK RequestedPermissions: " +
                     e.GetType().Name + " " + e.Message);
             }
         }

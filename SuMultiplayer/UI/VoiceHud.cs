@@ -711,7 +711,7 @@ namespace SuMultiplayer.UI
 
         /// <summary>
         /// Windows 快捷键（引擎 <c>Engine.Input.Keyboard</c>，与游戏自己的 UI 读键同一条路径）：
-        ///   · <b>U</b>：语音 ON/OFF。用 <c>IsKeyDownOnce</c> 做**边沿**判定（一次按下 = 一次切换，
+        /// 键名反射查找（不直接用 Engine.Input.Keyboard，避免在不同平台/版本上绑定失败）。
         ///     按住不会连发）；聊天输入 / 文本框 / 对话框 / 软键盘打开时不下发；
         ///   · **不绑定 V**：没有任何按住说话 / PTT 键盘路径（可选 PTT 只剩 HUD 的 TALK 点按）。
         /// 读取失败时只禁用快捷键（HUD 图标仍然可用），并打一条明确警告。
@@ -734,8 +734,8 @@ namespace SuMultiplayer.UI
             {
                 m_keyboardFailed = true;
                 m_keyboardFailures++;
-                ModLog.Warn("[SuMP][voice] 读取语音快捷键失败（U 不可用，" +
-                    "HUD 的语音图标仍可用）：" + e.GetType().Name + " " + e.Message);
+                ModLog.Warn("[SuMP][voice] Failed to read the voice hotkey (U unavailable, " +
+                    "HUD icon may be unavailable): " + e.GetType().Name + " " + e.Message);
                 return;
             }
             // 文本输入打开时这次按下不算（也不留到下一帧）。
@@ -768,8 +768,8 @@ namespace SuMultiplayer.UI
                 catch (Exception e)
                 {
                     m_textInputProbeFailed = true;
-                    ModLog.Warn("[SuMP][voice] 查询聊天输入状态失败（U 键的文本输入抑制" +
-                        "只剩对话框 / 软键盘两项）：" + e.GetType().Name + " " + e.Message);
+                    ModLog.Warn("[SuMP][voice] Failed to query chat-input state (U-key text-input suppression " +
+                        "only the chat box / chat input remains)" + e.GetType().Name + " " + e.Message);
                 }
             }
             if (DialogsManager.Dialogs.Count > 0) return true;
@@ -786,8 +786,8 @@ namespace SuMultiplayer.UI
                 if (downOnce == null)
                 {
                     m_keyboardFailed = true;
-                    ModLog.Warn("[SuMP][voice] 找不到 Engine.Input.Keyboard." +
-                        "IsKeyDownOnce（语音快捷键不可用，HUD 图标仍可用）");
+                    ModLog.Warn("[SuMP][voice] Engine.Input.Keyboard.IsKeyDownOnce not found: "
+                        + "voice hotkey unavailable, HUD icon still works");
                     return;
                 }
                 Type keyType = downOnce.GetParameters()[0].ParameterType;
@@ -795,13 +795,13 @@ namespace SuMultiplayer.UI
                 m_isKeyDownOnce = downOnce;
                 m_keyboardReady = true;
                 SuMultiplayer.Engine.ModLog.Info(
-                    "[SuMP][voice] 快捷键：U = 语音 ON/OFF（边沿触发；文本框/对话框打开时忽略）；" +
-                    "V 不绑定任何语音功能（可选 PTT 只剩 TALK 点按）");
+                    "[SuMP][voice] Hotkey: U = voice ON/OFF (text input / chat box is never touched, so the"
+                    + " V key has no side effects; PTT falls back to the TALK tap button)");
             }
             catch (Exception e)
             {
                 m_keyboardFailed = true;
-                ModLog.Warn("[SuMP][voice] 初始化语音快捷键失败（HUD 图标仍可用）：" +
+                ModLog.Warn("[SuMP][voice] Failed to initialize the voice hotkey (HUD icon still works): " +
                     e.GetType().Name + " " + e.Message);
             }
         }

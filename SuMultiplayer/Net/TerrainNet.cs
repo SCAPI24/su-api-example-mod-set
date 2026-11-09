@@ -910,7 +910,7 @@ namespace SuMultiplayer.Net
                 }
                 catch (Exception e)
                 {
-                    ModLog.Info("[SuMP][net] 踢出信号发送失败（clientId=" +
+                    ModLog.Info("[SuMP][net] Failed to send the kick signal (clientId=" +
                         clientId + "）：" + e.GetType().Name + " " + e.Message +
                         " → 仍然继续踢出（对端可能已不可达）");
                 }
@@ -1230,7 +1230,7 @@ namespace SuMultiplayer.Net
             catch (Exception e)
             {
                 // 连 KeepAlive 都开不了才是真问题：明确记下来（不静默）。
-                ModLog.Warn("[SuMP][net] 打开 TCP KeepAlive 失败（" + role + "）：" +
+                ModLog.Warn("[SuMP][net] Failed to enable TCP KeepAlive (" + role + "）：" +
                     e.GetType().Name + " " + e.Message + " → 空闲连接可能被中间设备回收");
                 return;
             }
@@ -1243,7 +1243,7 @@ namespace SuMultiplayer.Net
                 KeepAliveRetryCount);
             if (!fine)
             {
-                ModLog.Info("[SuMP][net] TCP KeepAlive 已开启，但平台不支持精细参数" +
+                ModLog.Info("[SuMP][net] TCP KeepAlive enabled, but the platform does not support fine-grained parameters" +
                     "（" + role + "）→ 使用系统默认探测节奏；连接不会被无限期挂住");
             }
         }
@@ -1476,7 +1476,7 @@ namespace SuMultiplayer.Net
                 bool useProxy = false;
                 string routeReason = null;
                 if (ProxyRouter.TryChooseTcp(m_host, m_port, out useProxy, out routeReason))
-                    ModLog.Info("[SuMP][proxy] 加入路由：" + m_host + ":" + m_port +
+                    ModLog.Info("[SuMP][proxy] Join route: " + m_host + ":" + m_port +
                         " → " + (useProxy ? "代理" : "直连") + "（" + routeReason + "）");
                 if (useProxy)
                 {
@@ -1845,7 +1845,7 @@ namespace SuMultiplayer.Net
             }
             catch (Exception e)
             {
-                ModLog.Warn("[SuMP][net] 打开 TCP KeepAlive 失败（" + role + "）：" +
+                ModLog.Warn("[SuMP][net] Failed to enable TCP KeepAlive (" + role + "）：" +
                     e.GetType().Name + " " + e.Message + " → 空闲连接可能被中间设备回收");
                 return;
             }
@@ -1858,7 +1858,7 @@ namespace SuMultiplayer.Net
                 KeepAliveRetryCount);
             if (!fine)
             {
-                ModLog.Info("[SuMP][net] TCP KeepAlive 已开启，但平台不支持精细参数" +
+                ModLog.Info("[SuMP][net] TCP KeepAlive enabled, but the platform does not support fine-grained parameters" +
                     "（" + role + "）→ 使用系统默认探测节奏；连接不会被无限期挂住");
             }
         }

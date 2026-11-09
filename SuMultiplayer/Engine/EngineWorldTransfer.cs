@@ -224,7 +224,7 @@ namespace SuMultiplayer.Engine
                 SessionId = (sessionId ?? string.Empty).Trim(),
                 BaseSequence = Math.Max(0L, baseSequence)
             };
-            ModLog.Info("[SuMP] 下载世界会话（仅本次进程内）：" + directory + " · session=" +
+            ModLog.Info("[SuMP] Downloaded world session (this process only): " + directory + " · session=" +
                 (string.IsNullOrEmpty(sessionId) ? "(none)" : sessionId) +
                 " · base=" + Math.Max(0L, baseSequence));
         }

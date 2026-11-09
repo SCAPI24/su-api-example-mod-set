@@ -47,7 +47,7 @@ namespace SuMultiplayer.Engine
                 if (!m_warnedNoReplica)
                 {
                     m_warnedNoReplica = true;
-                    ModLog.Warn("[SuMP] 客户端投掷爆炸物时没有挂上爆炸同步适配器 → 请求不会发出，" +
+                    ModLog.Warn("[SuMP] Client threw an explosive without the explosion-sync adapter -> the request will not be sent, " +
                         "本机也不放幽灵投掷物（检查爆炸同步模块是否 Active）");
                 }
                 return false;
@@ -73,7 +73,7 @@ namespace SuMultiplayer.Engine
                 if (!m_warnedNoProjectileReplica)
                 {
                     m_warnedNoProjectileReplica = true;
-                    ModLog.Warn("[SuMP] 客户端投掷时没有挂上实体复制适配器 → 请求不会发出，" +
+                    ModLog.Warn("[SuMP] Client threw without the entity-replication adapter -> the request will not be sent, " +
                         "本机也不生成幽灵投掷物（检查实体复制模块是否 Active）");
                 }
                 return false;
@@ -140,7 +140,7 @@ namespace SuMultiplayer.Engine
                 if (!m_warnedNoReplica)
                 {
                     m_warnedNoReplica = true;
-                    ModLog.Warn("[SuMP] 客户端点燃爆炸物时没有挂上爆炸同步适配器 → 请求不会发出，" +
+                    ModLog.Warn("[SuMP] Client ignited an explosive without the explosion-sync adapter -> the request will not be sent, " +
                         "本机也不点本地引信（检查爆炸同步模块是否 Active）");
                 }
                 return false;
@@ -210,7 +210,7 @@ namespace SuMultiplayer.Engine
             m_noise?.MakeNoise(projectile.Position, 1f, 10f);
             if (m_time == null)
             {
-                ModLog.Warn("[SuMP] 烟花行为缺少 SubsystemTime：烟花爆开不会同步（明确失败）");
+                ModLog.Warn("[SuMP] Firework behavior is missing SubsystemTime: firework bursts will not sync (explicit failure)");
                 return;
             }
             m_time.QueueGameTimeDelayedExecution(m_time.GameTime + delay, delegate

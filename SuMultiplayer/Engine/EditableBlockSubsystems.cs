@@ -184,7 +184,7 @@ namespace SuMultiplayer.Engine
             if (m_lastProblemMs.TryGetValue(key, out long last) && nowMs - last < ProblemLogMs)
                 return;
             m_lastProblemMs[key] = nowMs;
-            ModLog.Warn("[SuMP] 真值表：" + message);
+            ModLog.Warn("[SuMP] Truth table: " + message);
         }
 
         public override bool OnEditInventoryItem(IInventory inventory, int slotIndex,
@@ -460,7 +460,7 @@ namespace SuMultiplayer.Engine
             if (m_lastProblemMs.TryGetValue(key, out long last) && nowMs - last < ProblemLogMs)
                 return;
             m_lastProblemMs[key] = nowMs;
-            ModLog.Warn("[SuMP] 内存条：" + message);
+            ModLog.Warn("[SuMP] Memory bank: " + message);
 
         }
 

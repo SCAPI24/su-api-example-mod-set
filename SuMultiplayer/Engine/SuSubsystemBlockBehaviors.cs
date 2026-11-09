@@ -28,14 +28,14 @@ namespace SuMultiplayer.Engine
             Project project = terrain.Project ?? GameManager.Project;
             if (project == null)
             {
-                ModLog.Warn("[SuMP] blockEffect observer: terrain/Project 为空，" +
+                ModLog.Warn("[SuMP] blockEffect observer: terrain/Project is null, " +
                     "本轮无法安装观察器");
                 return false;
             }
             SubsystemBlockBehaviors behaviors = project.FindSubsystem<SubsystemBlockBehaviors>(false);
             if (behaviors == null)
             {
-                ModLog.Warn("[SuMP] blockEffect observer: 找不到 SubsystemBlockBehaviors" +
+                ModLog.Warn("[SuMP] blockEffect observer: SubsystemBlockBehaviors not found" +
                     "（Project 已存在）→ 本轮无法安装观察器");
                 return false;
             }
@@ -48,7 +48,7 @@ namespace SuMultiplayer.Engine
                     if (!s_missingFieldLogged)
                     {
                         s_missingFieldLogged = true;
-                        ModLog.Warn("[SuMP] blockEffect observer: 引擎字段 " + FieldName +
+                        ModLog.Warn("[SuMP] blockEffect observer: engine field " + FieldName +
                             " 不存在/类型不符 → 方块破坏表现无法广播（明确失败）");
                     }
                     return false;
@@ -68,7 +68,7 @@ namespace SuMultiplayer.Engine
             }
             catch (Exception e)
             {
-                ModLog.Warn("[SuMP] blockEffect observer 安装失败：" + e.GetType().Name + " " +
+                ModLog.Warn("[SuMP] blockEffect observer install failed: " + e.GetType().Name + " " +
                     e.Message + "（方块破坏表现无法广播）");
                 return false;
             }

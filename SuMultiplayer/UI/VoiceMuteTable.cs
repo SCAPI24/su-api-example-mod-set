@@ -522,7 +522,7 @@ namespace SuMultiplayer.UI
             m_dismissed = true;
             m_counters.CloseClicks++;
             DialogsManager.HideDialog(this);
-            SuMultiplayer.Engine.ModLog.Info("[SuMP][ui] VOICE 静音表格已关闭 · " +
+            SuMultiplayer.Engine.ModLog.Info("[SuMP][ui] VOICE mute table closed - " +
                 m_counters.Describe());
         }
 
@@ -531,7 +531,7 @@ namespace SuMultiplayer.UI
         {
             if (m_dismissed) return;
             Dismiss();
-            SuMultiplayer.Engine.ModLog.Info("[SuMP][ui] VOICE 静音表格由所有者关闭：reason=" +
+            SuMultiplayer.Engine.ModLog.Info("[SuMP][ui] VOICE mute table closed by owner: reason=" +
                 (reason ?? "unknown"));
         }
 

@@ -4599,14 +4599,16 @@ namespace SuMultiplayer.Modules
         private void Log(string message)
         {
             if (m_context != null) m_context.Diagnostics.Info(m_descriptor.Id, message);
-            else global::Engine.Log.Information("[SuMP] " + message);
+            // 没有模块上下文时也只进 ModLog（模块日志绝不写 Game.log，只有 Error 例外）。
+            else SuMultiplayer.Engine.ModLog.Info("[" + m_descriptor.Id + "] " + message);
         }
 
         /// <summary>需要"如实说明失败原因"的行走 Warning（不静默、也不当普通信息淹没）。</summary>
         private void LogWarning(string message)
         {
             if (m_context != null) m_context.Diagnostics.Warn(m_descriptor.Id, message);
-            else global::Engine.Log.Warning("[SuMP] " + message);
+            // 同上：Warn 也只进 ModLog（用户 2026-11-08 定：只有 Error 允许写 Game.log）。
+            else SuMultiplayer.Engine.ModLog.Warn("[" + m_descriptor.Id + "] " + message);
         }
 
         /// <summary>同一条持续性问题只写一行（原因照实写，不静默也不刷屏）。</summary>

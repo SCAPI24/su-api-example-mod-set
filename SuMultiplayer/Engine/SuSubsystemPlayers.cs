@@ -42,8 +42,8 @@ public class SuSubsystemPlayers : SubsystemPlayers
             if (PlayersData.Count == 0)
             {
                 ModLog.Warn(
-                    "[SuMP][client-spawn] 下载世界 Players 段为空 → 无法预置本机角色出生点" +
-                    "（联机角色模块之后仍会按 HelloAck 记录位置精确贴合）");
+                    "[SuMP][client-spawn] Downloaded world has an empty Players section -> cannot preset the"
+                    + " local character spawn point (the avatar module will still align it via HelloAck)");
                 return;
             }
             PlayerData local = PlayersData[0];
@@ -58,15 +58,15 @@ public class SuSubsystemPlayers : SubsystemPlayers
             m_clientSpawnAnchor = spawnPosition;
             local.SpawnPosition = position;
             ModLog.Info(
-                "[SuMP][client-spawn] 下载世界加载时预置本机角色出生点=" + position +
-                "（主机记录最后离线位置；复活点 " + spawnPosition +
-                "；等玩家实体加载后立刻搬过去）");
+                "[SuMP][client-spawn] Preset local character spawn while loading the downloaded world=" + position
+                + " (host-recorded last offline position; respawn " + spawnPosition
+                + "; moved over as soon as the player entity loads)");
         }
         catch (Exception e)
         {
             ModLog.Warn(
-                "[SuMP][client-spawn] 预置本机角色出生点失败：" + e.GetType().Name + " " +
-                e.Message + "（联机角色模块之后仍会按 HelloAck 记录位置精确贴合）");
+                "[SuMP][client-spawn] Failed to preset the local character spawn: " + e.GetType().Name + " "
+                + e.Message + " (the avatar module will still align it via HelloAck)");
         }
     }
 
@@ -94,15 +94,15 @@ public class SuSubsystemPlayers : SubsystemPlayers
             m_clientSpawnPlayer.SpawnPosition = m_clientSpawnAnchor;
             m_clientSpawnApplied = true;
             ModLog.Info(
-                "[SuMP][client-spawn] 本机玩家实体加载时已搬到记录位置=" +
-                m_clientSpawnPosition + "（复活点=" + m_clientSpawnAnchor +
-                "；不再出现主机位置）");
+                "[SuMP][client-spawn] Moved the local player entity to the recorded position on load="
+                + m_clientSpawnPosition + " (respawn=" + m_clientSpawnAnchor
+                + "; no longer spawns at the host position)");
         }
         catch (Exception e)
         {
             ModLog.Warn(
-                "[SuMP][client-spawn] 搬动加载中的本机玩家实体失败：" + e.GetType().Name + " " +
-                e.Message + "（联机角色模块第一次 tick 仍会精确贴合）");
+                "[SuMP][client-spawn] Failed to move the loading local player entity: " + e.GetType().Name + " "
+                + e.Message + " (the avatar module will align it on its first tick)");
         }
     }
 

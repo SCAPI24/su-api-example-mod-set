@@ -209,7 +209,7 @@ namespace SuMultiplayer.Net
             }
             catch (Exception error)
             {
-                ModLog.Warn("[SuMP][personal] 读取失败：" + error.Message);
+                ModLog.Warn("[SuMP][personal] Read failed: " + error.Message);
                 s_records.Clear();
             }
         }

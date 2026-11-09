@@ -328,7 +328,7 @@ namespace SuMultiplayer.UI
                     directory + " / " + worldName + " → 无法在游戏内切换到新世界");
                 return;
             }
-            SuMultiplayer.Engine.ModLog.Info("[SuMP][ui] 游戏内整图重下完成 → 进入主机的新世界：" +
+            SuMultiplayer.Engine.ModLog.Info("[SuMP][ui] In-game full map re-download finished -> entering the host new world: " +
                 imported.WorldSettings.Name + "（" + imported.DirectoryName + "）");
             ScreensManager.SwitchScreen("GameLoading", imported, null);
         }

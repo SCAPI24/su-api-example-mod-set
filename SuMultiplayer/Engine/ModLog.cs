@@ -59,6 +59,16 @@ namespace SuMultiplayer.Engine
         private static bool s_persistToFile;
         private static string s_role = "Client";
         private static string s_lastCleanupDay;
+        /// <summary>角色日志写盘失败次数（写不进去时也不碰 Game.log，靠这个计数暴露问题）。</summary>
+        private static long s_writeFailures;
+        /// <summary>最近一次写盘失败的简短原因（同上，供诊断读取）。</summary>
+        private static string s_lastWriteFailure = string.Empty;
+
+        /// <summary>角色日志写盘失败次数（0 = 一直正常）。</summary>
+        public static long WriteFailures => System.Threading.Interlocked.Read(ref s_writeFailures);
+
+        /// <summary>最近一次角色日志写盘失败的原因（空 = 没失败过）。</summary>
+        public static string LastWriteFailure => s_lastWriteFailure ?? string.Empty;
 
         public static bool Verbose => s_verbose;
 
@@ -126,10 +136,17 @@ namespace SuMultiplayer.Engine
             AppendLocked("DEBUG", message);
         }
 
-        /// <summary>警告仍然进 Game.log（核心日志），同时进入角色日志。</summary>
+        /// <summary>
+        /// 警告：**只进角色日志**（不再写 Game.log）。
+        ///
+        /// 规则（用户 2026-11-08 定，最高优先级）：
+        ///   · 模块自己的日志（Info / Warn / VerboseInfo / SessionMarker）**一律只进角色日志**；
+        ///   · **只有 <see cref="Error"/> 允许写 Game.log**（真异常必须留在核心日志）。
+        /// 旧实现里 Warn 也会 `Log.Warning` 到 Game.log —— 那等于模块日志往核心日志里灌噪声，
+        /// 违反上面的规则，已移除。
+        /// </summary>
         public static void Warn(string message)
         {
-            try { Log.Warning("[SuMP] " + message); } catch (Exception) { }
             AppendLocked("WARN", message);
         }
 
@@ -289,13 +306,12 @@ namespace SuMultiplayer.Engine
             }
             catch (Exception error)
             {
-                // 角色日志写失败不能反过来把 Game.log 打爆；只记录一次到核心日志。
-                try
-                {
-                    Log.Warning("[SuMP] 角色日志写盘失败（" + s_role + "）：" +
-                        error.GetType().Name + " " + error.Message);
-                }
-                catch (Exception) { }
+                // 角色日志写盘失败时**也不碰 Game.log**（用户 2026-11-08 定：模块日志
+                // 彻底不写核心日志，只有 Error 走 Game.log —— 而这里连写角色日志的通道都坏了，
+                // 再往 Game.log 打就违背规则）。
+                // 记一个内存计数，供 StatusLine / 诊断读取；不静默，也不污染核心日志。
+                s_writeFailures++;
+                s_lastWriteFailure = error.GetType().Name + ": " + error.Message;
             }
             finally
             {
