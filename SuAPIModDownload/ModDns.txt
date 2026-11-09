@@ -155,8 +155,8 @@ WatchMod | su-watch | ["0.1.6.0"] | 1.0.1 | gitee:"https://gitee.com/SC-SPM/su-a
 #     旧版用的 `ScMultiplayer.ServerSettings` / `ScMultiplayer.NetworkPlayers` 事件
 #     在 SuMultiplayer 里**不存在**，所以本版之前的遥测/联机角色列表一直是空的。
 #   - 需要配合 SuMultiplayer 2.3.1 及以上。
-#   ⚠️ 1.4.1 于 2026-11-09 重新打包（移除"主机幽灵身体"功能，版本号不变）：三端 release 的旧资产已删除后重传，
-#     包 129105 B、sha256 `2762f697…`；下载回验三端一致。2026-11-08 那版是 129886 B / `2e616d72…`（含 ghost），已被本次替换。
+#   ⚠️ 1.4.1 于 2026-11-08 重新打包（内容更新，版本号不变）：三端 release 的旧资产已删除后重传，
+#     包 129886 B、sha256 `2e616d72…`；下载回验三端一致。
 HeadlessRenderingMod | Su-HRM | ["0.1.7.0"] | 1.4.1 | gitee:"https://gitee.com/SC-SPM/su-api-example-mod-set/releases/download/0.1.7.0/%5BSuAPI%5DHeadlessRenderingMod-1.4.1.scmod";github:"https://github.com/SCAPI24/su-api-example-mod-set/releases/download/0.1.7.0/SuAPI.HeadlessRenderingMod-1.4.1.scmod";cnb:"https://cnb.cool/suceru.cb/SC-SPM/SuAPIMod/-/releases/download/0.1.7.0/[SuAPI]HeadlessRenderingMod-1.4.1.scmod" | zh_CN=无画面服务器（警告：不再显示画面）;en_US=Headless Server (Warning: Not Render)
 # HeadlessRenderingMod | Su-HRM | ["0.1.6.0"] | 1.3.6 | gitee:"https://gitee.com/SC-SPM/su-api-example-mod-set/releases/download/0.1.6.0/%5BSuAPI%5DHeadlessRenderingMod-1.3.6.scmod";github:"https://github.com/SCAPI24/su-api-example-mod-set/releases/download/0.1.6.0/SuAPI.HeadlessRenderingMod-1.3.6.scmod";cnb:"https://cnb.cool/suceru.cb/SC-SPM/SuAPIMod/-/releases/download/0.1.6.0/[SuAPI]HeadlessRenderingMod-1.3.6.scmod" | zh_CN=无画面服务器;en_US=Headless Server
 # 上一版（`Su-HRM@1.3.5`）
@@ -203,7 +203,4 @@ Channel | Su-chanl | ["0.1.6.0"] | 1.0.0 | gitee:"https://gitee.com/SC-SPM/su-ap
 #   · 可编辑方块（内存条/真值表）：乐观锁 + 主机权威，被拒会明确回滚。
 #   · 角色记录 SuMultiplayerPlayers.xml：世界导出前保存，落盘失败只在**真失败**时告警。
 # ⚠️ 与旧 ScMultiplayer 的存档、协议、服务目录格式均**不兼容**，三端必须同时换到本版。
-# ⚠️ 2.3.1 于 2026-11-09 重新打包（移除"主机幽灵身体" + 模块日志全部改成英文，版本号不变）：
-#     三端 release 的旧资产已删除后重传，包 1647452 B、sha256 `5eba2cb6…`；下载回验三端一致。
-#     2026-11-08 那版是 1648175 B / `afea24fe…`（含 ghost），已被本次替换。
 SuMultiplayer | Su-MP | ["0.1.7.0"] | 2.3.1 | gitee:"https://gitee.com/SC-SPM/su-api-example-mod-set/releases/download/0.1.7.0/%5BSuAPI%5DSuMultiplayer-2.3.1.scmod";github:"https://github.com/SCAPI24/su-api-example-mod-set/releases/download/0.1.7.0/SuAPI.SuMultiplayer-2.3.1.scmod";cnb:"https://cnb.cool/suceru.cb/SC-SPM/SuAPIMod/-/releases/download/0.1.7.0/[SuAPI]SuMultiplayer-2.3.1.scmod" | zh_CN=联机模组;en_US=SuMultiplayer
