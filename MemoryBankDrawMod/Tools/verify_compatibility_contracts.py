@@ -27,9 +27,9 @@ dialog = read(ROOT / "Func" / "SuEditMemoryBankDialog.cs")
 require(entry, "Entry", [
     'SubscribeEvent("Frame.Update"',
     "MemoryBankDialogPresenter.ValidateContract()",
-    "MemoryBankDialogPresenter.EnhanceOpenDialogs()",
+    "m_presenter.EnhanceOpenDialogs()",
     "UnsubscribeEvent(m_frameToken)",
-    "MemoryBankDialogPresenter.CloseOwnedDialogs()",
+    "presenter?.Dispose()",
     "ExceptionManager.ReportExceptionToUser",
     "Dependencies => Array.Empty<string>()", "IsMergeLib => true",
 ])
@@ -37,11 +37,15 @@ for forbidden in ("GameDatabase.GameDatabase", "HandleGameDatabase",
                   "SuSubsystemMemoryBankBlockBehavior", "MemoryBankDialogCompatibility"):
     if forbidden in entry:
         errors.append(f"Entry still uses obsolete replacement path: {forbidden}")
+for forbidden in ("RegisterWidgetPresentation", "RegisterScreenExtension", "SetValue(nativeDialog"):
+    if forbidden in entry or forbidden in presenter:
+        errors.append(f"Dialog lifecycle must stay outside presentation/screen hooks: {forbidden}")
 for old_name in ("MemoryBankDialogCompatibility.cs", "SuSubsystemMemoryBankBlockBehavior.cs"):
     if (ROOT / "Func" / old_name).exists():
         errors.append(f"Obsolete implementation remains: {old_name}")
 require(presenter, "Presenter", [
-    "DialogsManager.Dialogs", "GetType() != typeof(EditMemoryBankDialog)",
+    "DialogsManager.Dialogs", "MemoryBankDialogPresenter : IDisposable",
+    "m_enhancedNativeDialogs.Contains(dialogs[i])", "m_enhancedNativeDialogs.Add(nativeDialog)", "GetType() != typeof(EditMemoryBankDialog)",
     '"m_memoryBankData"', '"m_handler"',
     "s_memoryBankDataField.FieldType != typeof(MemoryBankData)",
     "s_handlerField.FieldType != typeof(Action)",
@@ -51,15 +55,17 @@ require(presenter, "Presenter", [
     "new SuEditMemoryBankDialog(memoryBankData, handler)",
     "DialogsManager.HideDialog(nativeDialog)",
     "DialogsManager.ShowDialog(parentWidget, drawDialog)",
-    "s_ownedDialogs.Add(drawDialog)", "public static void CloseOwnedDialogs()",
-    "DialogsManager.HideDialog(dialog)", "s_ownedDialogs.Clear()",
+    "m_ownedDialogs.Add(drawDialog)", "public void Dispose()",
+    "dialog.CancelOwnedDialog()", "m_ownedDialogs.Clear()",
+    "!dialogs.Contains(m_ownedDialogs[i]) && m_ownedDialogs[i].ParentWidget == null",
+    "m_ownedDialogs[i].CancelOwnedDialog();", "m_ownedDialogs[i].Dispose();",
 ])
 require(dialog, "Draw dialog", [
     "m_handler = handler;", "m_memoryBankData = memoryBankData;",
     "m_tmpMemoryBankData = (MemoryBankData)memoryBankData.Copy()",
     "m_memoryBankData.Data = m_tmpMemoryBankData.Data;",
     "Dismiss(result: true)", "Dismiss(result: false)",
-    "if (m_handler != null && result)", "m_handler();",
+    "if (m_dismissed) return;", "m_handler = null;", "if (handler != null && result) handler();",
     "s_textProp.PropertyType != typeof(string)",
     "!s_textProp.CanRead", "!s_textProp.CanWrite",
 ])
@@ -67,8 +73,8 @@ require(dialog, "Draw dialog", [
 try:
     manifest = ET.fromstring(read(ROOT / "ModInfo.xml"))
     project = ET.fromstring(read(ROOT / "MemoryBankDrawMod.csproj"))
-    if manifest.findtext("ModInfo/APIVersion") != "0.2.0.0":
-        errors.append("ModInfo APIVersion must match NuGet API 0.2.0.0")
+    if manifest.findtext("ModInfo/APIVersion") != "0.2.1.0":
+        errors.append("ModInfo APIVersion must match NuGet API 0.2.1.0")
     if manifest.findtext("ModInfo/IsMergeLib") != "true":
         errors.append("ModInfo must use IsMergeLib=true")
     dependencies = manifest.find("Dependencies")
@@ -83,8 +89,8 @@ try:
     core_packages = [ref for ref in packages if ref.attrib.get("Include") in expected]
     if len(core_packages) != 3 or {ref.attrib.get("Include") for ref in core_packages} != expected:
         errors.append("Project must reference all three core NuGet packages exactly once")
-    if any(ref.attrib.get("Version") != "[0.2.0.0]" for ref in core_packages):
-        errors.append("Core NuGet package versions must be pinned to [0.2.0.0]")
+    if any(ref.attrib.get("Version") != "[0.2.1.0]" for ref in core_packages):
+        errors.append("Core NuGet package versions must be pinned to [0.2.1.0]")
     if project.findtext("PropertyGroup/CopyLocalLockFileAssemblies") != "true":
         errors.append("NuGet dependency DLLs must be copied for Obfuscar resolution")
     obfuscar = ET.fromstring(read(ROOT / "Obfuscar.xml"))
@@ -103,5 +109,5 @@ if errors:
     for error in errors:
         print(f"FAIL: {error}")
     sys.exit(1)
-print("PASS: MemoryBankDrawMod NuGet 0.2.0.0 source contracts and metadata.")
+print("PASS: MemoryBankDrawMod NuGet 0.2.1.0 source contracts and metadata.")
 print("SCOPE: Read-only static checks only; no build, runtime, UI, save or network validation.")

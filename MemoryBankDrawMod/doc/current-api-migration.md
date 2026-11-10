@@ -1,6 +1,6 @@
 # MemoryBankDrawMod 当前工作区迁移核对
 
-核对日期：2026-11-11。本记录覆盖当前工作区源码，不表示已经完成编译、游戏或联机验收。
+核对日期：2026-11-11。本记录区分已完成的正式编译、混淆和宿主加载检查，与尚未逐项完成的界面/保存/联机验收。
 
 ## 接入方式与兼容边界
 
@@ -13,9 +13,9 @@
 
 ## 版本与构建来源
 
-工程保持 net10.0，通过 PackageReference 严格锁定 Engine、EntitySystem、Survivalcraft 的 `[0.2.0.0]` NuGet 包。使用已有 cnb-nuget 源：`https://nuget.cnb.cool/suceru.cb/SuAPICore/-/packages/v3/index.json`。不递归构建主框架，也不回退本地 DLL、源码引用或旧包。
+工程保持 net10.0，通过 PackageReference 严格锁定 Engine、EntitySystem、Survivalcraft 的 `[0.2.1.0]` NuGet 包。使用已有 cnb-nuget 源：`https://nuget.cnb.cool/suceru.cb/SuAPICore/-/packages/v3/index.json`。不递归构建主框架，也不回退本地 DLL、源码引用或旧包。
 
-ModInfo 的 APIVersion 为 0.2.0.0；Mod 自身 Version 保持 1.1.0，IsMergeLib 保持 true。CopyLocalLockFileAssemblies=true 将依赖复制到构建输出以供混淆解析；Obfuscar 仅处理 MemoryBankDrawMod.dll，核心 DLL 仅通过 AssemblySearchPath 解析，不能混淆或打入 Mod 包。保留入口 SkipType 与构建时复制、修改中间配置的流程。
+ModInfo 的 APIVersion 为 0.2.1.0；Mod 自身 Version 保持 1.1.0，IsMergeLib 保持 true。CopyLocalLockFileAssemblies=true 将依赖复制到构建输出以供混淆解析；Obfuscar 仅处理 MemoryBankDrawMod.dll，核心 DLL 仅通过 AssemblySearchPath 解析，不能混淆或打入 Mod 包。保留入口 SkipType 与构建时复制、修改中间配置的流程。
 
 ## 可重复的只读源码检查
 
@@ -29,11 +29,13 @@ python Mod/MemoryBankDrawMod/Tools/verify_compatibility_contracts.py
 
 这些是源码片段和 XML 结构检查。PASS 只表示被检查的源码契约存在，不证明控制流、回调次数、界面帧时序、保存或网络行为正确；不能替代真实程序集编译或游戏运行验收。未使用源代码替身测试来宣称业务通过。
 
-## 仍需真实构建与游戏验收
+## 本轮构建与游戏验证
 
-已使用正式 MemoryBankDrawMod.csproj 完成 NuGet 0.2.0.0 三包恢复及 Release `build -t:Rebuild`，编译与 Obfuscar 混淆均通过，0 警告、0 错误；只读静态契约检查通过。三包来源为 CNB，包内 repository commit 为 `771afab7707b42156cda08593bba29cee6e84c69`。此次实测使用正式工程与发布包，不以此前本地 DLL 隔离编译替代。
+本轮已使用正式工程及 NuGet 0.2.1.0 三包完成 Release 重编和 Obfuscar 混淆，0 警告、0 错误；只读静态契约检查通过。最终版本也已按 Android AOT 约束改用复用 List 收集后逐项 Remove，并补齐外部关闭窗口完全脱离后的回调清理；再次正式 Release 重编、混淆和静态检查均通过（0 警告、0 错误）。此前 0.2.0.0 结果不作为本轮通过依据。已与 WatchMod、SuAPIShadows 和现有翻译包一起单实例进入原世界，启动和加载日志没有本轮 MemoryBankDrawMod 错误。确认/取消、物品/方块回写和联机行为仍需完整业务场景验收。
 
-上述结果只证明当前源码可针对这些发布包编译并完成混淆，不证明新包二进制的私有字段反射契约或 UI 行为。尚未部署或启动游戏，未完成 UI、单机保存或联机验收；以下场景仍须实际运行验证。
+Presenter 改为每个 Mod 实例所有的 IDisposable，只有反射契约元数据保持 static。原生对话框身份在 Hide/Show 前登记所有权。Dispatcher 在当前游戏线程立即执行，因此没有把重复增强认定为已发生问题；身份登记用于实例生命周期保护，不表示允许后台线程直接修改 UI。绘图窗口带一次性终结门闩：确认才写回原 Data 并调用原 Action 一次；取消、失败清理和卸载禁止提交，清理仅作用于本实例拥有的窗口。
+
+0.2.1 的 WidgetPresentation 仅用于布局前文本/字体准备，不允许改树或 Show/Hide；ScreenExtension 仅针对原生 Screen。此功能需要替换 Dialog 的表现，因此保留 Frame.Update 是正确生命周期边界，不强行套用上述 API，不替换原生存储/电路/网络子系统，不反射修改原 Action。
 
 - 单机物品和方块：打开绘图界面，切换 Linear/Grid/Draw，确认后验证内容保存；物品唯一 ID/数量及方块电路重新模拟仍由原回调负责。
 - 同样入口取消：原内容不变，保存回调不执行。
@@ -42,8 +44,10 @@ python Mod/MemoryBankDrawMod/Tools/verify_compatibility_contracts.py
 - 与 WatchMod、ConsoleMod、SuAPIShadows 同时加载：不抢占其子系统或修改其 UI。
 - 包发布前核对扁平 Lib/、根 ModInfo.xml、正斜杠 ZIP 条目及 IsMergeLib=true；包不包含引擎核心 DLL。
 
-本次适配仅增量修改 csproj、Obfuscar、ModInfo APIVersion、验证脚本和此说明；保留其他会话已有的 net10.0 与混淆流程，Plug/Func 业务源码保持原字节不变。
+本轮仅修改本 Mod 工程依赖、清单、实例 Presenter、绘图对话框终结保护、入口生命周期、静态脚本及本说明。Mod 自身 Version=1.1.0、net10.0、IsMergeLib=true 与仅本 Mod 混淆保持不变。只读静态检查不能替代真实回调次数、Dispatcher 时序及 UI/单机/联机验收。
 
-## 本轮交付包
+## 本轮交付与兼容结果
 
-已用最终混淆 DLL 生成 bin/Release/net10.0 下带 [SuAPI] 前缀、API0.2.0.0 后缀的 .scmod。根目录 ModInfo.xml、扁平 Lib/、Content/ 和正斜杠条目检查通过，逐条读取与 CRC 校验通过；包内仅含本 Mod DLL，不含核心库或其他 Mod。三份核心输出 DLL 与 CNB 缓存包的 SHA256 一致。本 Mod 程序集未引用其他业务 Mod。旁边 .verification.json 保存包与程序集哈希及依赖来源。尚未部署或进行实机验收。
+已生成 `[SuAPI]MemoryBankDrawMod-1.1.0-API0.2.1.0.scmod` 并复制到指定游戏 Mods 目录，逐条ZIP/CRC、根ModInfo.xml、扁平Lib/、正斜杠路径、最终混淆DLL与部署包哈希核对通过。包内仅本Mod DLL与清单/资源目录，不含核心DLL；输出核心程序集与CNB正式0.2.1包内程序集哈希相同。程序集不引用WatchMod、光影、控制台、联机等业务Mod。
+
+本功能使用Dialog，因此保留现有正确的Frame.Update边界；0.2.1新增Screen/WidgetPresentation接口不提供对话框替换契约，不能在布局回调里改树。新实现仅保存自己实例的窗口、传递原生同一个data/Action，外部HideAllDialogs也会在动画结束、ParentWidget=null后取消并释放回调，不保留旧世界引用。

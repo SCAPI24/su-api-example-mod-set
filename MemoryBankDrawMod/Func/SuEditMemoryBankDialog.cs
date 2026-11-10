@@ -11,6 +11,8 @@ namespace MemoryBankDrawMod
     public class SuEditMemoryBankDialog : Dialog
     {
         private Action m_handler;
+        private bool m_dismissed;
+        internal bool IsDismissed => m_dismissed;
         private MemoryBankData m_memoryBankData;
         private MemoryBankData m_tmpMemoryBankData;
 
@@ -361,6 +363,7 @@ namespace MemoryBankDrawMod
 
         public override void Update()
         {
+            if (m_dismissed) return;
             // Sync data between TextBoxes and m_tmpMemoryBankData
             if (m_viewMode == 2)
             {
@@ -404,8 +407,8 @@ namespace MemoryBankDrawMod
             // OK/Cancel
             if (m_okButton.IsClicked)
             {
-                m_memoryBankData.Data = m_tmpMemoryBankData.Data;
                 Dismiss(result: true);
+                return;
             }
             if (base.Input.Cancel || m_cancelButton.IsClicked)
             {
@@ -607,13 +610,25 @@ namespace MemoryBankDrawMod
             }
         }
 
+        // Source: DialogsManager.ShowDialog/HideDialog dispatch immediately on the game thread. Cancellation
+        // also covers a queued ShowDialog, without submitting the original owner's callback.
+        internal void CancelOwnedDialog()
+        {
+            m_dismissed = true;
+            m_handler = null;
+            DialogsManager.HideDialog(this);
+        }
+
         private void Dismiss(bool result)
         {
+            // Source: EditMemoryBankDialog.Dismiss; commit the original data/callback at most once.
+            if (m_dismissed) return;
+            m_dismissed = true;
+            Action handler = m_handler;
+            m_handler = null;
+            if (result) m_memoryBankData.Data = m_tmpMemoryBankData.Data;
             DialogsManager.HideDialog(this);
-            if (m_handler != null && result)
-            {
-                m_handler();
-            }
+            if (handler != null && result) handler();
         }
     }
 }

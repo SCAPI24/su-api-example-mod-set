@@ -8,9 +8,9 @@
 
   <!-- Source: doc/mod-nuget-compile-guide.md:PackageReference — published framework packages only. -->
   <ItemGroup>
-    <PackageReference Include="Engine" Version="[0.2.0.0]" />
-    <PackageReference Include="EntitySystem" Version="[0.2.0.0]" />
-    <PackageReference Include="Survivalcraft" Version="[0.2.0.0]" />
+    <PackageReference Include="Engine" Version="[0.2.1.0]" />
+    <PackageReference Include="EntitySystem" Version="[0.2.1.0]" />
+    <PackageReference Include="Survivalcraft" Version="[0.2.1.0]" />
     <Compile Remove="Tests\**\*.cs" />
   </ItemGroup>
 

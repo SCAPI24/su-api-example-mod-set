@@ -1,8 +1,12 @@
 # WatchMod 内存业务集成测试
 
-本项目通过 PackageReference 精确引用 CNB 已发布的 Engine、EntitySystem、Survivalcraft 0.2.0.0，并引用已经构建好的 WatchMod Release DLL；不含引擎 ProjectReference，不读取或复制主仓库 bin，不构建、覆盖或修改主仓库框架。主 WatchMod 工程必须排除 `Tests/**/*.cs`，测试程序不进入生产 DLL 或 scmod。
+本项目通过 PackageReference 精确引用 CNB 已发布的 Engine、EntitySystem、Survivalcraft `[0.2.1.0]`，并引用已经构建好的 WatchMod Release DLL；不含引擎 ProjectReference，不读取或复制主仓库 bin，不构建、覆盖或修改主仓库框架。主 WatchMod 工程必须排除 `Tests/**/*.cs`，测试程序不进入生产 DLL 或 scmod。
 
-## 执行
+## 本轮状态
+
+生产与 Tests 已同步锁定 NuGet `[0.2.1.0]`，API 元数据为 0.2.1.0。本轮 Release 编译与 Obfuscar 已实际通过，0 警告、0 错误；独立测试未运行；指定游戏宿主已与MemoryBankDrawMod、光影及现有翻译包成功进入原世界，完整HUD/双玩家业务场景尚未逐项验收；下述 0.2.0 的 OpenTK 失败仅作历史环境边界，不能当作 0.2.1 的通过或失败结果。最终业务验收使用实际游戏宿主；本内存程序保留为可选辅助，不要求独立运行 Mod，不复制主仓库 DLL 或添加未经核对的运行依赖。
+
+## 可选辅助执行
 
 使用已配置的 cnb-nuget 源（https://nuget.cnb.cool/suceru.cb/SuAPICore/-/packages/v3/index.json）。由主代理完成 WatchMod 的 Release 构建后，再执行：
 
@@ -12,7 +16,7 @@ dotnet run --project Mod/WatchMod/Tests/WatchMod.IntegrationTests.csproj -c Rele
 
 默认 WatchMod 来源为 `Mod/WatchMod/bin/Release/net10.0/WatchMod.dll`；验证最终混淆 DLL 时传入 `-p:WatchAssemblyPath=<absolute-obfuscated-dll-path>`。缺少 WatchMod 产物将明确失败，不自动构建引擎、不改用本地引擎 DLL 或旧包。框架与传递运行依赖由 NuGet 解析并复制到测试输出目录。
 
-2026-11-11 实际结果：NuGet 0.2.0.0 的 WatchMod Release 编译与 Obfuscar 通过（0 警告、0 错误）。普通与最终混淆 DLL 的测试运行均在 Program.Main 创建 BitmapFont 前因缺少 `OpenTK, Version=1.1.0.0, PublicKeyToken=bad199fe84eb3df4` 抛出 FileNotFoundException；12 项用例均未开始，运行测试未通过。详见 [运行环境差异与复现](../doc/nuget-020-runtime-dependency.md)。此前本地框架 DLL 的通过结果不代表本轮 NuGet 验证通过。正式游戏原本自带 OpenTK，本结果不能证明游戏无法加载 WatchMod。
+2026-11-11 上轮历史结果：NuGet 0.2.0.0 的 WatchMod Release 编译与 Obfuscar 通过（0 警告、0 错误）。普通与最终混淆 DLL 的测试运行均在 Program.Main 创建 BitmapFont 前因缺少 `OpenTK, Version=1.1.0.0, PublicKeyToken=bad199fe84eb3df4` 抛出 FileNotFoundException；12 项用例均未开始，运行测试未通过。详见 [运行环境差异与复现](../doc/nuget-020-runtime-dependency.md)。此前本地框架 DLL 的通过结果不代表本轮 NuGet 验证通过。正式游戏原本自带 OpenTK，本结果不能证明游戏无法加载 WatchMod。
 
 测试进程不是 Survivalcraft.exe，不打开游戏窗口，不读写真实世界。退出码 0 表示所有用例通过，非零表示失败。编写完成不等于已经执行或通过，结果以实际运行输出为准。
 

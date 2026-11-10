@@ -8,9 +8,9 @@
     <WatchAssemblyPath Condition="'$(WatchAssemblyPath)' == ''">$(MSBuildThisFileDirectory)..\bin\Release\net10.0\WatchMod.dll</WatchAssemblyPath>
   </PropertyGroup>
   <ItemGroup>
-    <PackageReference Include="Engine" Version="[0.2.0.0]" />
-    <PackageReference Include="EntitySystem" Version="[0.2.0.0]" />
-    <PackageReference Include="Survivalcraft" Version="[0.2.0.0]" />
+    <PackageReference Include="Engine" Version="[0.2.1.0]" />
+    <PackageReference Include="EntitySystem" Version="[0.2.1.0]" />
+    <PackageReference Include="Survivalcraft" Version="[0.2.1.0]" />
     <Reference Include="WatchMod"><HintPath>$(WatchAssemblyPath)</HintPath></Reference>
   </ItemGroup>
   <Target Name="CheckExistingAssemblies" BeforeTargets="ResolveReferences">

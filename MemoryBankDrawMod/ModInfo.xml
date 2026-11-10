@@ -7,7 +7,7 @@
             <Text lang="zh_CN">Memory Bank 绘图</Text>
         </LocalizedName>
         <Version>1.1.0</Version>
-        <APIVersion>0.2.0.0</APIVersion>
+        <APIVersion>0.2.1.0</APIVersion>
         <Asset>
             <ContentRoot>Content</ContentRoot>
         </Asset>
