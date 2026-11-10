@@ -28,6 +28,8 @@ namespace CmdBridgeMod
 
         private Thread m_thread;
         private volatile bool m_running;
+        private int m_generation;
+        private bool m_disposed;
         private int m_framesPumped;
         private int m_actionsExecuted;
         private int m_actionsDropped;
@@ -69,6 +71,7 @@ namespace CmdBridgeMod
             Start();
             lock (m_gate)
             {
+                if (m_disposed) throw new ObjectDisposedException(nameof(FrameStartPump));
                 if (m_pending.Count >= MaxPendingActions)
                 {
                     m_actionsDropped++;
@@ -81,35 +84,52 @@ namespace CmdBridgeMod
 
         public void Start()
         {
-            if (m_running)
-                return;
             if (!GameThreadInvoker.IsDispatcherReady())
                 return; // 游戏还没进入首帧：下一次 Enqueue 会再试
 
-            m_running = true;
-            m_thread = new Thread(Loop)
+            lock (m_gate)
             {
-                IsBackground = true,
-                Name = "CmdBridge.FrameStartPump"
-            };
-            m_thread.Start();
+                if (m_disposed) throw new ObjectDisposedException(nameof(FrameStartPump));
+                if (m_running) return;
+                m_running = true;
+                int generation = ++m_generation;
+                m_thread = new Thread(() => Loop(generation))
+                {
+                    IsBackground = true,
+                    Name = "CmdBridge.FrameStartPump"
+                };
+                m_thread.Start();
+            }
         }
 
         public void Stop()
         {
-            if (!m_running)
-                return;
-            m_running = false;
-            m_frameEnded.Set();
             lock (m_gate)
             {
+                if (m_disposed) return;
+                m_running = false;
+                m_generation++;
                 m_pending.Clear();
+                m_frameEnded.Set();
             }
         }
 
         public void Dispose()
         {
-            Stop();
+            // Source: CmdBridgeMod.cs:CmdBridgeMod.OnUnload — reject late producers before releasing input.
+            Thread thread;
+            lock (m_gate)
+            {
+                if (m_disposed) return;
+                m_disposed = true;
+                m_running = false;
+                m_generation++;
+                m_pending.Clear();
+                thread = m_thread;
+                m_frameEnded.Set();
+            }
+            if (thread != null && !ReferenceEquals(thread, Thread.CurrentThread) && !thread.Join(1000))
+                throw new InvalidOperationException("CmdBridge frame-start worker did not stop during disposal.");
             m_frameEnded.Dispose();
         }
 
@@ -119,26 +139,36 @@ namespace CmdBridgeMod
         /// </summary>
         public void SignalFrameEnd()
         {
-            if (!m_running)
-                return;
-            m_framesPumped++;
-            m_frameEnded.Set();
+            lock (m_gate)
+            {
+                if (!m_running || m_disposed) return;
+                m_framesPumped++;
+                m_frameEnded.Set();
+            }
         }
 
         /// <summary>把当前队列整体入队到下一帧帧首（必须在后台线程调用，否则 Dispatcher 会就地执行）。</summary>
-        private void Loop()
+        private void Loop(int generation)
         {
-            while (m_running)
+            while (m_running && generation == Volatile.Read(ref m_generation))
             {
-                if (!m_frameEnded.WaitOne(250))
-                    continue; // 游戏没出帧（最小化/暂停）：什么都不做，也不堆积
+                try
+                {
+                    if (!m_frameEnded.WaitOne(250))
+                        continue; // 游戏没出帧（最小化/暂停）：什么都不做，也不堆积
+                }
+                catch (ObjectDisposedException)
+                {
+                    return; // A retired worker from an earlier generation can still be leaving WaitOne.
+                }
 
-                if (!m_running)
+                if (!m_running || generation != Volatile.Read(ref m_generation))
                     break;
 
                 Action[] batch = null;
                 lock (m_gate)
                 {
+                    if (!m_running || generation != m_generation) break;
                     if (m_pending.Count > 0)
                     {
                         batch = m_pending.ToArray();
@@ -156,6 +186,8 @@ namespace CmdBridgeMod
                     {
                         for (int i = 0; i < batch.Length; i++)
                         {
+                            // Source: Dispatcher.cs:Dispatcher.Dispatch — queued batches can outlive Stop.
+                            if (!m_running || generation != Volatile.Read(ref m_generation)) return;
                             try
                             {
                                 batch[i]();

@@ -1,16 +1,16 @@
 <Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
-    <TargetFramework>net8.0</TargetFramework>
+    <TargetFramework>net10.0</TargetFramework>
     <AssemblyName>SuUndergroundWorld</AssemblyName>
     <RootNamespace>SuUndergroundWorld</RootNamespace>
     <ImplicitUsings>disable</ImplicitUsings>
     <Nullable>disable</Nullable>
     <LangVersion>latest</LangVersion>
   </PropertyGroup>
-
+  <!-- Source: doc/mod-nuget-compile-guide.md:PackageReference; never build the host from a Mod build. -->
   <ItemGroup>
-    <ProjectReference Include="..\..\Engine\Engine\Engine.csproj" />
-    <ProjectReference Include="..\..\EntitySystem\EntitySystem.csproj" />
-    <ProjectReference Include="..\..\Survivalcraft\Survivalcraft.csproj" />
+    <PackageReference Include="Engine" Version="[0.2.1.0]" />
+    <PackageReference Include="EntitySystem" Version="[0.2.1.0]" />
+    <PackageReference Include="Survivalcraft" Version="[0.2.1.0]" />
   </ItemGroup>
 </Project>

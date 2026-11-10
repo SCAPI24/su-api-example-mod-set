@@ -10,8 +10,8 @@ namespace SuUndergroundWorld.Core
     /// 为什么要反射：这 6 个属性是 { get; private set; } 且非 virtual，
     /// 派生类在别的程序集里既不能赋值也不能覆盖（引擎源码不做任何修改的前提）。
     ///
-    /// 定位策略：**先按字段类型找**（实测 SubsystemTerrain 里每种类型各只出现一次），
-    /// 名字兜底再按编译器生成的 backing field 名找 —— 这样即使引擎改名也大概率仍可用。
+    /// Source: SubsystemTerrain.cs:Terrain/TerrainUpdater/TerrainRenderer/TerrainSerializer/TerrainContentsGenerator/BlockGeometryGenerator.
+    /// Bind the exact declared backing field and expected type; do not guess another matching field.
     /// </summary>
     internal static class SuTerrainBinding
     {
@@ -42,16 +42,10 @@ namespace SuUndergroundWorld.Core
 
         private static FieldInfo Find(Type fieldType, string propertyName)
         {
-            FieldInfo[] fields = typeof(SubsystemTerrain).GetFields(Flags);
-            for (int i = 0; i < fields.Length; i++)
-            {
-                if (fields[i].FieldType == fieldType)
-                {
-                    return fields[i];
-                }
-            }
-            // 名字兜底
-            return typeof(SubsystemTerrain).GetField("<" + propertyName + ">k__BackingField", Flags);
+            FieldInfo field = typeof(SubsystemTerrain).GetField("<" + propertyName + ">k__BackingField", Flags);
+            if (field != null && field.FieldType != fieldType)
+                throw new InvalidOperationException("[SuUndergroundWorld] Terrain field type changed: " + propertyName);
+            return field;
         }
 
         public static SuTerrainWorldSet Capture(SubsystemTerrain st)

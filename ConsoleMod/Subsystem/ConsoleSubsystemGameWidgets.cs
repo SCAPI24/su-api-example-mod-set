@@ -8,22 +8,28 @@ using System.Reflection;
 using System;
 using System.Collections.Generic;
 using System.Text;
-using TemplatesDatabase;
 using SuAPI;
 
 namespace ConsoleMod
 {
-    public class ConsoleSubsystemGameWidgets : SubsystemGameWidgets, IUpdateable
+    // Source: SubsystemGameWidgets.cs:SubsystemGameWidgets.Update — one real Views host, separate early input.
+    public sealed class ConsoleSubsystemGameWidgets : UpdateExtension<SubsystemGameWidgets>, IDisposable
     {
         // Source: Runtime platform detection — replaces #if WINDOWS/#if ANDROID for single-TFM compatibility
         private static readonly bool IsWindows = System.OperatingSystem.IsWindows();
         private static readonly bool IsAndroid = System.OperatingSystem.IsAndroid();
 
-        // Source: GameEntitySystem.UpdateOrder enum — runs BEFORE Input(-10) to intercept keyboard before ComponentInput
-        public new UpdateOrder UpdateOrder => (UpdateOrder)(-100);
+        private ReadOnlyList<GameWidget> GameWidgets => Host.GameWidgets;
+        private Project Project => Host.Project;
+        private bool m_initialized;
+        private bool m_disposed;
+
+        public ConsoleSubsystemGameWidgets(SubsystemGameWidgets host) : base(host) { }
 
         // Source: Static flag for external code to check console state
-        public static bool IsConsoleOpen { get; private set; }
+        private static readonly HashSet<ConsoleSubsystemGameWidgets> s_openControllers = new HashSet<ConsoleSubsystemGameWidgets>();
+        public static bool IsConsoleOpen => s_openControllers.Count != 0;
+        private int m_keyboardSession;
 
         private bool m_consoleOpen = false;
         private bool m_justToggled = false;
@@ -66,16 +72,19 @@ namespace ConsoleMod
         private Texture2D m_buttonPressedTex;
         private bool m_buttonAttached = false;
 
-        protected override void Load(ValuesDictionary valuesDictionary)
+        // Source: ConsoleInputSubsystem.cs:ConsoleEarlyUpdate.Update — initialize after Project loading, before Input(-10).
+        private void Initialize()
         {
-            base.Load(valuesDictionary);
+            if (m_initialized) return;
+            if (m_disposed) throw new ObjectDisposedException(nameof(ConsoleSubsystemGameWidgets));
 
             // Source: Normal button texture from scmod Content/ (ContentCache key: Mod/SuConsoleButton)
             m_buttonNormalTex = ContentCache.Get<Texture2D>("Mod/SuConsoleButton");
             // Source: Pressed button texture embedded in DLL
             m_buttonPressedTex = LoadEmbeddedTexture("ConsoleMod.Content.SuConsoleButton_Pressed.png");
 
-            // Source: Attach button after base.Load — GameWidgets may not be populated yet (Player added later)
+            m_initialized = true;
+            // Source: SubsystemGameWidgets.cs:Load — players may still be added on a later simulation step.
             AttachConsoleButton();
         }
 
@@ -84,18 +93,16 @@ namespace ConsoleMod
         {
             if (m_buttonAttached) return;
 
-            Log.Information($"[ConsoleMod] AttachConsoleButton: GameWidgets.Count={GameWidgets.Count}");
             if (GameWidgets.Count == 0) return;
 
             GameWidget gameWidget = GameWidgets[0];
 
             // Source: GameWidget.xml — MoreContents is the horizontal StackPanel behind MoreButton
             StackPanelWidget moreContents = gameWidget.Children.Find<StackPanelWidget>("MoreContents", true);
-            Log.Information($"[ConsoleMod] moreContents={moreContents != null}");
-            if (moreContents == null) return;
 
             m_consoleButton = new BitmapButtonWidget
             {
+                Name = "ConsoleMod.Toggle",
                 Text = "",
                 Size = new Vector2(68f, 64f),
                 Margin = new Vector2(4f, 0f),
@@ -106,19 +113,22 @@ namespace ConsoleMod
             moreContents.Children.Add(m_consoleButton);
 
             m_buttonAttached = true;
-            Log.Information("[ConsoleMod] Button attached to MoreContents");
         }
 
         private static Texture2D LoadEmbeddedTexture(string resourceName)
         {
             var asm = Assembly.GetExecutingAssembly();
             var stream = asm.GetManifestResourceStream(resourceName);
+            if (stream == null) throw new InvalidOperationException("[ConsoleMod] Missing embedded texture: " + resourceName);
             try { return Texture2D.Load(stream); }
             finally { stream.Dispose(); }
         }
 
-        public override void Update(float dt)
+        // Source: ConsoleSubsystemGameWidgets.cs:original Update — keyboard interception remains at -100.
+        internal void UpdateInput(float dt)
         {
+            if (m_disposed) return;
+            Initialize();
             // Source: Deferred button attach — Load() may run before GameWidgets are populated
             if (!m_buttonAttached) AttachConsoleButton();
 
@@ -130,7 +140,9 @@ namespace ConsoleMod
             {
                 m_consoleOpen = !m_consoleOpen;
                 m_justToggled = true;
-                IsConsoleOpen = m_consoleOpen;
+                // Source: ConsoleInputSubsystem: each real Views host owns its own controller.
+                if (m_consoleOpen) s_openControllers.Add(this);
+                else s_openControllers.Remove(this);
                 if (m_consoleOpen)
                     AttachUI();
                 else
@@ -152,10 +164,43 @@ namespace ConsoleMod
                 Mouse.Clear();
             }
 
-            base.Update(dt);
+        }
 
-            if (m_consoleOpen)
-                UpdateDisplay();
+        // Source: SubsystemGameWidgets.cs:Update — the shared runner invokes the original host once at Views(200).
+        public override void AfterUpdate(float dt, InvocationResult result)
+        {
+            if (!m_disposed && m_consoleOpen) UpdateDisplay();
+        }
+
+        public override void Detached() => Dispose();
+
+        // Source: WatchMod/Subsystem/SuWatchComponent.cs:DetachUI — release only this controller's widgets.
+        public void Dispose()
+        {
+            if (m_disposed) return;
+            m_disposed = true;
+            m_consoleOpen = false;
+            s_openControllers.Remove(this);
+            var errors = new List<Exception>();
+            try { DetachUI(); }
+            catch (Exception ex) { errors.Add(ex); }
+            if (m_consoleButton != null)
+            {
+                try
+                {
+                    m_consoleButton.ParentWidget?.Children.Remove(m_consoleButton);
+                    m_consoleButton.Dispose();
+                }
+                catch (Exception ex) { errors.Add(ex); }
+                m_consoleButton = null;
+            }
+            m_buttonAttached = false;
+            try { m_buttonPressedTex?.Dispose(); }
+            catch (Exception ex) { errors.Add(ex); }
+            m_buttonPressedTex = null;
+            // ContentCache owns the normal texture; this extension must not dispose the shared asset.
+            m_buttonNormalTex = null;
+            if (errors.Count != 0) throw new AggregateException("[ConsoleMod] Controller cleanup failed.", errors);
         }
 
         private void AttachUI()
@@ -168,6 +213,7 @@ namespace ConsoleMod
 
             // Console panel — bottom of screen
             m_consolePanel = new CanvasWidget();
+            m_consolePanel.Name = "ConsoleMod.Panel";
             m_consolePanel.VerticalAlignment = WidgetAlignment.Far;
             m_consolePanel.Size = new Vector2(-1f, ConsoleHeight);
 
@@ -239,30 +285,37 @@ namespace ConsoleMod
 
         private void DetachUI()
         {
-            if (!m_uiAttached || m_consolePanel == null) return;
-            if (GameWidgets.Count > 0)
-            {
-                ContainerWidget guiWidget = GameWidgets[0].GuiWidget;
-                guiWidget.Children.Remove(m_consolePanel);
-            }
+            CanvasWidget panel = m_consolePanel;
+            Dialog modalDialog = m_modalDialog;
             m_consolePanel = null;
+            m_modalDialog = null;
             m_outputArea = null;
             m_background = null;
             m_outputLabel = null;
             m_inputLabel = null;
             m_separator = null;
             m_uiAttached = false;
-
-            if (IsWindows && m_modalDialog != null)
+            var errors = new List<Exception>();
+            if (panel != null)
             {
-                DialogsManager.HideDialog(m_modalDialog);
-                m_modalDialog = null;
+                try
+                {
+                    panel.ParentWidget?.Children.Remove(panel);
+                    panel.Dispose();
+                }
+                catch (Exception ex) { errors.Add(ex); }
             }
-
+            if (IsWindows && modalDialog != null)
+            {
+                // Source: DialogsManager.Update: the hide animation still owns this dialog until detached.
+                try { DialogsManager.HideDialog(modalDialog); }
+                catch (Exception ex) { errors.Add(ex); }
+            }
             if (IsAndroid)
             {
                 HideAndroidKeyboard();
             }
+            if (errors.Count != 0) throw new AggregateException("[ConsoleMod] Console UI cleanup failed.", errors);
         }
 
         private void ShowAndroidKeyboard()
@@ -270,10 +323,15 @@ namespace ConsoleMod
             if (!IsAndroid) return;
             if (m_androidKeyboardShown) return;
             m_androidKeyboardShown = true;
+            int session = ++m_keyboardSession;
             Keyboard.ShowKeyboard("Console", "Enter command", "", false,
                 enter: (string text) =>
                 {
+                    // Source: Keyboard.ShowKeyboard: a delayed callback must belong to this opening.
+                    if (session != m_keyboardSession) return;
                     m_androidKeyboardShown = false;
+                    // Source: GameManager.cs:DisposeProject — discard keyboard completions from a closed console or previous world.
+                    if (m_disposed || !m_consoleOpen || !ReferenceEquals(GameManager.Project, Project)) return;
                     if (!string.IsNullOrEmpty(text))
                     {
                         ExecuteCommand(text);
@@ -281,13 +339,14 @@ namespace ConsoleMod
                         m_cursorPos = 0;
                     }
                 },
-                cancel: () => { m_androidKeyboardShown = false; });
+                cancel: () => { if (session == m_keyboardSession) m_androidKeyboardShown = false; });
         }
 
         private void HideAndroidKeyboard()
         {
             // Source: Android — keyboard dismisses via cancel callback or Back button
-            // No explicit HideKeyboard API available
+            // No explicit HideKeyboard API available; invalidate callbacks from the closed session.
+            m_keyboardSession++;
             m_androidKeyboardShown = false;
         }
 
@@ -307,7 +366,7 @@ namespace ConsoleMod
             if (Keyboard.IsKeyDownOnce(Key.Escape))
             {
                 m_consoleOpen = false;
-                IsConsoleOpen = false;
+                s_openControllers.Remove(this);
                 m_justClosed = true;
                 DetachUI();
                 return;

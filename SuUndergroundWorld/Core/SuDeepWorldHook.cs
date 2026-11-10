@@ -1,28 +1,57 @@
+using System;
+using Engine;
 using Game;
+using GameEntitySystem;
+using SuAPI;
 
 namespace SuUndergroundWorld.Core
 {
-    /// <summary>
-    /// 每帧钩子：挂在工程的 SubsystemUpdate 上，UpdateOrder = BlocksScanner(99)。
-    ///
-    /// 为什么不用 "Frame.Update" 事件：SubsystemSky 的 UpdateOrder 是 Default(0)、SubsystemTerrain 是 Terrain(100)，
-    /// 而"地下世界要压暗天光"必须发生在"天光算完"之后、"地形光照计算"之前，所以需要一个 0 &lt; order &lt; 100 的更新点。
-    /// 99 同时也晚于 ComponentBody(2)，所以拿到的是本帧物理结算后的玩家位置，正好用于接缝判定。
-    /// </summary>
-    internal sealed class SuDeepWorldHook : IUpdateable
+    // Source: SubsystemTerrain.Update; UpdateExtension.Update — body physics already ran; Terrain runs after all votes.
+    internal sealed class SuDeepWorldHook : UpdateExtension<SubsystemTerrain>
     {
-        private readonly SuWorldManager m_manager;
+        private readonly SuWorldManager m_manager = new SuWorldManager();
+        private bool m_stopped;
+        private bool m_subscribed;
 
-        public SuDeepWorldHook(SuWorldManager manager)
+        public SuDeepWorldHook(SubsystemTerrain host) : base(host) { }
+
+        public override void Attached()
         {
-            m_manager = manager;
+            // Source: UpdateExtensionProjectBinding.SynchronizeAttachments — first normal update follows complete Project loading.
+            GameManager.ProjectDisposed += OnProjectDisposing;
+            m_subscribed = true;
+            if (!m_manager.TryBind(Host.Project))
+                throw new InvalidOperationException("[SuUndergroundWorld] The loaded Project could not bind its required terrain pipeline.");
         }
 
-        public UpdateOrder UpdateOrder => UpdateOrder.BlocksScanner;
-
-        public void Update(float dt)
+        public override void Update(float dt)
         {
-            m_manager.Tick();
+            if (!m_stopped) m_manager.Tick();
+            // A vote permits the unique host call; never invoke Host.Update ourselves.
+            base.Update(dt);
         }
+
+        private void OnProjectDisposing(Project project)
+        {
+            if (!ReferenceEquals(project, Host.Project)) return;
+            try { Stop(); }
+            catch (Exception error)
+            {
+                // Source: GameManager.DisposeProject — callbacks run before native resources are disposed.
+                // Report without preventing the game's remaining Project disposal handlers from running.
+                ExceptionManager.ReportExceptionToUser("[SuUndergroundWorld] World shutdown failed.", error);
+            }
+        }
+
+        private void Stop()
+        {
+            if (m_stopped) return;
+            m_stopped = true;
+            if (m_subscribed) GameManager.ProjectDisposed -= OnProjectDisposing;
+            m_subscribed = false;
+            m_manager.Shutdown();
+        }
+
+        public override void Detached() => Stop();
     }
 }

@@ -7,7 +7,7 @@
             <Text lang="zh_CN">信道</Text>
         </LocalizedName>
         <Version>1.0.0</Version>
-        <APIVersion>0.1.6.0</APIVersion>
+        <APIVersion>0.2.1.0</APIVersion>
         <IsMergeLib>true</IsMergeLib>
     </ModInfo>
     <Dependencies>

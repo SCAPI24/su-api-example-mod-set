@@ -1,6 +1,6 @@
 <Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
-    <TargetFramework>net8.0</TargetFramework>
+    <TargetFramework>net10.0</TargetFramework>
     <LangVersion>latest</LangVersion>
     <ImplicitUsings>disable</ImplicitUsings>
     <Nullable>disable</Nullable>
@@ -12,14 +12,15 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <PackageReference Include="Engine" Version="0.1.7.0" />
-    <PackageReference Include="EntitySystem" Version="0.1.7.0" />
-    <PackageReference Include="Survivalcraft" Version="0.1.7.0" />
-    <PackageReference Include="SuAPICore" Version="0.1.7.0" />
+    <PackageReference Include="Engine" Version="[0.2.1.0]" />
+    <PackageReference Include="EntitySystem" Version="[0.2.1.0]" />
+    <PackageReference Include="Survivalcraft" Version="[0.2.1.0]" />
+    <PackageReference Include="SuAPICore" Version="[0.2.1.0]" />
   </ItemGroup>
 
   <ItemGroup>
+    <Compile Remove="Middleware\**\*.cs" />
     <!-- 中间件：随包放进 Lib/SuEventBus.dll，与 ScMultiplayer 共用同一份事件契约 -->
-    <ProjectReference Include="..\SuEventBus\SuEventBus.csproj" />
+    <ProjectReference Include="Middleware\SuEventBus.csproj" />
   </ItemGroup>
 </Project>

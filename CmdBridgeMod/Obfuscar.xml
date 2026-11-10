@@ -1,8 +1,11 @@
 <?xml version="1.0"?>
 <Obfuscator>
-  <Var name="InPath" value=".\bin\Debug\net8.0" />
-  <Var name="OutPath" value=".\bin\Debug\net8.0\Obfuscar" />
+  <Var name="InPath" value=".\bin\Release\net10.0" />
+  <Var name="OutPath" value=".\bin\Release\net10.0\Obfuscar" />
   <Var name="SkipExtraDependencies" value="true" />
+  <!-- Source: Server/CmdBridgeInput.cs:CmdBridgeInput — preserve the cross-Mod public facade. -->
+  <Var name="KeepPublicApi" value="true" />
+  <AssemblySearchPath path=".\obj\Release\net10.0\ObfuscarDependencies" />
   <!-- 只混淆本 mod 自己的程序集：Engine / EntitySystem / Survivalcraft 是游戏本体，
        不归 mod 处理（混淆它们既无意义，也要求输出目录里必须存在这些 DLL，
        导致依赖必须用 ProjectReference 而不能用 NuGet 包）。 -->

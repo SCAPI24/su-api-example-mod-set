@@ -76,21 +76,34 @@
 
 | 包 | 版本 | 说明 |
 |---|---|---|
-| Engine / EntitySystem / Survivalcraft | 0.1.7.0 | cnb-nuget 制品库 |
-| SuAPICore | 0.1.7.0 | IMod / ModInjector |
+| Engine / EntitySystem / Survivalcraft | `[0.2.1.0]` | cnb-nuget 制品库，net10.0 |
+| SuAPICore | `[0.2.1.0]` | ChannelText 使用 SuAPIFonts 中文字体 |
 
-`SuEventBus` 是中间件工程（`../SuEventBus`），随包打进 `Lib/SuEventBus.dll`；`ModInfo.xml` 里声明了对它的依赖。
+`SuEventBus` 是共享类型协议与同步事件中间件，不是联机业务 Mod。`Middleware/SuEventBus.csproj` 直接链接 `../SuEventBus/Func` 下原有两份协议源码，保持程序集名和请求类型不变，并使用同版精确 NuGet 依赖；不构建或修改原中间件工程，不复制其他 Mod 的业务。它随包放进 `Lib/SuEventBus.dll`，清单和 IMod 保留该依赖。ModLoader 按清单先加载该程序集，无需中间件实现 IMod。不能把它并入 Channel.dll，否则现有订阅者的类型身份和静态事件总线会分裂。
 
 ## 构建与打包
 
 ```powershell
-dotnet build Mod/SuEventBus/SuEventBus.csproj -c Release
-dotnet build Mod/Channel/Channel.csproj -c Release
+dotnet restore Mod/Channel/Channel.csproj
+dotnet build Mod/Channel/Channel.csproj -c Release --no-restore
 # 打包（ZIP，条目用正斜杠，ModInfo.xml 在根，Lib 扁平，只放自己的 DLL + 中间件）
 # 产物：Mod/Channel/[SuAPI]Channel-1.0.0.scmod
 ```
 
-## 离线自检（不需要开游戏）
+
+### 0.2.1 挂载边界与本轮验证
+
+- Source: ChannelMod.OnLoad、ButtonBlock.CreateElectricElement、SubsystemChannelBlockBehavior.OnEditBlock/OnEditInventoryItem。
+- ButtonBlock 索引142与 ButtonBlockBehavior 数据库 Class 仍由本 Mod 扩展；这些编辑/电路工厂不是 IUpdateable，现有 UpdateExtension 不覆盖它们。Dialog 也不是 Screen，WidgetPresentation 不允许改树，不能用这些新入口冒充业务迁移。
+- 四类 SuEventBus 请求的 Handled/Suppressed/Result 协议保留。无人订阅时按既有本地业务执行；有订阅者时遵守原接管标记。这是设计好的可选协作协议，不是异常后的自动兜底。单独改成新的 SuAPI Feature 会绕开现有联机订阅者，因此本轮不迁移或删协议。
+- 同一方块索引/行为 Class 仍是独占替换点，不能宣称其他同目标 Mod 自动共存。共享挂载尚缺编辑行为与电路工厂的正式组合契约；若后续需要，由框架单独设计，不能只用帧更新替代这些入口。
+- 保存并注销本 Mod 两个 EventSubscriptionToken；卸载不清空共享 SuEventHub，不注销其他订阅者。
+- 用 .NET SDK 10 构建；源使用已配置的 cnb-nuget，不改全局 NuGet 配置、不构建 Engine/EntitySystem/Survivalcraft。
+- 只取 `Channel/bin/Release/net10.0/Channel.dll` 和同目录 `SuEventBus.dll` 打包，根目录是 `ModInfo.xml`，程序集仅 `Lib/Channel.dll`、`Lib/SuEventBus.dll`。禁止打入核心 DLL、SuAPICore.dll、其他业务 Mod DLL、obj 产物或平台分目录；ZIP 条目必须用 `/`。
+- Mod 自身版本保持 `1.0.0`，APIVersion 为 `0.2.1.0`，IsMergeLib=true。本轮正式包位于 `bin/Release/net10.0/[SuAPI]Channel-1.0.0-API0.2.1.0.scmod`，已替换指定游戏目录中的同名包。
+- 本轮状态：主任务已实测 Channel 与纯中间件的 Release `-t:Rebuild` 通过，0 警告、0 错误；全部核心依赖来自 NuGet，不使用引擎 ProjectReference。沿用原项目未配置 Obfuscar 的原始 Release DLL，不额外引入混淆。包结构/CRC/哈希校验通过；修复同名服装初始化事件的参数判断后已重新打包部署，真实宿主功能待重启验收。未新增 Tests 或独立运行程序。下节旧离线自检覆盖属于历史记录，不代表已用 0.2.1 重跑。
+
+## 历史离线自检覆盖（非本轮执行）
 
 | 覆盖 | 说明 |
 |---|---|
@@ -112,3 +125,11 @@ dotnet build Mod/Channel/Channel.csproj -c Release
 6. **掉落/堆叠**：挖掉得信道本体，多个信道在同一格堆叠；放置后通道号为 0。
 7. **降级**：装 Mod 放信道 → 存档 → 卸 Mod 读档 → 显示为满电压普通按钮、不崩 → 装回 Mod 仍是信道。
 8. **ScMP 共存**：两者都装，联机按钮按下仍同步；信道通道号编辑经主机权威应用；服务端只改 data bit 3–10。
+
+## 本轮打包、部署与验证边界
+
+已使用本Mod正式Release产物生成带API0.2.1.0后缀的scmod并放入指定游戏Mods目录。包根ModInfo.xml、平坦Lib目录、正斜杠条目、逐条解压/CRC、最终DLL与部署包SHA256一致性均通过；没有打入Engine/EntitySystem/Survivalcraft/SuAPICore等宿主核心DLL。迁移后的对应Mod只保留一份，其他已部署包哈希保持不变。
+
+命令行桥、控制台、玩家AI使用各自最终混淆DLL；信道及地下世界沿用未设置混淆的原项目Release DLL。Channel另带同协议SuEventBus纯库；PlayerAi只声明CmdBridge功能依赖、不复制桥DLL。对外公开的类型/方法名经元数据检查，三个混淆包均未丢失原有公开名称。
+
+五包已交付后保持游戏关闭。地下世界保留原版自动开井及切换真实地形管线的副作用；本轮没有在用户当前存档上自动触发该功能来冒充业务验收。编辑、电路、输入、AI动作及双世界跨层/保存等场景均待实际游戏宿主验收。新共享挂载不等于全部相同目标资源可以任意组合。

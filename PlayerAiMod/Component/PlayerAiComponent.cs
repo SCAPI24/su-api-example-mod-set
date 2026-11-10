@@ -26,7 +26,7 @@ namespace PlayerAiMod
     /// 注意：不会给"不打算接管的玩家"建 Actor —— 执行器共享 CmdBridgeMod 的注入器，
     /// 多一个不干活的 Actor 去 ReleaseAll 会把真正干活那个 Actor 按住的键放掉。
     ///
-    /// Source: Mod/WatchMod/Subsystem/SuWatchComponent.cs（Component + IUpdateable 挂载模式）
+    /// Source: EntitySystem/GameEntitySystem/Component.cs:OnEntityRemoved/Dispose（独立组件生命周期）
     /// Source: Mod/../AGENTS.md —— 延迟初始化：Load 阶段世界与控件树可能还没就绪，检查放到 Update
     /// Source: Survivalcraft/Game/ComponentPlayer.cs:35（GameWidget => PlayerData.GameWidget）
     /// </summary>
@@ -99,6 +99,19 @@ namespace PlayerAiMod
                 runtime.Unregister(Actor);
 
             Actor = null;
+        }
+
+        // Source: Component.cs:OnEntityRemoved/Dispose; PlayerAiRuntime.cs:Unregister — respawn must release the old actor and controller binding.
+        protected override void OnEntityRemoved()
+        {
+            Release();
+            base.OnEntityRemoved();
+        }
+
+        public override void Dispose()
+        {
+            Release();
+            base.Dispose();
         }
 
         private AiActor EnsureActor()

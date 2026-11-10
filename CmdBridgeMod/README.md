@@ -1,5 +1,12 @@
 # CmdBridgeMod 
 
+## 0.2.1.0 迁移状态（2026-11-11）
+
+当前工程使用 .NET SDK 10 / net10.0，正式 CNB NuGet 精确 `[0.2.1.0]`，清单 APIVersion=0.2.1.0；自身版本与 IsMergeLib=true 保持。本文后续的历史编译、自检数字不代表本轮结果。本轮尚待主会话串行 restore、Release 编译/混淆、包检查及真实游戏宿主验收；不新增独立测试工程。
+
+详见 [本轮迁移记录](doc/migration-021.md)。
+
+
 A player-robot bridge for Survivalcraft 2 (SuAPI). It exposes the game to a local
 command-line client / AI so the game can be *played* through the **player controller**
 — never through state cheats.
@@ -24,12 +31,12 @@ playing normally while the bridge drives the same character.
 Build and pack with the repository tooling, then drop the `.scmod` into the game's `Mods/`:
 
 ```bash
-dotnet build Mod/CmdBridgeMod/CmdBridgeMod.csproj -c Release --framework net8.0
-# assembly: bin/Release/net8.0/Obfuscar/CmdBridgeMod.dll  (Release runs Obfuscar via PostBuild)
+dotnet build Mod/CmdBridgeMod/CmdBridgeMod.csproj -c Release --framework net10.0
+# assembly: bin/Release/net10.0/Obfuscar/CmdBridgeMod.dll  (Release runs the ObfuscateMod target)
 # package : root ModInfo.xml + flat Lib/CmdBridgeMod.dll, ZIP entries written with forward slashes
 ```
 
-`IsMergeLib=true`, single `net8.0` assembly at `Lib/CmdBridgeMod.dll` (Windows and Android
+`IsMergeLib=true`, single `net10.0` assembly at `Lib/CmdBridgeMod.dll` (Windows and Android
 share the same DLL). The optional C# client lives in `../CmdBridgeClient/`.
 
 > The former `Mod/Packages/pack_cmd_bridge.py` helper is not part of this checkout; pack the two
@@ -62,6 +69,16 @@ discoverable; the config file itself is never rewritten.
 file behind — clients must validate its `pid` against the live process (the bundled `sccmd` does).
 
 ## How the injection works
+
+The bridge remains a global service; it does not register a `ScreenExtension` or replace a
+native update host. `Frame.Update` observes completed UI input and signals the next frame-start
+pump. The independent `CursorSoftGuard` stays at order -11, immediately before `ComponentInput`.
+Moving these operations into a screen lifecycle would change their required timing.
+
+The frame service also runs when the TCP listener is disabled, so dependent Mods can still use
+the input facade. Unload removes only this Mod's event subscription and cursor guard, invalidates
+queued frame-start batches, stops late input producers, and restores natural input state.
+
 
 All commands run on the **game thread at the start of the next frame**, using
 `Dispatcher.Dispatch` from the background server thread. That is the only seam where a
@@ -168,7 +185,7 @@ and `Project` has no component-add API either (`Project.cs` only exposes `Create
 
 ### 1. The packaged DLL must come from `Obfuscar/`, not from the plain `bin` folder
 
-`CmdBridgeMod.csproj` runs Obfuscar as a `PostBuild` target:
+`CmdBridgeMod.csproj` runs Obfuscar after a successful Release build:
 
 ```
 InPath  = $(TargetDir)
@@ -439,3 +456,7 @@ Hotbar
 引擎内 UI 点击（注入前二次校验、不可跳级）、文本输入、世界内固定坐标线框（`box.*`，纯内存、
 DrawOrder 2001，与其他 Mod 的绘制互不干涉）。
 设计与全部实测记录见 `../doc/cmd-bridge-plan.md`。
+
+Core dependencies are exact NuGet references to `[0.2.0.0]` (SDK 10, `net10.0`).
+The Release-only `ObfuscateMod` target resolves dependencies from MSBuild's package assets
+in `obj/Release/net10.0/ObfuscarDependencies` and processes only the Mod's own DLL.

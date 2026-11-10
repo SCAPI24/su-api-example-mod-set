@@ -12,7 +12,7 @@ namespace PlayerAiMod
     ///
     /// 两件事：
     ///   1. <c>GameDatabase.GameDatabase</c>：注册 <see cref="PlayerAiComponent"/> 的组件模板
-    ///      （与 Mod/WatchMod/Plug/WatchMod.cs 同一套写法）。
+    ///      （新增本 Mod 独立组件，不替换原生玩家组件）。
     ///   2. <c>Frame.Update</c>：帧末把 AI tick 排到"下一帧帧首"（见 PlayerAiRuntime 的时序说明）。
     ///
     /// 本 Mod 不替换任何 Subsystem/Component/Parameter，不注册 Injector，不碰渲染与帧率，
@@ -32,7 +32,7 @@ namespace PlayerAiMod
         private static readonly Guid MemberComponentTemplateGuid =
             new Guid("6BA88EDF-CE95-4F46-9081-87D9C588B827");
 
-        // Source: Mod/WatchMod/Plug/WatchMod.cs:38 —— 继承引擎已有的 ComponentTemplate 基模板。
+        // Source: Pak/Database.xml:ComponentTemplate —— 继承引擎已有的 ComponentTemplate 基模板。
         private static readonly Guid BaseComponentTemplateGuid =
             new Guid("b05700ed-7e4e-4679-98f5-b597f421496b");
 

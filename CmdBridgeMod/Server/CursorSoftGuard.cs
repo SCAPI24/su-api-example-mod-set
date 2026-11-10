@@ -22,6 +22,7 @@ namespace CmdBridgeMod
     internal sealed class CursorSoftGuard : IUpdateable
     {
         private readonly InputInjector m_injector;
+        private bool m_active = true;
 
         public CursorSoftGuard(InputInjector injector)
         {
@@ -30,8 +31,12 @@ namespace CmdBridgeMod
 
         public UpdateOrder UpdateOrder => (UpdateOrder)((int)UpdateOrder.Input - 1);
 
+        // Source: SubsystemUpdate.cs:SubsystemUpdate.RemoveUpdateable — removal applies next substep.
+        public void Stop() => m_active = false;
+
         public void Update(float dt)
         {
+            if (!m_active) return;
             m_injector?.Focus?.ApplyUnfocusedSoftCursor();
             // 同一时刻（order -11，紧贴 ComponentInput(-10) 之前）顺带做输入阶段注入：
             // 「事件记录到一次空格、而引擎的边沿却不存在」时恢复引擎边沿，让原版输入层自己读走。

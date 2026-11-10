@@ -9,25 +9,15 @@
 
   <ItemGroup>
     <!--
-      `Tests/` 是**独立**的控制台自检工程（`Tests/UiSplitView.Tests.csproj`）：它用
-      `<Compile Include="..\Server\UiSplitView.cs" />` 直接编同一份源码，所以这里必须把
-      整个测试目录排除在 Mod 程序集之外 —— 否则 `Tests/Program.cs`（含它自己的 Main）
-      会被打进 `CmdBridgeMod.dll`，而且 `Tests/obj/**` 里自动生成的 AssemblyInfo 会与 Mod 的重复。
-    -->
-    <Compile Remove="Tests/**/*.cs" />
-  </ItemGroup>
-
-  <ItemGroup>
-    <!--
       CM-2：共控合并需要读**真实**设备状态（OpenTK 的全局键盘/鼠标快照）。
       OpenTK 改为**纯反射**访问（Server/OpenTkInput.cs）：Android 端不部署 OpenTK，
       任何以它的类型声明的字段/参数都会让 Mod 在加载时失败（实测），因此这里不再
       引用该程序集，桌面端行为不变。
     -->
-    <PackageReference Include="Engine" Version="0.1.7.0" />
-    <PackageReference Include="EntitySystem" Version="0.1.7.0" />
-    <PackageReference Include="Survivalcraft" Version="0.1.7.0" />
-    <PackageReference Include="SuAPICore" Version="0.1.7.0" />
+    <PackageReference Include="Engine" Version="[0.2.1.0]" />
+    <PackageReference Include="EntitySystem" Version="[0.2.1.0]" />
+    <PackageReference Include="Survivalcraft" Version="[0.2.1.0]" />
+    <PackageReference Include="SuAPICore" Version="[0.2.1.0]" />
   </ItemGroup>
 
   <ItemGroup>
@@ -37,32 +27,24 @@
     </PackageReference>
   </ItemGroup>
 
-  <Target Name="PostBuild" AfterTargets="PostBuildEvent">
+  <Target Name="ObfuscateMod" AfterTargets="Build" Condition="'$(Configuration)' == 'Release'">
     <PropertyGroup>
       <_ObfuscarConfig>$(MSBuildProjectDirectory)\$(IntermediateOutputPath)Obfuscar.xml</_ObfuscarConfig>
+      <_ObfuscarDependencies>$(MSBuildProjectDirectory)\$(IntermediateOutputPath)ObfuscarDependencies</_ObfuscarDependencies>
       <_ObfuscarOutput>$(TargetDir)Obfuscar</_ObfuscarOutput>
     </PropertyGroup>
+    <!-- Source: ResolveAssemblyReferences:ReferencePath — use resolved package assets, never a cache-version path. -->
+    <ItemGroup>
+      <_ObfuscarDependency Include="@(ReferencePath)" Condition="'%(ReferencePath.NuGetPackageId)' != ''" />
+    </ItemGroup>
+    <RemoveDir Directories="$(_ObfuscarDependencies);$(_ObfuscarOutput)" />
+    <MakeDir Directories="$(_ObfuscarDependencies)" />
+    <Copy SourceFiles="@(_ObfuscarDependency)" DestinationFolder="$(_ObfuscarDependencies)" />
     <Copy SourceFiles="Obfuscar.xml" DestinationFiles="$(_ObfuscarConfig)" />
-    <XmlPoke XmlInputPath="$(_ObfuscarConfig)"
-             Query="/Obfuscator/Var[@name='InPath']/@value"
-             Value="$(TargetDir)" />
-    <XmlPoke XmlInputPath="$(_ObfuscarConfig)"
-             Query="/Obfuscator/Var[@name='OutPath']/@value"
-             Value="$(_ObfuscarOutput)" />
-    <!-- 依赖来自 NuGet 包、默认不进输出目录，但 Obfuscar 需要从 $(InPath) 解析它们
-         （只是解析，不混淆）。所以在混淆前把依赖复制进输出目录，混淆完再删掉，
-         这样输出目录保持干净（只留 mod 自己的 DLL），也不必退回 ProjectReference。 -->
-    <ItemGroup>
-      <_ObfuscarDependency Include="$(NuGetPackageRoot)engine/0.1.7/lib/net10.0/Engine.dll" />
-      <_ObfuscarDependency Include="$(NuGetPackageRoot)entitysystem/0.1.7/lib/net10.0/EntitySystem.dll" />
-      <_ObfuscarDependency Include="$(NuGetPackageRoot)survivalcraft/0.1.7/lib/net10.0/Survivalcraft.dll" />
-    </ItemGroup>
-    <Copy SourceFiles="@(_ObfuscarDependency)" DestinationFolder="$(TargetDir)" SkipUnchangedFiles="true" />
+    <XmlPoke XmlInputPath="$(_ObfuscarConfig)" Query="/Obfuscator/Var[@name='InPath']/@value" Value="$(TargetDir)" />
+    <XmlPoke XmlInputPath="$(_ObfuscarConfig)" Query="/Obfuscator/Var[@name='OutPath']/@value" Value="$(_ObfuscarOutput)" />
+    <XmlPoke XmlInputPath="$(_ObfuscarConfig)" Query="/Obfuscator/AssemblySearchPath/@path" Value="$(_ObfuscarDependencies)" />
     <Exec Command="&quot;$(Obfuscar)&quot; &quot;$(_ObfuscarConfig)&quot;" />
-    <!-- 混淆完把只为解析而复制进来的依赖删掉，输出目录只留 mod 自己的程序集。 -->
-    <ItemGroup>
-      <_ObfuscarCopiedDependency Include="$(TargetDir)Engine.dll;$(TargetDir)EntitySystem.dll;$(TargetDir)Survivalcraft.dll" />
-    </ItemGroup>
-    <Delete Files="@(_ObfuscarCopiedDependency)" ContinueOnError="true" />
+    <Error Condition="!Exists('$(_ObfuscarOutput)\$(TargetFileName)')" Text="Release obfuscation did not produce $(TargetFileName)." />
   </Target>
 </Project>

@@ -152,8 +152,6 @@ namespace SuUndergroundWorld.Core
         private int m_rockIndex;
         private int m_bedrockIndex;
         private int m_waterIndex;
-        private bool m_bindFailed;
-        private int m_bindAttempts;
 
         /// <summary>需要做流体连通的列（地表井口与下界同列）。</summary>
         private readonly List<Point2> m_crossColumns = new List<Point2>();
@@ -260,41 +258,22 @@ namespace SuUndergroundWorld.Core
             {
                 return true;
             }
-            if (m_bindFailed && m_project == project)
-            {
-                return false;
-            }
             if (m_project != null)
             {
                 Shutdown();
             }
 
+            // Source: UpdateExtension.Attached — this runs after the Project and block table completed loading.
             if (!SuTerrainBinding.IsValid)
-            {
-                m_bindFailed = true;
-                m_project = project;
-                Log.Error("[SuUndergroundWorld] 反射绑定 SubsystemTerrain 失败，缺少字段：{0}", SuTerrainBinding.DescribeMissing());
-                return false;
-            }
-
-            SubsystemTerrain terrain = project.FindSubsystem<SubsystemTerrain>(false);
-            SubsystemGameInfo gameInfo = project.FindSubsystem<SubsystemGameInfo>(false);
-            if (terrain == null || gameInfo == null)
-            {
-                return false;   // 世界还在加载，下一帧再试
-            }
-
-            int rock = FindBlockIndex("GraniteBlock", "CobblestoneBlock", "LimestoneBlock");
-            int bedrock = FindBlockIndex("BedrockBlock");
-            if (rock < 0 || bedrock < 0)
-            {
-                m_bindAttempts++;
-                if (m_bindAttempts <= 3)
-                {
-                    Log.Warning("[SuUndergroundWorld] 方块表尚未就绪（rock={0} bedrock={1}），稍后重试", rock, bedrock);
-                }
-                return false;
-            }
+                throw new InvalidOperationException("[SuUndergroundWorld] Missing exact terrain fields: " + SuTerrainBinding.DescribeMissing());
+            SubsystemTerrain terrain = project.FindSubsystem<SubsystemTerrain>(true);
+            SubsystemGameInfo gameInfo = project.FindSubsystem<SubsystemGameInfo>(true);
+            if (terrain.Terrain == null || terrain.TerrainUpdater == null || terrain.TerrainRenderer == null)
+                throw new InvalidOperationException("[SuUndergroundWorld] The real Terrain host has not completed loading.");
+            int rock = GraniteBlock.Index;
+            int bedrock = BedrockBlock.Index;
+            if (!(BlocksManager.Blocks[rock] is GraniteBlock) || !(BlocksManager.Blocks[bedrock] is BedrockBlock))
+                throw new InvalidOperationException("[SuUndergroundWorld] Required granite/bedrock block contracts were replaced incompatibly.");
 
             m_project = project;
             m_terrain = terrain;
@@ -307,7 +286,7 @@ namespace SuUndergroundWorld.Core
 
             m_rockIndex = rock;
             m_bedrockIndex = bedrock;
-            m_waterIndex = FindBlockIndex("WaterBlock");
+            m_waterIndex = WaterBlock.Index;
 
             // 掉落物 / 移动方块：引擎把它们的列表放在子系统私有字段里，用反射直接搬（不新增引擎改动）
             m_waterBehavior = project.FindSubsystem<SubsystemWaterBlockBehavior>(false);
@@ -323,7 +302,6 @@ namespace SuUndergroundWorld.Core
                 terrain, project, gameInfo.DirectoryName, CreateDeepWorldGenerator(terrain, gameInfo));
 
             m_initialized = true;
-            m_bindFailed = false;
             Log.Information("[SuUndergroundWorld] 双世界已就绪：地表=Regions/（种子 {0}），下界=Regions1/（真世界生成器，种子 {1}）",
                 gameInfo.WorldSeed, gameInfo.WorldSeed + DeepSeedOffset);
 
@@ -351,14 +329,14 @@ namespace SuUndergroundWorld.Core
         private static ITerrainContentsGenerator CreateDeepWorldGenerator(SubsystemTerrain terrain, SubsystemGameInfo gameInfo)
         {
             ITerrainContentsGenerator surfaceGenerator = terrain.TerrainContentsGenerator;
-            Type generatorType = surfaceGenerator != null ? surfaceGenerator.GetType() : typeof(TerrainContentsGenerator23);
+            if (surfaceGenerator == null) throw new InvalidOperationException("[SuUndergroundWorld] The surface world has no terrain generator.");
+            Type generatorType = surfaceGenerator.GetType();
 
             FieldInfo seedField = typeof(SubsystemGameInfo).GetField(
                 "<WorldSeed>k__BackingField", BindingFlags.Instance | BindingFlags.NonPublic);
             if (seedField == null)
             {
-                Log.Warning("[SuUndergroundWorld] 拿不到 WorldSeed 字段，下界将使用与地表相同的种子");
-                return (ITerrainContentsGenerator)Activator.CreateInstance(generatorType, terrain);
+                throw new InvalidOperationException("[SuUndergroundWorld] The required WorldSeed backing field is missing; cannot create the specified deep-world seed.");
             }
 
             object original = seedField.GetValue(gameInfo);
@@ -375,32 +353,6 @@ namespace SuUndergroundWorld.Core
             Log.Information("[SuUndergroundWorld] 下界生成器 = {0}，种子 = 地表({1}) + {2} = {3}",
                 generatorType.Name, original, DeepSeedOffset, (int)original + DeepSeedOffset);
             return generator;
-        }
-
-        private static int FindBlockIndex(params string[] typeNames)
-        {
-            Block[] blocks = BlocksManager.Blocks;
-            if (blocks == null)
-            {
-                return -1;
-            }
-            for (int i = 0; i < blocks.Length; i++)
-            {
-                Block block = blocks[i];
-                if (block == null)
-                {
-                    continue;
-                }
-                string name = block.GetType().Name;
-                for (int k = 0; k < typeNames.Length; k++)
-                {
-                    if (name == typeNames[k])
-                    {
-                        return i;
-                    }
-                }
-            }
-            return -1;
         }
 
         // ───────────────────────── 每帧（UpdateOrder=99） ─────────────────────────
@@ -2252,6 +2204,8 @@ namespace SuUndergroundWorld.Core
             {
                 if (m_initialized)
                 {
+                    // Source: GameManager.DisposeProject; save before restoring the surface pipeline and clearing player ownership.
+                    SavePlayerPositions();
                     // ⚠️ 关键：先把 SubsystemTerrain 的 6 个字段切回**地表**世界再收尾。
                     // 否则 Project.Dispose() 会去 dispose 已经属于 mod 的下界对象（重复 dispose / 渲染与
                     // GL 资源被提前释放）→ 退出世界后黑屏。
@@ -2296,7 +2250,6 @@ namespace SuUndergroundWorld.Core
             m_loggedSurfaceBlocked = false;
             m_fluidBridgeCounter = 0;
             m_crossColumns.Clear();
-            SavePlayerPositions();
             m_mirroredFluid.Clear();
             m_wokenFluid.Clear();
             m_sourcePlugged.Clear();
@@ -2323,8 +2276,6 @@ namespace SuUndergroundWorld.Core
             m_waiting = false;
             m_waitBody = null;
             m_deepActive = false;
-            m_bindFailed = false;
-            m_bindAttempts = 0;
         }
     }
 }

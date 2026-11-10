@@ -7,20 +7,23 @@
     <Nullable>disable</Nullable>
   </PropertyGroup>
 
+  <PropertyGroup>
+    <!-- Source: CmdBridgeMod.csproj:ObfuscateMod — consume an existing Release API assembly without recursive builds. -->
+    <CmdBridgeAssemblyPath Condition="'$(CmdBridgeAssemblyPath)' == ''">$(MSBuildThisFileDirectory)..\CmdBridgeMod\bin\Release\net10.0\CmdBridgeMod.dll</CmdBridgeAssemblyPath>
+  </PropertyGroup>
   <ItemGroup>
-    <ProjectReference Include="..\..\Engine\Engine\Engine.csproj" />
-    <ProjectReference Include="..\..\EntitySystem\EntitySystem.csproj" />
-    <ProjectReference Include="..\..\Survivalcraft\Survivalcraft.csproj" />
-    <!--
-      mod 依赖：复用 CmdBridgeMod 的玩家控制器注入器（公开门面 CmdBridgeMod.CmdBridgeInput）。
-      两个 Mod 各自打包成独立 scmod 放进 Mods/，由加载器各自加载 —— 不做库合并，
-      所以这里 Private=false：本 Mod 的输出与包里不带 CmdBridgeMod.dll；
-      运行期由 ModLoader 依据 ModInfo 的依赖声明做拓扑排序，保证 CmdBridgeMod 先加载。
-    -->
-    <ProjectReference Include="..\CmdBridgeMod\CmdBridgeMod.csproj">
+    <PackageReference Include="Engine" Version="[0.2.1.0]" />
+    <PackageReference Include="EntitySystem" Version="[0.2.1.0]" />
+    <PackageReference Include="Survivalcraft" Version="[0.2.1.0]" />
+    <!-- Source: Actor/CmdBridgeActuator.cs:FacadeOrNull — functional dependency, not a shared-host conflict. -->
+    <Reference Include="CmdBridgeMod">
+      <HintPath>$(CmdBridgeAssemblyPath)</HintPath>
       <Private>false</Private>
-    </ProjectReference>
+    </Reference>
   </ItemGroup>
+  <Target Name="RequireCmdBridgeAssembly" BeforeTargets="ResolveAssemblyReferences">
+    <Error Condition="!Exists('$(CmdBridgeAssemblyPath)')" Text="Build CmdBridgeMod Release first or set CmdBridgeAssemblyPath to its current API DLL; PlayerAi never rebuilds CmdBridge or the engine." />
+  </Target>
 
   <ItemGroup>
     <PackageReference Include="Obfuscar" Version="2.2.49">
@@ -29,18 +32,24 @@
     </PackageReference>
   </ItemGroup>
 
-  <Target Name="PostBuild" AfterTargets="PostBuildEvent">
+  <Target Name="ObfuscateMod" AfterTargets="Build" Condition="'$(Configuration)' == 'Release'">
     <PropertyGroup>
       <_ObfuscarConfig>$(MSBuildProjectDirectory)\$(IntermediateOutputPath)Obfuscar.xml</_ObfuscarConfig>
+      <_ObfuscarDependencies>$(MSBuildProjectDirectory)\$(IntermediateOutputPath)ObfuscarDependencies</_ObfuscarDependencies>
       <_ObfuscarOutput>$(TargetDir)Obfuscar</_ObfuscarOutput>
     </PropertyGroup>
+    <!-- Source: ResolveAssemblyReferences:ReferencePath — use resolved package assets, never a cache-version path. -->
+    <ItemGroup>
+      <_ObfuscarDependency Include="@(ReferencePath)"  />
+    </ItemGroup>
+    <RemoveDir Directories="$(_ObfuscarDependencies);$(_ObfuscarOutput)" />
+    <MakeDir Directories="$(_ObfuscarDependencies)" />
+    <Copy SourceFiles="@(_ObfuscarDependency)" DestinationFolder="$(_ObfuscarDependencies)" />
     <Copy SourceFiles="Obfuscar.xml" DestinationFiles="$(_ObfuscarConfig)" />
-    <XmlPoke XmlInputPath="$(_ObfuscarConfig)"
-             Query="/Obfuscator/Var[@name='InPath']/@value"
-             Value="$(TargetDir)" />
-    <XmlPoke XmlInputPath="$(_ObfuscarConfig)"
-             Query="/Obfuscator/Var[@name='OutPath']/@value"
-             Value="$(_ObfuscarOutput)" />
+    <XmlPoke XmlInputPath="$(_ObfuscarConfig)" Query="/Obfuscator/Var[@name='InPath']/@value" Value="$(TargetDir)" />
+    <XmlPoke XmlInputPath="$(_ObfuscarConfig)" Query="/Obfuscator/Var[@name='OutPath']/@value" Value="$(_ObfuscarOutput)" />
+    <XmlPoke XmlInputPath="$(_ObfuscarConfig)" Query="/Obfuscator/AssemblySearchPath/@path" Value="$(_ObfuscarDependencies)" />
     <Exec Command="&quot;$(Obfuscar)&quot; &quot;$(_ObfuscarConfig)&quot;" />
+    <Error Condition="!Exists('$(_ObfuscarOutput)\$(TargetFileName)')" Text="Release obfuscation did not produce $(TargetFileName)." />
   </Target>
 </Project>

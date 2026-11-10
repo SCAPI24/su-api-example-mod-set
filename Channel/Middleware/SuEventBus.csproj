@@ -1,0 +1,20 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>disable</ImplicitUsings>
+    <Nullable>disable</Nullable>
+    <AssemblyName>SuEventBus</AssemblyName>
+    <RootNamespace>SuEventBus</RootNamespace>
+    <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
+  </PropertyGroup>
+  <!-- Source: SuEventBus/Func/SuEventHub.cs and SuEvents.cs: existing shared typed protocol.
+       Build its unchanged sources against the same published framework as Channel.
+       The original middleware project and all other Mods remain untouched. -->
+  <ItemGroup>
+    <Compile Include="..\..\SuEventBus\Func\SuEventHub.cs" Link="SuEventHub.cs" />
+    <Compile Include="..\..\SuEventBus\Func\SuEvents.cs" Link="SuEvents.cs" />
+    <PackageReference Include="Engine" Version="[0.2.1.0]" />
+    <PackageReference Include="EntitySystem" Version="[0.2.1.0]" />
+    <PackageReference Include="Survivalcraft" Version="[0.2.1.0]" />
+  </ItemGroup>
+</Project>

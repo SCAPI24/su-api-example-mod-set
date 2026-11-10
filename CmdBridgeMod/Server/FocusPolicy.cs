@@ -411,6 +411,19 @@ namespace CmdBridgeMod
             }
         }
 
+        // Source: SubsystemUpdate.cs:SubsystemUpdate.RemoveUpdateable; CmdBridgeMod.cs:CmdBridgeMod.OnUnload
+        internal void DetachCursorGuard()
+        {
+            CursorSoftGuard guard = m_cursorGuard;
+            GameEntitySystem.Project project = m_cursorGuardProject;
+            m_cursorGuard = null;
+            m_cursorGuardProject = null;
+            if (guard == null) return;
+            guard.Stop();
+            if (project != null)
+                project.FindSubsystem<Game.SubsystemUpdate>(true).RemoveUpdateable(guard);
+        }
+
         /// <summary>
         /// 真失焦时把"世界内/界面"输入面切到**软光标**，绝不碰真实鼠标。
         ///

@@ -17,8 +17,8 @@ namespace PlayerAiMod
     ///         → 帧体（含各 Component.Update、Program 触发 Frame.Update）→ AfterFrameAll()
     /// Keyboard/Mouse 的 downOnce 数组在帧末被清空。
     /// </code>
-    /// 所以插件在帧末的 <c>Frame.Update</c> 里 <c>Dispatcher.Dispatch</c>，真正的 tick 会在
-    /// 下一帧 <c>Dispatcher.BeforeFrame()</c> 执行 —— 位置早于输入设备读取与整个帧体，语义与真人输入一致。
+    /// 插件在帧末通过 CmdBridgeMod 的后台帧首泵排队，真正的 tick 在下一帧
+    /// Dispatcher.BeforeFrame 执行；不能直接在主线程 Dispatch，否则会立即落在帧末。
     ///
     /// Source: Engine/Engine/Window.cs:464 BeforeFrameAll / Engine/Engine/Dispatcher.cs
     /// Source: Survivalcraft/Game/Program.cs:147 TriggerEvent("Frame.Update")（帧末触发）
@@ -29,6 +29,7 @@ namespace PlayerAiMod
         private readonly List<AiActor> m_scratch = new List<AiActor>();
         private bool m_tickScheduled;
         private bool m_loggedPumpPath;
+        private bool m_reportedPumpFailure;
 
         /// <summary>当前 Mod 实例的运行时（未加载时为 null）。</summary>
         public static PlayerAiRuntime Instance { get; set; }
@@ -1281,19 +1282,13 @@ namespace PlayerAiMod
             if (TryScheduleOnBridgePump(frameDuration))
                 return;
 
-            // 退化路径：没有 CmdBridgeMod（或帧首泵不可用）时，仍按原来的方式排一次。
-            // 注意此时 tick 实际落在帧末，脉冲式输入无效，但按住类输入（移动/视角）依然可用。
-            if (!IsDispatcherReady())
+            // Source: CmdBridgeInput.cs:PostToFrameStart; Dispatcher.cs:Dispatch — main-thread Dispatch cannot preserve input-pulse timing.
+            m_tickScheduled = false;
+            if (!m_reportedPumpFailure)
             {
-                m_tickScheduled = false;
-                return;
+                m_reportedPumpFailure = true;
+                Log.Error("[PlayerAi] AI tick rejected: required CmdBridgeMod frame-start input facade is unavailable; no frame-end tick was executed.");
             }
-
-            Dispatcher.Dispatch(delegate
-            {
-                m_tickScheduled = false;
-                TickFrameStart(ConsumeRealDelta(frameDuration));
-            });
         }
 
         /// <summary>
@@ -1342,18 +1337,21 @@ namespace PlayerAiMod
             {
                 CmdBridgeMod.CmdBridgeMod bridge = CmdBridgeMod.CmdBridgeMod.Instance;
                 CmdBridgeMod.CmdBridgeInput input = bridge != null ? bridge.Input : null;
-                if (input == null || !input.IsAvailable || !input.FrameStartPumpRunning)
+                if (input == null || !input.IsAvailable)
                     return false;
 
                 bool posted = input.PostToFrameStart(delegate
                 {
                     m_tickScheduled = false;
+                    // Source: PlayerAiMod.cs:OnUnload — queued callbacks must not revive an unloaded runtime.
+                    if (!ReferenceEquals(Instance, this)) return;
                     TickFrameStart(ConsumeRealDelta(frameDuration));
                 });
 
                 if (!posted)
                     return false;
 
+                m_reportedPumpFailure = false;
                 if (!m_loggedPumpPath)
                 {
                     m_loggedPumpPath = true;
@@ -1364,7 +1362,7 @@ namespace PlayerAiMod
             }
             catch (Exception exception)
             {
-                Log.Warning("[PlayerAi] frame-start pump unavailable, falling back: " + exception.Message);
+                Log.Error("[PlayerAi] required frame-start scheduling failed: " + exception);
                 return false;
             }
         }

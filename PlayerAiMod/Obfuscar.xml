@@ -1,9 +1,13 @@
 <?xml version="1.0"?>
 <Obfuscator>
-  <Var name="InPath" value=".\bin\Debug\net8.0" />
-  <Var name="OutPath" value=".\bin\Debug\net8.0\Obfuscar" />
+  <Var name="InPath" value=".\bin\Release\net10.0" />
+  <Var name="OutPath" value=".\bin\Release\net10.0\Obfuscar" />
   <Var name="SkipExtraDependencies" value="true" />
-  <!-- Component 等基类在 EntitySystem.dll 里，必须与本体一起混淆，否则继承关系会被改名破坏 -->
-  <Module file="$(InPath)\EntitySystem.dll" />
-  <Module file="$(InPath)\PlayerAiMod.dll" />
+  <Var name="KeepPublicApi" value="true" />
+  <AssemblySearchPath path=".\obj\Release\net10.0\ObfuscarDependencies" />
+  <!-- Source: Plug/PlayerAiMod.cs:RegisterComponentTemplate — only this Mod is transformed; retain its named component. -->
+  <Module file="$(InPath)\PlayerAiMod.dll">
+    <SkipType name="PlayerAiMod.PlayerAiMod" />
+    <SkipType name="PlayerAiMod.PlayerAiComponent" />
+  </Module>
 </Obfuscator>
