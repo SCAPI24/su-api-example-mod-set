@@ -64,6 +64,17 @@ public sealed class ShadowsMod : IMod
             NestingParent = subsystem
         };
 
+        // Source: Project.cs:Project.LoadSubsystem; SubsystemTerrain.cs:SubsystemTerrain.Load
+        // TerrainRenderer is created during Terrain.Load, before our terrain shader setup.
+        new DatabaseObject(
+            parameterType,
+            new Guid("4fd3b33d-6f85-4a66-ae5f-62a3c6750a1c"),
+            "Dependencies",
+            "Terrain")
+        {
+            NestingParent = subsystem
+        };
+
         DatabaseObject member = new DatabaseObject(
             memberType,
             new Guid("063fdd1a-c90f-59ab-b12e-177422df74dd"),

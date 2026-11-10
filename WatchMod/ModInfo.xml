@@ -7,7 +7,7 @@
             <Text lang="zh_CN">手表</Text>
         </LocalizedName>
         <Version>1.0.1</Version>
-        <APIVersion>0.1.6.0</APIVersion>
+        <APIVersion>0.2.0.0</APIVersion>
         <Asset>
             <ContentRoot>Content</ContentRoot>
         </Asset>

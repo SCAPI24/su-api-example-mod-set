@@ -17,6 +17,8 @@ uniform vec3 u_fogBottomTopDensity;
 uniform vec2 u_hazeStartDensity;
 uniform vec2 u_shadowOrigin;
 uniform mat4 u_shadowMatrix;
+uniform mat4 u_nearDynamicShadowMatrix;
+uniform vec2 u_nearDynamicShadowOrigin;
 uniform float u_fogShadowFactor;
 
 attribute vec3 a_position;
@@ -27,6 +29,7 @@ varying vec4 v_color;
 varying vec2 v_texcoord;
 varying float v_fog;
 varying vec4 v_shadowPosition;
+varying vec4 v_nearDynamicShadowPosition;
 varying vec3 v_worldPosition;
 varying float v_celestialShadowVisibility;
 
@@ -61,6 +64,12 @@ void main()
         a_position.y,
         a_position.z - u_shadowOrigin.y,
         1.0);
+    // Source: ModelShadowRenderer.cs:Draw — near casters use a separate world-origin projection.
+    v_nearDynamicShadowPosition = u_nearDynamicShadowMatrix * vec4(
+        a_position.x - u_nearDynamicShadowOrigin.x,
+        a_position.y,
+        a_position.z - u_nearDynamicShadowOrigin.y,
+        1.0);
     v_worldPosition = a_position;
     // Source: SubsystemSky.ViewFogBottom/ViewFogTop; fog blocks celestial shadows below its
     // layer, fades through the layer and leaves terrain above it unaffected.
@@ -82,6 +91,9 @@ void main()
 // <Sampler Name='u_samplerState' Texture='u_texture' />
 // <Sampler Name='u_shadowSamplerState' Texture='u_shadowTexture' />
 // <Sampler Name='u_pointShadowSamplerState' Texture='u_pointShadowTexture' />
+// <Sampler Name='u_dynamicShadowSamplerState' Texture='u_dynamicShadowTexture' />
+// <Sampler Name='u_nearDynamicShadowSamplerState' Texture='u_nearDynamicShadowTexture' />
+// <Sampler Name='u_pointDynamicShadowSamplerState' Texture='u_pointDynamicShadowTexture' />
 
 #ifdef GL_ES
 precision highp float;
@@ -90,6 +102,13 @@ precision highp float;
 uniform sampler2D u_texture;
 uniform sampler2D u_shadowTexture;
 uniform sampler2D u_pointShadowTexture;
+uniform sampler2D u_dynamicShadowTexture;
+uniform sampler2D u_nearDynamicShadowTexture;
+uniform sampler2D u_pointDynamicShadowTexture;
+uniform float u_dynamicShadowEnabled;
+uniform float u_nearDynamicShadowEnabled;
+uniform vec2 u_dynamicShadowTexelSize;
+uniform vec2 u_nearDynamicShadowTexelSize;
 uniform vec3 u_fogColor;
 uniform float u_shadowEnabled;
 uniform float u_shadowStrength;
@@ -101,6 +120,8 @@ uniform vec2 u_pointShadowOrigins[10];
 uniform vec4 u_pointShadowLightPositionRadius[10];
 uniform vec4 u_pointShadowLightDirectionStrength[10];
 uniform vec2 u_pointShadowTexelSize;
+uniform vec2 u_pointDynamicShadowTexelSize;
+uniform vec2 u_pointShadowValid[10];
 #ifdef ALPHATESTED
 uniform float u_alphaThreshold;
 #endif
@@ -109,6 +130,7 @@ varying vec4 v_color;
 varying vec2 v_texcoord;
 varying float v_fog;
 varying vec4 v_shadowPosition;
+varying vec4 v_nearDynamicShadowPosition;
 varying vec3 v_worldPosition;
 varying float v_celestialShadowVisibility;
 
@@ -117,39 +139,89 @@ float unpackDepth(vec4 packedDepth)
     return min(packedDepth.r + packedDepth.g / 255.0, 1.0);
 }
 
+// Source: ModelDepthShader.Pixel — compare each point-filtered depth before interpolating coverage.
+// Filtering packed depth itself creates false intermediate occluders at model silhouettes.
+float modelShadowPCF(sampler2D shadowTexture, vec2 uv, vec2 texelSize, float receiverDepth)
+{
+    vec2 pixel = uv / texelSize - vec2(0.5);
+    vec2 weight = fract(pixel);
+    vec2 baseUV = (floor(pixel) + vec2(0.5)) * texelSize;
+    float a = step(receiverDepth, unpackDepth(texture2D(shadowTexture, baseUV)));
+    float b = step(receiverDepth, unpackDepth(texture2D(shadowTexture, baseUV + vec2(texelSize.x, 0.0))));
+    float c = step(receiverDepth, unpackDepth(texture2D(shadowTexture, baseUV + vec2(0.0, texelSize.y))));
+    float d = step(receiverDepth, unpackDepth(texture2D(shadowTexture, baseUV + texelSize)));
+    return 1.0 - mix(mix(a, b, weight.x), mix(c, d, weight.x), weight.y);
+}
+
+float shadowEdge(vec2 uv)
+{
+    return min(min(uv.x, 1.0 - uv.x), min(uv.y, 1.0 - uv.y));
+}
+
 float sampleShadow()
 {
-    if (u_shadowEnabled < 0.5)
-        return 0.0;
     vec3 shadow = v_shadowPosition.xyz / v_shadowPosition.w;
     vec2 uv = vec2(0.5 + 0.5 * shadow.x, 0.5 - 0.5 * shadow.y);
-    float edge = min(min(uv.x, 1.0 - uv.x), min(uv.y, 1.0 - uv.y));
-    if (edge <= 0.0 || shadow.z <= 0.0 || shadow.z >= 1.0)
-        return 0.0;
+    float edge = shadowEdge(uv);
+    bool farInRange = edge > 0.0 && shadow.z > 0.0 && shadow.z < 1.0;
+    float staticAmount = 0.0;
+    if (u_shadowEnabled > 0.5 && farInRange)
+    {
+        // Source: SubsystemDynamicShadows.SunShadows.cs:UpdateTerrainShadowMap — 0.0003 is about 18 cm along the 599 m depth span.
+        float receiverDepth = shadow.z - 0.0003;
+        vec2 offset = 0.75 * u_shadowTexelSize;
+        float lit = 0.0;
+        lit += step(receiverDepth, unpackDepth(texture2D(
+            u_shadowTexture, uv + vec2(-offset.x, -offset.y))));
+        lit += step(receiverDepth, unpackDepth(texture2D(
+            u_shadowTexture, uv + vec2(offset.x, -offset.y))));
+        lit += step(receiverDepth, unpackDepth(texture2D(
+            u_shadowTexture, uv + vec2(-offset.x, offset.y))));
+        lit += step(receiverDepth, unpackDepth(texture2D(
+            u_shadowTexture, uv + vec2(offset.x, offset.y))));
+        staticAmount = (1.0 - 0.25 * lit) * smoothstep(0.0, 0.08, edge);
+    }
 
-    float receiverDepth = shadow.z - 0.0018;
-    // Four bilinear PCF samples keep the same fetch count as the previous point-filtered path,
-    // but remove the hard texel transitions that shimmer while the view is moving.
-    vec2 offset = 0.75 * u_shadowTexelSize;
-    float lit = 0.0;
-    lit += step(receiverDepth, unpackDepth(texture2D(
-        u_shadowTexture, uv + vec2(-offset.x, -offset.y))));
-    lit += step(receiverDepth, unpackDepth(texture2D(
-        u_shadowTexture, uv + vec2(offset.x, -offset.y))));
-    lit += step(receiverDepth, unpackDepth(texture2D(
-        u_shadowTexture, uv + vec2(-offset.x, offset.y))));
-    lit += step(receiverDepth, unpackDepth(texture2D(
-        u_shadowTexture, uv + vec2(offset.x, offset.y))));
-    return (1.0 - 0.25 * lit) * smoothstep(0.0, 0.08, edge);
+    float nearAmount = 0.0;
+    float nearWeight = 0.0;
+    if (u_nearDynamicShadowEnabled > 0.5 && v_nearDynamicShadowPosition.w > 0.0)
+    {
+        vec3 nearShadow = v_nearDynamicShadowPosition.xyz / v_nearDynamicShadowPosition.w;
+        vec2 nearUV = vec2(0.5 + 0.5 * nearShadow.x, 0.5 - 0.5 * nearShadow.y);
+        float nearEdge = shadowEdge(nearUV);
+        if (nearEdge > 0.0 && nearShadow.z > 0.0 && nearShadow.z < 1.0)
+        {
+            nearWeight = smoothstep(0.0, 0.08, nearEdge);
+            nearAmount = modelShadowPCF(u_nearDynamicShadowTexture, nearUV,
+                u_nearDynamicShadowTexelSize, nearShadow.z - 0.00005);
+        }
+    }
+    // Source: ModelDepthShader.Pixel — retain distant animals without letting coarse far texels cover the near layer.
+    float farAmount = 0.0;
+    if (nearWeight < 0.999 && u_dynamicShadowEnabled > 0.5 && farInRange)
+        farAmount = modelShadowPCF(u_dynamicShadowTexture, uv,
+            u_dynamicShadowTexelSize, shadow.z - 0.00005) * smoothstep(0.0, 0.08, edge);
+    float modelAmount = nearWeight >= 0.999 ? nearAmount : mix(farAmount, nearAmount, nearWeight);
+    return max(staticAmount, modelAmount);
+}
+
+// Source: SubsystemDynamicShadows.PointShadows.cs:SetPointShadowParameters.
+// Static and moving casters share depth visibility, never multiply their darkening twice.
+float samplePointDepth(vec2 uv, vec2 valid)
+{
+    float depth = 1.0;
+    if (valid.x > 0.5) depth = unpackDepth(texture2D(u_pointShadowTexture, uv));
+    if (valid.y > 0.5) depth = min(depth, unpackDepth(texture2D(u_pointDynamicShadowTexture, uv)));
+    return depth;
 }
 
 vec4 samplePointLightFor(
     vec2 origin,
     vec4 positionRadius,
     vec4 directionStrength,
-    float rowOffset)
+    float rowOffset, vec2 valid)
 {
-    if (u_pointShadowEnabled < 0.5)
+    if (u_pointShadowEnabled < 0.5 || max(valid.x, valid.y) < 0.5)
         return vec4(0.0);
     vec3 direction = vec3(
         v_worldPosition.x - origin.x,
@@ -216,37 +288,23 @@ vec4 samplePointLightFor(
     }
 
     vec2 localUv = 0.5 + 0.5 * projected;
-    vec2 localPadding = vec2(
-        4.5 * u_pointShadowTexelSize.x,
-        3.0 * u_pointShadowTexelSize.y);
+    vec2 texelSize = max(u_pointShadowTexelSize, u_pointDynamicShadowTexelSize);
+    vec2 localPadding = vec2(4.5 * texelSize.x, 30.0 * texelSize.y);
     localUv = clamp(localUv, localPadding, vec2(1.0) - localPadding);
     tile.y += rowOffset;
     vec2 atlasUv = (tile + localUv) / vec2(3.0, 20.0);
     float receiverDepth = distanceToLight / positionRadius.w - 0.012;
-    vec2 offset = 0.65 * u_pointShadowTexelSize;
-    float lit = 0.0;
-    lit += step(receiverDepth, unpackDepth(texture2D(
-        u_pointShadowTexture, atlasUv + vec2(-offset.x, -offset.y))));
-    lit += step(receiverDepth, unpackDepth(texture2D(
-        u_pointShadowTexture, atlasUv + vec2(offset.x, -offset.y))));
-    lit += step(receiverDepth, unpackDepth(texture2D(
-        u_pointShadowTexture, atlasUv + vec2(-offset.x, offset.y))));
-    lit += step(receiverDepth, unpackDepth(texture2D(
-        u_pointShadowTexture, atlasUv + vec2(offset.x, offset.y))));
+    // Two taps across two layers keep the previous four-fetch maximum per selected light.
+    vec2 offset = 0.65 * texelSize;
+    float lit = step(receiverDepth, samplePointDepth(atlasUv - offset, valid));
+    lit += step(receiverDepth, samplePointDepth(atlasUv + offset, valid));
     // Source: Survivalcraft/Game/TerrainUpdater.PropagateLightSource. Terrain
     // lighting is already baked in v_color; this value only decides whether
     // this light's shadow contribution is culled on its illuminated receiver.
     float localLight = abs(directionStrength.w) * directionalMask;
-    float visibility = 0.25 * lit;
-    // Source: LightbulbBlock.GenerateTerrainVertices and LedBlock.GenerateTerrainVertices.
-    // The emitting mesh itself is not a receiver for other shadows; only the area lit by
-    // the source should be darkened by blockers.  Store a near-source no-shadow mask in w.
-    float sourceNoShadow = (1.0 - smoothstep(0.55, 0.95, distanceToLight)) *
-        directionalMask;
+    float visibility = 0.5 * lit;
     return vec4((1.0 - visibility) * localLight,
-        visibility * localLight,
-        localLight,
-        sourceNoShadow);
+        visibility * localLight, localLight, 0.0);
 }
 
 vec4 samplePointLight()
@@ -260,7 +318,7 @@ vec4 samplePointLight()
             u_pointShadowOrigins[i],
             u_pointShadowLightPositionRadius[i],
             u_pointShadowLightDirectionStrength[i],
-            2.0 * float(i)));
+            2.0 * float(i), u_pointShadowValid[i]));
     }
     return result;
 }
@@ -289,7 +347,7 @@ void main()
     float visibleLightFloor = originalMax > 0.001
         ? clamp(visibleMax / originalMax, 0.0, 1.0)
         : 1.0;
-    result.rgb *= max(max(shadowMultiplier, visibleLightFloor), pointLight.w);
+    result.rgb *= max(shadowMultiplier, visibleLightFloor);
     result.rgb = mix(result.rgb, u_fogColor * v_color.a, v_fog);
     gl_FragColor = result;
 }
@@ -364,7 +422,7 @@ attribute vec3 a_position;
 attribute vec2 a_texcoord;
 
 varying vec2 v_texcoord;
-varying float v_depth;
+varying vec3 v_localPosition;
 
 void main()
 {
@@ -373,7 +431,7 @@ void main()
         a_position.x - u_shadowOrigin.x,
         a_position.y,
         a_position.z - u_shadowOrigin.y);
-    v_depth = length(position - u_lightPosition) / u_lightRadius;
+    v_localPosition = position;
     gl_Position = u_shadowMatrix * vec4(position, 1.0);
     OPENGL_POSITION_FIX;
 }
@@ -388,15 +446,17 @@ precision highp float;
 
 uniform sampler2D u_texture;
 uniform float u_alphaThreshold;
+uniform vec3 u_lightPosition;
+uniform float u_lightRadius;
 
 varying vec2 v_texcoord;
-varying float v_depth;
+varying vec3 v_localPosition;
 
 void main()
 {
     if (texture2D(u_texture, v_texcoord).a <= u_alphaThreshold)
         discard;
-    float depth = clamp(v_depth, 0.0, 1.0);
+    float depth = clamp(length(v_localPosition - u_lightPosition) / u_lightRadius, 0.0, 1.0);
     float scaled = depth * 255.0;
     float highPart = floor(scaled) / 255.0;
     float lowPart = fract(scaled);

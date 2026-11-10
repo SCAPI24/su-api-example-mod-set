@@ -49,6 +49,13 @@ namespace MemoryBankDrawMod
         private static readonly PropertyInfo s_textProp =
             typeof(Widget).Assembly.GetType("Game.TextBoxWidget")?.GetProperty("Text");
 
+        // Source: TextBoxWidget.cs:Text — fail explicitly if the native editor contract changes.
+        internal static void ValidateTextBoxContract()
+        {
+            if (s_textProp == null || s_textProp.PropertyType != typeof(string) || !s_textProp.CanRead || !s_textProp.CanWrite)
+                throw new InvalidOperationException("[MemoryBankDrawMod] Game.TextBoxWidget.Text is not available with the required read/write string contract.");
+        }
+
 
 
         // Source: player color palette — hex values 8-f mapped to colors

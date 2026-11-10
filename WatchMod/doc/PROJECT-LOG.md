@@ -1,92 +1,52 @@
-# WatchMod 项目文档
+# WatchMod 当前版本移植
 
-## 概述
+日期：2026-11-11。保留手工合成栏左下角（slot 2）放置 RealTimeClockBlock 时显示游戏时间和天数的原有功能。
 
-WatchMod（手表Mod）在游戏UI左侧InventoryButton下方显示实时时钟，当玩家handcrafting slot 2（2x2网格左下角）放置RealTimeClockBlock（Index=187）时触发，模拟佩戴手表效果。
+## 当前接入
 
-## 架构
+- `Plug/WatchMod.cs` 使用 `RegisterUpdateExtension<SubsystemGameWidgets>`，owner 为 WatchMod，持有并释放自己的注册 token。
+- `Subsystem/WatchGameWidgetsExtension.cs` 在真实 Views 宿主的 Attached 阶段取得当前世界时间；基类 Update 允许原宿主执行，AfterUpdate 同步本 Mod 的 HUD。
+- 每个 GameWidget 读取自己的 PlayerData.ComponentPlayer 和 ComponentCraftingTable，独立持有面板；不再访问 GameWidgets[0]。
+- 玩家未出生、重生间隙、取走时钟、移除视图时清理对应面板；世界解绑或 Mod 卸载时清理全部自有面板。
+- 保留 64×48 面板、白边、字号、游戏内 HH:mm 与 Day 显示。控件挂在本玩家 LeftControlsContainer，名称为 WatchMod.Panel / WatchMod.Time / WatchMod.Day；不清空或替换其他 Mod 的 UI。
+- 无其他 Mod 依赖，不查询 ConsoleMod、联机 Mod 等的类型；不改数据库 Class，不新建 Player.Watch 成员，不自行调用 Host.Update。
+- 去掉旧版吞异常后显示 --:-- 的处理。依赖或控件契约缺失由扩展框架明确报告。
 
-### 替换模式：ComponentTemplate + IUpdateable（不替换SubsystemGameWidgets）
+## 版本与构建
 
-**为什么不用SubsystemGameWidgets替换？**
-- ConsoleMod已替换SubsystemGameWidgets（GUID 6bf14dc6-32e7-4e8c-b3c4-438e0eee13ad）
-- 同一个Subsystem只能被一个Mod替换，冲突会导致后者静默失败
-- WatchMod改用独立Component挂到Player实体，与ConsoleMod完全兼容
+目标 net10.0，API 元数据 0.2.0.0，Mod 自身版本保持 1.0.1，IsMergeLib=true。生产与测试工程都通过 PackageReference 精确引用已发布的 Engine/EntitySystem/Survivalcraft `[0.2.0.0]`，使用已配置的 cnb-nuget 源 `https://nuget.cnb.cool/suceru.cb/SuAPICore/-/packages/v3/index.json`；不引用主仓库本地引擎 DLL，不递归构建或覆盖主仓库，不回退旧包。
 
-### 核心类
-
-| 类 | 作用 |
-|----|------|
-| WatchMod (Plug/WatchMod.cs) | IMod入口，EventBus订阅GameDatabase.GameDatabase，注册ComponentTemplate |
-| SuWatchComponent (Subsystem/SuWatchComponent.cs) | Component + IUpdateable，检测slot物品，动态Attach/Detach Widget |
-
-### 数据流
-
-```
-IMod.OnLoad → SubscribeEvent("GameDatabase.GameDatabase")
-  → HandleGameDatabase: 创建 ComponentTemplate + Parameter + MemberComponentTemplate
-    → Player实体实例化 SuWatchComponent
-
-SuWatchComponent.Load → 获取 SubsystemTimeOfDay + SubsystemGameWidgets + ComponentCraftingTable
-SuWatchComponent.Update (每帧):
-  → ShouldShowWatch: 检查 craftingTable slot 2 是否有 RealTimeClockBlock(187)
-  → 条件满足 → AttachUI: 创建 CanvasWidget + RectangleWidget + LabelWidget，挂到 LeftControlsContainer
-  → 条件不满足 → DetachUI: 从容器移除 Widget
-  → UI已挂 → UpdateDisplay: 从 SubsystemTimeOfDay 读时间，更新 Label
+```powershell
+dotnet restore Mod/WatchMod/WatchMod.csproj
+dotnet build Mod/WatchMod/WatchMod.csproj -c Release --no-restore
+dotnet run --project Mod/WatchMod/Tests/WatchMod.IntegrationTests.csproj -c Release
+dotnet run --project Mod/WatchMod/Tests/WatchMod.IntegrationTests.csproj -c Release -p:WatchAssemblyPath=<absolute-obfuscated-dll-path>
 ```
 
-### 时间计算
+两个工程启用 CopyLocalLockFileAssemblies，框架依赖只来自 NuGet；测试额外引用当前 WatchMod DLL，缺失时明确失败。Release 仅混淆 WatchMod，最终 DLL 位于 bin/Release/net10.0/Obfuscar/WatchMod.dll；引擎不是混淆或打包 Module，scmod 只包含 ModInfo.xml 与 Lib/WatchMod.dll。
 
-```
-SubsystemTimeOfDay.TimeOfDay = 0-1 float (0=午夜, ~0.25=黎明, ~0.5=正午, ~0.75=黄昏)
-hours = (int)(TimeOfDay * 24 * 60) / 60
-minutes = (int)(TimeOfDay * 24 * 60) % 60
-day = (int)Math.Floor(Day) + 1  // Day从0开始计数
-```
+## 本轮实际验证
 
-## 关键踩坑记录
+- 已完成 NuGet 0.2.0.0 引用与 API 元数据迁移；生产实现和 12 项测试逻辑保持不变。
+- Release 编译与 Obfuscar：通过，0 警告、0 错误。
+- 普通与最终混淆 DLL 的测试进程均启动失败：Program.Main 创建 BitmapFont 前抛出 FileNotFoundException，缺少 OpenTK, Version=1.1.0.0, PublicKeyToken=bad199fe84eb3df4；12 项用例均未开始，不能报告通过。
+- 旧版 0.1.6/0.1.7 与本版包均未声明或携带 OpenTK。上轮成功测试复制了主仓库完整 DLL；当前纯 NuGet 测试缺少游戏宿主运行依赖。证据见 [OpenTK 运行环境差异](nuget-020-runtime-dependency.md)，不能据此判定 0.2.0.0 回归或游戏无法加载。
+- 此前针对本地框架 DLL 的 Release/混淆和 12 项测试通过记录仅为迁移前验证，不能当作本轮 NuGet 0.2.0.0 的结果。
+- 测试覆盖触发物品、原显示格式、双玩家 UI 归属、重生、视图增删、另一独立扩展与相反注册顺序、原宿主只调用一次、其他扩展否决、卸载重载、世界隔离及解绑清理。
+- 使用 NuGet 真实框架注册器、原生 SubsystemUpdate 和实际 Mod DLL；通过反射组装内存世界与控件。不代表渲染、真实存档加载或联机实机验收。细节见 Tests/README.md。
 
-### 1. SubsystemGameWidgets 替换冲突
-- **错误**: 最初WatchMod替换SubsystemGameWidgets，游戏日志显示ConsoleMod先替换，WatchMod被静默覆盖
-- **修复**: 改用ComponentTemplate+IUpdateable独立Component模式
+## 接口边界
 
-### 2. Component.Load 签名
-- **错误**: `Load(ValuesDictionary)` 单参数签名
-- **修复**: `Load(ValuesDictionary, IdToEntityMap)` 双参数签名
+当前框架按宿主精确类型匹配。另一 Mod 若仍将 Views 替换为派生子系统，本扩展不会自动挂到替换类；应由该 Mod 迁移自己的挂载方式，不增加 Watch 的跨 Mod 依赖或降级路径。当前工作区 ConsoleMod 已使用共享 Views 扩展。
 
-### 3. Component.Load 跨assembly override
-- **错误**: `protected internal override void Load(...)`
-- **修复**: 跨assembly只能 `protected override void Load(...)`（SuComponentMap源码确认）
+Watch 所需 API 已具备，本轮未发现必须由框架会话新增的接口。未修改主仓库框架、其他 Mod、部署目录或真实世界。
 
-### 4. Database没有AddDatabaseObject
-- **错误**: 调用 `database.AddDatabaseObject(componentTemplate)`
-- **修复**: DatabaseObject构造时设NestingParent即自动加入database
+## 历史实现
 
-### 5. LayoutDirection vs Direction
-- **错误**: `StackPanelWidget.Direction` 使用 `Direction` 枚举
-- **修复**: Direction属性的类型是 `LayoutDirection` 枚举
+旧版 SuWatchComponent 使用 ComponentTemplate + IUpdateable，绕开当时 ConsoleMod 的子系统替换。此次按当前已存在的共享宿主扩展迁移，删除旧注册与实现；旧说明中“ConsoleMod 必然独占 Views”的结论不再适用于当前工作区。
 
-## 文件结构
+Source: Survivalcraft/SuAPI/UpdateExtensionRegistry.cs:RegisterUpdateExtension；UpdateExtension.cs:Attached/AfterUpdate/Detached；Game/SubsystemGameWidgets.cs:Update；Game/PlayerData.cs:ComponentPlayer；Game/SubsystemTimeOfDay.cs:TimeOfDay/Day。
 
-```
-WatchMod/
-├── Plug/WatchMod.cs         # IMod入口
-├── Subsystem/SuWatchComponent.cs  # Component+IUpdateable实现
-├── WatchMod.csproj          # net8.0双平台项目
-├── Obfuscar.xml             # 混淆配置
-├── ModInfo.xml              # Mod信息
-└── doc/PROJECT-LOG.md       # 本文件
-```
+## 本轮交付包
 
-## 关键源码引用
-
-| 类 | 文件 | 作用 |
-|----|------|------|
-| ComponentGui | Survivalcraft/Game/ComponentGui.cs | 左侧按钮布局，LeftControlsContainer |
-| ComponentCraftingTable | GameEntitySystem/ComponentCraftingTable.cs | handcrafting 2x2 grid，slot 0-3 |
-| RealTimeClockBlock | Game/RealTimeClockBlock.cs | Index=187 |
-| RealTimeClockElectricElement | Game/RealTimeClockElectricElement.cs | 时间电路元件，输出电压 |
-| SubsystemTimeOfDay | Game/SubsystemTimeOfDay.cs | TimeOfDay 0-1，Day整数 |
-| SubsystemGameWidgets | Game/SubsystemGameWidgets.cs | 管理GameWidget列表 |
-| GameWidget | Engine/GameWidget.cs | CanvasWidget，含LeftControlsContainer |
-| MiniMap Plug | Mod/SurvivalcraftMiniMap/Plug/MiniMap.cs | ComponentTemplate注册参考 |
+已用最终混淆 DLL 生成 bin/Release/net10.0 下带 [SuAPI] 前缀、API0.2.0.0 后缀的 .scmod。根目录 ModInfo.xml、扁平 Lib/、Content/ 和正斜杠条目检查通过，逐条读取与 CRC 校验通过；包内仅含本 Mod DLL，不含核心库或其他 Mod。三份核心输出 DLL 与 CNB 缓存包的 SHA256 一致。本 Mod 程序集未引用其他业务 Mod。旁边 .verification.json 保存包与程序集哈希及依赖来源。尚未部署或进行实机验收。
