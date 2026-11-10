@@ -3,7 +3,7 @@
     <Var name="InPath" value=".\bin\Release\net10.0" />
     <Var name="OutPath" value=".\bin\Release\net10.0\Obfuscar" />
     <Var name="SkipExtraDependencies" value="true" />
-    <Module file="$(InPath)\EntitySystem.dll"/>
+    <AssemblySearchPath path=".\obj\Release\net10.0\ObfuscarDependencies" />
     <Module file="$(InPath)\TranslationMod.dll">
         <!-- Source: TranslationMod/Plug/TranslationMod.cs:TranslationApi -->
         <SkipType name="TranslationMod.TranslationMod" />

@@ -1115,13 +1115,21 @@ namespace TranslationMod
             new Dictionary<string, ExternalTranslationCatalog>();
 
         public string Name => "Translation Mod";
-        public string Version => "1.6.4";
+        public string Version => TranslationProcessor.ModVersion;
         public IEnumerable<string> Dependencies => Array.Empty<string>();
         public bool IsEnabled { get; set; }
 
         public bool IsMergeLib => true;
 
         private IModParentField _mpf;
+        // Source: IModEventBus.cs:UnsubscribeEvent; SuAPIModLocalizationApi.cs:UnregisterService
+        private IModEventBus _eventBus;
+        private EventSubscriptionToken _loadingToken;
+        private EventSubscriptionToken _frameToken;
+        private IDisposable _presentationToken;
+        private ModLocalizationService _localizationService;
+        private bool _loaded;
+        private int _lifetime;
         private readonly TranslationProcessor _translationProcessor = new TranslationProcessor();
         // 帧驱动扫描（替代 Timer，避免 Release Android 上 System.Threading.Timer 不可用）
         private int _skipFrames; // 0 = 每帧扫描, N = 跳过 N 帧
@@ -1167,6 +1175,10 @@ namespace TranslationMod
             new Dictionary<LabelWidget, ExternalLabelState>();
         private int _globalIndex;
         private long _lastScannedFrame = -1;
+        // Source: Widget.cs:Widget.Measure — repeated layout passes share one lookup per frame.
+        private long _presentationFrame = -1;
+        private readonly Dictionary<(string Screen, string Source, string Original, bool Collect), string>
+            _presentationTexts = new Dictionary<(string, string, string, bool), string>();
         // 自适应扫描频率
         private int _framesSinceNewWidget;
         private const int IDLE_THRESHOLD = 60;
@@ -1260,24 +1272,46 @@ namespace TranslationMod
 
         public void OnLoad(IModEventBus eventBus, IModInjector modInjector)
         {
+            if (eventBus == null) throw new ArgumentNullException(nameof(eventBus));
+            if (_loaded) throw new InvalidOperationException("TranslationMod is already loaded.");
+            _loaded = true;
+            int lifetime = ++_lifetime;
+            _eventBus = eventBus;
             _mpf = Program.ModManager.ModParentField;
 
             // 把本 Mod 的语言登记给「社区 - 模组」列表：只有本 Mod 在场时，
             // 模组列表才按 zh_CN 显示名称；没装本 Mod 时列表一律显示 en_US。
             // 条目里带 * 强制项的多语言名（如汉化类模组 *zh_CN=…）不受此影响，始终显示它自己的语言。
             // Source: EntitySystem/SuAPICore/Plug/SuAPIModLocalizationApi.cs:SuAPIModLocalizations
-            SuAPICore.SuAPIModLocalizations.TryRegisterService(new ModLocalizationService());
-
-            eventBus.SubscribeEvent("Loading.Initialize", args =>
+            try
             {
-                return HandleLoadingInitialize((object[])args);
-            }, EventPriority.LOWEST);
+                _localizationService = new ModLocalizationService();
+                if (!SuAPICore.SuAPIModLocalizations.TryRegisterService(_localizationService))
+                    throw new InvalidOperationException("A Mod localization service is already registered.");
 
-            eventBus.SubscribeEvent("Frame.Update", args =>
+                _loadingToken = eventBus.SubscribeEvent("Loading.Initialize", args =>
+                {
+                    if (!_loaded || lifetime != _lifetime) return args;
+                    return HandleLoadingInitialize(args);
+                }, EventPriority.LOWEST);
+
+                _frameToken = eventBus.SubscribeEvent("Frame.Update", args =>
+                {
+                    if (_loaded && lifetime == _lifetime) Update();
+                    return null;
+                }, EventPriority.LOWEST);
+
+                _presentationToken = eventBus.RegisterWidgetPresentation("TranslationMod", widget =>
+                {
+                    if (_loaded && lifetime == _lifetime && _scannerActive)
+                        PrepareWidgetPresentation(widget);
+                }, EventPriority.LOWEST);
+            }
+            catch
             {
-                Update();
-                return null;
-            }, EventPriority.LOWEST);
+                ReleaseSubscriptions();
+                throw;
+            }
 
             Log.Information($"[TranslationMod] v{TranslationProcessor.ModVersion} Loaded."
                 + " Shared SuAPI font profiles are lazy.");
@@ -1297,18 +1331,21 @@ namespace TranslationMod
 
         private object[] HandleLoadingInitialize(object[] args)
         {
+            int lifetime = _lifetime;
             // MAUI版 Loading.Initialize 传 typeof(LoadingManager)，用 QueueItem 添加加载步骤
             // 旧版传 List<Action>，兼容处理
             if (args[0] is Type type && type.Name == "LoadingManager")
             {
                 LoadingManager.QueueItem("ChineseFontLoader", () =>
                 {
+                    if (!_loaded || lifetime != _lifetime) return;
                     try { ChineseFontLoader.Load(); }
                     catch (Exception ex) { Log.Error($"[TranslationMod] ChineseFontLoader failed: {ex.Message}"); }
                 });
 
                 LoadingManager.QueueItem("LoadTranslations", () =>
                 {
+                    if (!_loaded || lifetime != _lifetime) return;
                     try
                     {
                         TranslationProcessor.LoadTranslations();
@@ -1321,12 +1358,14 @@ namespace TranslationMod
 
                 LoadingManager.QueueItem("ProcessStrings", () =>
                 {
+                    if (!_loaded || lifetime != _lifetime) return;
                     try { ProcessStrings(); }
                     catch (Exception ex) { Log.Error($"[TranslationMod] ProcessStrings failed: {ex.Message}"); }
                 });
 
                 LoadingManager.QueueItem("StartWidgetScanner", () =>
                 {
+                    if (!_loaded || lifetime != _lifetime) return;
                     try { StartWidgetScanner(); }
                     catch (Exception ex) { Log.Error($"[TranslationMod] StartWidgetScanner failed: {ex.Message}"); }
                 });
@@ -1336,11 +1375,13 @@ namespace TranslationMod
                 // 旧版兼容：List<Action>
                 actions.Add(() =>
                 {
+                    if (!_loaded || lifetime != _lifetime) return;
                     try { ChineseFontLoader.Load(); }
                     catch (Exception ex) { Log.Error($"[TranslationMod] ChineseFontLoader failed: {ex.Message}"); }
                 });
                 actions.Add(() =>
                 {
+                    if (!_loaded || lifetime != _lifetime) return;
                     try
                     {
                         TranslationProcessor.LoadTranslations();
@@ -1352,11 +1393,13 @@ namespace TranslationMod
                 });
                 actions.Add(() =>
                 {
+                    if (!_loaded || lifetime != _lifetime) return;
                     try { ProcessStrings(); }
                     catch (Exception ex) { Log.Error($"[TranslationMod] ProcessStrings failed: {ex.Message}"); }
                 });
                 actions.Add(() =>
                 {
+                    if (!_loaded || lifetime != _lifetime) return;
                     try { StartWidgetScanner(); }
                     catch (Exception ex) { Log.Error($"[TranslationMod] StartWidgetScanner failed: {ex.Message}"); }
                 });
@@ -1402,6 +1445,7 @@ namespace TranslationMod
         /// </summary>
         public void Update()
         {
+            if (!_loaded) return;
             // 界面切换 / 弹窗增减时立刻取消跳帧节流。空闲节流是 29 帧（60fps 下约 0.5 秒），
             // 不重置的话新界面或新弹窗会先以英文露面一段才被扫到 ——
             // 那正是「进界面先闪一下英文」的来源。
@@ -1517,6 +1561,8 @@ namespace TranslationMod
             if (current == state.SourceText)
             {
                 _hotWidgets.Add(widget);
+                // Source: Widget.cs:Widget.Measure — this is already the last moment before measuring.
+                SetWidgetText(widget, state.AppliedText);
                 return false;
             }
 
@@ -1630,6 +1676,7 @@ namespace TranslationMod
             return name == "SuAPICore" ||
                 name == "SuAPIModDownload" ||
                 name == "SuAPIExternalContentImport" ||
+                name == "SuMultiplayer" ||
                 name == "ScMultiplayer";
         }
 
@@ -1659,7 +1706,8 @@ namespace TranslationMod
         {
             "CommunityContentItem.Text",
             "ExternalContentItem.Text",
-            "FurniturePackItem.Text"
+            "FurniturePackItem.Text",
+            "WorldItem.Name"
         };
 
         /// <summary>
@@ -1677,17 +1725,19 @@ namespace TranslationMod
         /// </summary>
         private static bool IsSupportedWidget(Widget widget)
         {
+            if (IsRegisteredExternalWidget(widget) ||
+                PlayerAuthoredRowLabels.Contains(widget.Name ?? string.Empty) ||
+                (widget.Name ?? string.Empty).StartsWith("SuMPVoiceRowName_", StringComparison.Ordinal))
+                return false;
             for (Widget current = widget; current != null; current = current.ParentWidget)
             {
-                if (IsRegisteredExternalWidget(current))
-                    return false;
                 if (!IsSupportedUiAssembly(current.GetType().Assembly))
                     return false;
                 if (current is ListPanelWidget listPanel && IsDynamicContentList(listPanel))
                     return false;
-
-                // 行标题单独排除：整张列表不再一刀切，行内固定文案才翻得到。
-                if (PlayerAuthoredRowLabels.Contains(widget.Name ?? string.Empty))
+                // Source: SuPlayScreenExtension.cs:UpdateRowWidget; VoiceMuteTable.cs:BuildRows;
+                // ChatOverlay.cs:CreateUi — server/player names and chat feed are authored data.
+                if (current.Name == "SuMultiplayerChatFeed")
                     return false;
             }
             return true;
@@ -1830,6 +1880,53 @@ namespace TranslationMod
             }
         }
 
+        /// <summary>Prepare only this node; layout itself visits descendants, including new virtual rows.</summary>
+        // Source: Widget.cs:Widget.Measure; TranslationApi:RegisterWidget
+        private void PrepareWidgetPresentation(Widget widget)
+        {
+            // Composite buttons expose the same text through their child label. Processing only
+            // labels prevents collecting an already translated button label as another original.
+            if (!(widget is LabelWidget label)) return;
+            string original = label.Text;
+            if (IsPlaceholderText(original)) return;
+
+            ExternalWidgetRegistration external = null;
+            lock (s_externalWidgetsLock)
+            {
+                for (Widget ancestor = widget; ancestor != null; ancestor = ancestor.ParentWidget)
+                {
+                    if (s_externalWidgets.TryGetValue(ancestor, out external)) break;
+                }
+            }
+            if (external != null)
+            {
+                if (!_externalLabelStates.TryGetValue(label, out ExternalLabelState externalState) ||
+                    original != externalState.AppliedText)
+                {
+                    string translated = external.Catalog.IsTranslatedValue(original) ? original :
+                        external.Catalog.Process(external.RootWidget.GetType().Name, original);
+                    label.Text = translated;
+                    _externalLabelStates[label] = new ExternalLabelState(translated);
+                }
+                if (NeedsExtendedFont(label.Text)) TrySetChineseFont(label);
+                return;
+            }
+
+            if (!IsSupportedWidget(widget) || IsPlayerAuthoredText(widget, original)) return;
+            if (ShouldTranslate(label, original, out WidgetTextState state))
+            {
+                Screen screen = null;
+                for (Widget ancestor = widget; ancestor != null; ancestor = ancestor.ParentWidget)
+                    if (ancestor is Screen host) { screen = host; break; }
+                TranslationProcessor.CurrentScreen = (screen ?? ScreensManager.CurrentScreen)?.GetType().Name ?? "UI";
+                state.SourceText = original;
+                state.AppliedText = ProcessWidgetText(widget.GetType().Name, original,
+                    !IsInsideMessageWidget(widget));
+                label.Text = state.AppliedText;
+            }
+            if (NeedsExtendedFont(label.Text)) TrySetChineseFont(label);
+        }
+
         /// <summary>
         /// 行内容由运行期数据填充的列表，不能视为固定翻译文本；其余静态列表仍允许扫描，
         /// 这样 SuAPI 的固定选择项照样能进翻译表。
@@ -1863,43 +1960,12 @@ namespace TranslationMod
 
                 if (child is LabelWidget label)
                 {
-                    string original = label.Text;
-                    if (!IsPlaceholderText(original) &&
-                        !IsPlayerAuthoredText(child, original) &&
-                        ShouldTranslate(label, original, out WidgetTextState labelState))
-                    {
-                        string result = ProcessWidgetText(child.GetType().Name, original,
-                            !IsInsideMessageWidget(child));
-                        labelState.SourceText = original;
-                        labelState.AppliedText = result;
-                        if (result != original)
-                            label.Text = result;
-
-                        // 如果结果含中文 → 切换为中文字体
-                        if (NeedsExtendedFont(result))
-                            TrySetChineseFont(label);
-
-                        labelCount++;
-                    }
-                }
-                else if (child is ButtonWidget button)
-                {
-                    string original = button.Text;
-                    if (!IsPlaceholderText(original) &&
-                        !IsPlayerAuthoredText(child, original) &&
-                        ShouldTranslate(button, original, out WidgetTextState buttonState))
-                    {
-                        string result = ProcessWidgetText(child.GetType().Name, original,
-                            !IsInsideMessageWidget(child));
-                        buttonState.SourceText = original;
-                        buttonState.AppliedText = result;
-                        button.Text = result;
-
-                        if (NeedsExtendedFont(result))
-                            TrySetChineseFont(button);
-
-                        buttonCount++;
-                    }
+                    // Source: BevelledButtonWidget.cs:Text; BitmapButtonWidget.cs:Text —
+                    // their Text properties proxy a child label, so process the leaf only.
+                    bool known = _widgetTextStates.TryGetValue(label, out WidgetTextState state) &&
+                        label.Text == state.AppliedText;
+                    PrepareWidgetPresentation(label);
+                    if (!known && _widgetTextStates.ContainsKey(label)) labelCount++;
                 }
 
                 if (child is MessageWidget messageWidget)
@@ -1916,8 +1982,17 @@ namespace TranslationMod
         private string ProcessWidgetText(string source, string original,
             bool collectForExport = true)
         {
-            return _translationProcessor.Process(source, original, ++_globalIndex,
+            if (_presentationFrame != Time.FrameIndex)
+            {
+                _presentationFrame = Time.FrameIndex;
+                _presentationTexts.Clear();
+            }
+            var key = (TranslationProcessor.CurrentScreen, source, original, collectForExport);
+            if (_presentationTexts.TryGetValue(key, out string cached)) return cached;
+            string result = _translationProcessor.Process(source, original, ++_globalIndex,
                 collectForExport: collectForExport);
+            _presentationTexts.Add(key, result);
+            return result;
         }
 
         private static void SaveRegisteredExternalTranslations()
@@ -2014,18 +2089,52 @@ namespace TranslationMod
 
         public void OnUnload()
         {
-            TranslationProcessor.SaveCollected();
-            SaveRegisteredExternalTranslations();
-            _scannerActive = false;
-            _widgetTextStates.Clear();
-            _hotWidgets.Clear();
-            _messageWidgets.Clear();
-            lock (s_externalWidgetsLock)
+            if (!_loaded) return;
+            ReleaseSubscriptions();
+            try
             {
-                s_externalWidgets.Clear();
-                s_externalCatalogs.Clear();
+                TranslationProcessor.SaveCollected();
+                SaveRegisteredExternalTranslations();
+            }
+            finally
+            {
+                _widgetTextStates.Clear();
+                _hotWidgets.Clear();
+                _hotDead.Clear();
+                _messageWidgets.Clear();
+                _messageDead.Clear();
+                _externalLabelStates.Clear();
+                _presentationTexts.Clear();
+                _presentationFrame = -1;
+                _lastScreen = null;
+                _lastDialogCount = -1;
+                _lastScannedFrame = -1;
+                _mpf = null;
+                lock (s_externalWidgetsLock)
+                {
+                    s_externalWidgets.Clear();
+                    s_externalCatalogs.Clear();
+                }
             }
             Log.Information("[TranslationMod] Unloaded.");
+        }
+
+        // Source: ModEventBus.cs:UnsubscribeEvent; SuAPIModLocalizationApi.cs:UnregisterService
+        private void ReleaseSubscriptions()
+        {
+            _loaded = false;
+            _lifetime++;
+            _scannerActive = false;
+            _presentationToken?.Dispose();
+            _presentationToken = null;
+            if (_eventBus != null && _loadingToken != null) _eventBus.UnsubscribeEvent(_loadingToken);
+            if (_eventBus != null && _frameToken != null) _eventBus.UnsubscribeEvent(_frameToken);
+            _loadingToken = null;
+            _frameToken = null;
+            _eventBus = null;
+            if (_localizationService != null)
+                SuAPICore.SuAPIModLocalizations.UnregisterService(_localizationService);
+            _localizationService = null;
         }
     }
 }

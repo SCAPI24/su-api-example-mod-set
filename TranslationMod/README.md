@@ -2,6 +2,24 @@
 
 `TranslationMod` translates fixed original-game and SuAPI built-in UI text. It also provides an opt-in API for external Mods. An external Mod is never scanned unless it explicitly registers a UI root or asks to translate a string.
 
+## Lifecycle integration
+
+Translation registers `RegisterWidgetPresentation` and prepares labels before their native measurement.
+The shared layout boundary also prepares late-created nodes before arrangement, without changing
+list creation/measurement order or forcing another measurement. With no subscriptions, the native layout path is preserved. Text and fonts are ready for their first measurement and drawing;
+no screen, component or subsystem replacement is required. The existing throttled frame scanner
+continues collecting and cleaning up state, but does not determine when visible text is translated.
+
+The widget presentation entry point is available in the published SuAPI `0.2.1.0` packages.
+Build directly with `dotnet build Mod/TranslationMod/TranslationMod.csproj -c Release`.
+All four SDK references are pinned to `[0.2.1.0]`; the game and SuAPICore source projects
+do not need to be built first.
+
+The Mod owns loading, frame and widget presentation subscription tokens and unregisters all on unload.
+It also unregisters only its own localization service, and stale queued loading actions cannot
+restart the scanner after unload or a later reload. Already displayed translated text is not
+rewritten back during unload.
+
 ## Built-in Scope
 
 The single rule is: **anything the player can customise is not translated; every other piece of UI is.**
@@ -9,7 +27,7 @@ The single rule is: **anything the player can customise is not translated; every
 - The original export is `Logs/zh_CN.xml`; on Android it is `/sdcard/Download/Survivalcraft/Logs/zh_CN.xml`.
 - Export I/O is asynchronous at startup and is not performed when a menu becomes idle.
 - Scanned UI assemblies: the game itself, `SuAPICore`, `SuAPIModDownload`, `SuAPIExternalContentImport`,
-  and `ScMultiplayer` (this repository's own Mods). Third-party Mods are still never scanned unless they
+  `SuMultiplayer`, and `ScMultiplayer` (this repository's own Mods). Third-party Mods are still never scanned unless they
   opt in through the API below.
 
 ### What is excluded, and why
@@ -160,10 +178,16 @@ The local file in `Logs/Translations` is loaded first. It therefore overrides a 
 The package uses the required merge-library layout:
 
 ```
-[SuAPI]TranslationMod-1.6.49.scmod
+[SuAPI]ChinesePak-1.6.49.scmod
 |- ModInfo.xml
 |- Lib/TranslationMod.dll
 `- Content/zh_CN.xml
 ```
 
-Build the project before packaging. Use the final obfuscated DLL at `bin/Debug/net8.0/Obfuscar/TranslationMod.dll`; do not package Engine, Survivalcraft, or EntitySystem DLLs.
+Package filenames use `[SuAPI]<name>-<Mod version>.scmod`; the API version belongs in `ModInfo.xml` and is omitted from the filename.
+
+Build the current `net10.0` project before packaging. For a Release build, use the final obfuscated DLL at `bin/Release/net10.0/Obfuscar/TranslationMod.dll`; do not package Engine, Survivalcraft, or EntitySystem DLLs.
+
+Core dependencies are exact NuGet references to `[0.2.1.0]` (SDK 10, `net10.0`).
+The Release-only `ObfuscateMod` target resolves dependencies from MSBuild's package assets
+in `obj/Release/net10.0/ObfuscarDependencies` and processes only the Mod's own DLL.
