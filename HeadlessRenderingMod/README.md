@@ -1,10 +1,10 @@
 # HeadlessRenderingMod
 
-SuAPI-only headless server control for the published Windows Survivalcraft build. The Mod does not patch or replace the game DLLs and does not require any external Mod.
+SuAPI-only headless server control for the published Windows and Linux Survivalcraft builds. The Mod does not patch or replace the game DLLs and does not require any external Mod.
 
 ## Build for SuAPI 0.2.1.0
 
-HRM is HeadlessRenderingMod. The Mod version is `1.4.1`; its required API version is
+HRM is HeadlessRenderingMod. The Mod version is `1.4.2`; its required API version is
 `0.2.1.0`. The four core dependencies use exact NuGet references `[0.2.1.0]` from
 the configured CNB package source, without building the engine or using local core DLLs.
 
@@ -18,6 +18,30 @@ resolved NuGet assets, not hard-coded package cache versions. Package the final
 `Lib/HeadlessRenderingMod.dll`, with `ModInfo.xml` at the ZIP root and an empty
 `Content/` directory. Keep `IsMergeLib=true`; do not bundle game core assemblies.
 All eight Windows/Linux native libraries are embedded in this one Mod DLL.
+
+## Linux without graphics hardware
+
+Copy the Linux game release and install `[SuAPI]HeadlessRenderingMod-1.4.2.scmod`.
+Add SuMultiplayer separately when multiplayer hosting is required. HRM supplies
+its own GBM, DRM, EGL, GLES and input implementations plus a libc device proxy;
+it does not require installing a desktop, display server or GPU driver stack.
+The release's bundled OpenAL library uses its null audio backend.
+
+SuAPI 0.2 introduced screen extensions that can initialize Engine.Window before
+external Mods load. HRM 1.4.1 attempted to install another DllImportResolver and
+failed when Engine had already registered one. Version 1.4.2 uses SuAPI's parent
+field API to validate the SDK's native library map and direct the six entries to
+HRM's extracted libraries. Engine retains its resolver; game assemblies and
+system libraries are not replaced.
+
+HRM also initializes OpenTK's display cache through the fake GBM/EGL backend and
+an eventfd from the libc proxy. This skips physical GPU enumeration entirely:
+an empty `/dev/dri` works, and HRM creates no device nodes or system files.
+
+Native mappings and library handles last for the process lifetime. Restart the
+process after installing or removing HRM. An incompatible map or a library load
+failure stops initialization explicitly. Package names contain only the Mod
+version; the API version remains in ModInfo.xml.
 
 Do not package `server.json`, authentication tokens, world files, or workstation
 deployment credentials. The instance creates its own configuration at runtime.

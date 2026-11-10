@@ -19,7 +19,9 @@ public class ControlAnimalComponent : Component, IUpdateable
     private ComponentPlayer m_player;
     private SubsystemGameWidgets m_gameWidgets;
     private SubsystemBodies m_bodies;
-    private SubsystemUpdate m_subsystemUpdate;
+    private UpdateExtensionRegistry m_updates;
+    private bool m_projectDisposing;
+    private readonly string m_updateOwner = "ControlAnimal/" + Guid.NewGuid().ToString("N");
     private SubsystemTerrain m_terrain;
     private SubsystemPickables m_pickables;
     private SubsystemAudio m_audio;
@@ -66,14 +68,24 @@ public class ControlAnimalComponent : Component, IUpdateable
         m_player = Entity.FindComponent<ComponentPlayer>(throwOnError: true);
         m_gameWidgets = Project.FindSubsystem<SubsystemGameWidgets>(throwOnError: true);
         m_bodies = Project.FindSubsystem<SubsystemBodies>(throwOnError: true);
-        m_subsystemUpdate = Project.FindSubsystem<SubsystemUpdate>(throwOnError: true);
+        m_updates = UpdateExtensionRegistry.For(ModManager.Instance.ModEventBus);
         m_terrain = Project.FindSubsystem<SubsystemTerrain>(throwOnError: true);
         m_pickables = Project.FindSubsystem<SubsystemPickables>(throwOnError: true);
         m_audio = Project.FindSubsystem<SubsystemAudio>(throwOnError: true);
+        GameManager.ProjectDisposed += OnProjectDisposing;
+    }
+
+    // Source: Survivalcraft/Game/GameManager.cs:GameManager.DisposeProject
+    // ProjectDisposed runs before Project.Dispose; the coordinator releases its binding first.
+    private void OnProjectDisposing(Project project)
+    {
+        if (ReferenceEquals(project, Project))
+            m_projectDisposing = true;
     }
 
     public override void Dispose()
     {
+        GameManager.ProjectDisposed -= OnProjectDisposing;
         // Source: Survivalcraft/Game/PlayerData.cs:PlayerData.OnEntityRemoved
         // The GameWidget survives player death/respawn, so entity-owned HUD widgets must be detached.
         if (m_isControlling)
@@ -876,7 +888,7 @@ public class ControlAnimalComponent : Component, IUpdateable
 
     private void SuspendAnimalBehaviors(ComponentCreature animal)
     {
-        // Source: Survivalcraft/Game/SubsystemUpdate.cs:SubsystemUpdate.RemoveUpdateable
+        // Source: Survivalcraft/SuAPI/UpdateExtensionRegistry.cs:UpdateExtensionRegistry.SuspendHostUpdates
         m_suspendedBehaviors.Clear();
         foreach (ComponentBehavior behavior in animal.Entity.FindComponents<ComponentBehavior>())
         {
@@ -898,14 +910,14 @@ public class ControlAnimalComponent : Component, IUpdateable
                 updateable is ComponentPilot)
             {
                 m_suspendedUpdateables.Add(updateable);
-                m_subsystemUpdate.RemoveUpdateable(updateable);
+                m_updates.SuspendHostUpdates(m_updateOwner, updateable);
             }
         }
     }
 
     private void RestoreAnimalBehaviors()
     {
-        // Source: Survivalcraft/Game/SubsystemUpdate.cs:SubsystemUpdate.AddUpdateable
+        // Source: Survivalcraft/SuAPI/UpdateExtensionRegistry.cs:UpdateExtensionRegistry.ResumeHostUpdates
         if (m_controlledAnimal == null)
         {
             m_suspendedBehaviors.Clear();
@@ -914,7 +926,10 @@ public class ControlAnimalComponent : Component, IUpdateable
         }
         foreach (IUpdateable updateable in m_suspendedUpdateables)
         {
-            m_subsystemUpdate.AddUpdateable(updateable);
+            // Source: Survivalcraft/SuAPI/UpdateExtensionProjectBinding.cs:UpdateExtensionProjectBinding.Dispose
+            // Project teardown has already released all owner pauses and removed the binding.
+            if (!m_projectDisposing)
+                m_updates.ResumeHostUpdates(m_updateOwner, updateable);
         }
         m_suspendedUpdateables.Clear();
         foreach (ComponentBehavior behavior in m_suspendedBehaviors)

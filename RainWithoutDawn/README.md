@@ -1,48 +1,28 @@
-# RainWithoutDawn
+# RainWithoutDawn 冷雨夜
 
-SurvivalCraft SuAPI demo2
+适用于 SuAPI 0.2.1.0，Mod 版本 1.0.0。
 
-# ﻿压缩包结构
+保持原版冷雨夜行为：持续启动降水和雾，将昼夜时间维持在午夜附近的原有区间。
+降水类型与可见强度仍由原版天气、温度、湿度及世界设置决定。
+使用 `UpdateExtension<SubsystemWeather>` 在原版天气更新后执行，保留原版更新；
+通过公开接口控制天气和原版 `SubsystemTimeOfDay.TimeOfDayOffset`，不替换任何子系统。
+卸载时释放扩展注册。时间偏移仍由原版子系统保存。
 
-tree
+使用 .NET SDK 10 和固定版本的 Engine、EntitySystem、Survivalcraft NuGet 包构建：
 
-```csharp
-[SuAPI]冷雨夜（适用于V0116测试）.scmod
-    ├── Lib/
-    │   ├── X64/
-    │   │   └── RainWithoutDawn.dll
-    │   └── Arm64/
-    │       └── RainWithoutDawn.dll
-    ├── Content/
-    │   └── Textures/
-    └── ModInfo.xml
+```powershell
+dotnet restore RainWithoutDawn.csproj --source https://nuget.cnb.cool/suceru.cb/SuAPICore/-/packages/v3/index.json --source https://api.nuget.org/v3/index.json
+dotnet build RainWithoutDawn.csproj -c Release --no-restore
 ```
 
-# 安装位置
+Release 构建只混淆本 Mod，最终 DLL 为 `bin/Release/net10.0/Obfuscar/RainWithoutDawn.dll`。
+Windows 与 Android 使用同一份 DLL。包文件名：`[SuAPI]RainWithoutDawn-1.0.0.scmod`。
 
-tree
-
-```csharp
-Application/
-├── Survivalcraft.exe
-└── Mods/
-    └── [SuAPI]冷雨夜（适用于V0116测试）.scmod
-        ├── Lib/
-        │   ├── X64/
-        │   │   └── RainWithoutDawn.dll
-        │   └── Arm64/
-        │       └── RainWithoutDawn.dll
-        ├── Content/
-        │   └── Textures/
-        └── ModInfo.xml
+```text
+ModInfo.xml
+Lib/RainWithoutDawn.dll
+Content/                 （有资源时）
 ```
 
-# 结构说明
-
-路径	类型	说明
-
-- Lib/X64/RainWithoutDawn.dll	文件	64位系统所需的库文件
-- Lib/Arm64/RainWithoutDawn.dll	文件	ARM64系统所需的库文件
-- Content/Textures/	目录	纹理资源文件夹
-- ModInfo.xml	文件	模组配置文件
-
+ZIP 条目使用 `/`，不包含外层目录、平台子目录或引擎 DLL。
+将 `.scmod` 放入游戏 `Mods/` 目录；仅适用于支持该扩展 API 的 SuAPI 版本。

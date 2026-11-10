@@ -6,7 +6,7 @@
       <Text lang="en_US">Headless Server</Text>
       <Text lang="zh_CN">无画面服务器</Text>
     </LocalizedName>
-    <Version>1.4.1</Version>
+    <Version>1.4.2</Version>
     <APIVersion>0.2.1.0</APIVersion>
     <Asset>
       <ContentRoot>Content</ContentRoot>

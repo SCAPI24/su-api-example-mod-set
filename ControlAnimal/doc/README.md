@@ -62,3 +62,14 @@
 ## Implementation Boundary
 
 This is a Mod-only control-target switch. The native `ComponentPlayer` remains the input, UI, save, and lifecycle host; the controlled animal is not registered as a second native player.
+
+## SuAPI 0.2.1.0
+
+The two player components are independently appended; no native subsystem, component, or screen is replaced.
+Animal AI updates are suspended through an owner specific to each controlling component. Releasing control
+only removes that owner's suspension, so another Mod's suspension remains effective.
+
+Build with .NET SDK 10: `dotnet build Mod/ControlAnimal/ControlAnimal.csproj -c Release`.
+The core NuGet references are pinned to `[0.2.1.0]`, targeting `net10.0`.
+Package the final `bin/Release/net10.0/Obfuscar/ControlAnimal.dll` as
+`[SuAPI]ControlAnimal-1.0.0.scmod`, with `ModInfo.xml` at the ZIP root and a flat `Lib/`.

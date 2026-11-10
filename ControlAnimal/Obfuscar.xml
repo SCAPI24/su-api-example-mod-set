@@ -1,9 +1,10 @@
 <?xml version='1.0'?>
 <Obfuscator>
-  <Var name="InPath" value=".\bin\Release\net8.0" />
-  <Var name="OutPath" value=".\bin\Release\net8.0\Obfuscar" />
+  <Var name="InPath" value=".\bin\Release\net10.0" />
+  <Var name="OutPath" value=".\bin\Release\net10.0\Obfuscar" />
   <Var name="SkipExtraDependencies" value="true" />
-  <Module file="$(InPath)\EntitySystem.dll" />
+  <Var name="KeepPublicApi" value="true" />
+  <AssemblySearchPath path=".\obj\Release\net10.0\ObfuscarDependencies" />
   <Module file="$(InPath)\ControlAnimal.dll">
     <SkipType name="ControlAnimal.ControlAnimalComponent" />
     <SkipType name="ControlAnimal.ControlAnimalUiComponent" />

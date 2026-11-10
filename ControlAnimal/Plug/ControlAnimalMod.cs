@@ -7,6 +7,8 @@ namespace ControlAnimal;
 
 public class ControlAnimalMod : IMod
 {
+    private IModEventBus m_eventBus;
+    private EventSubscriptionToken m_databaseSubscription;
     public string Name => "控制动物";
     public string Version => "1.0.0";
     public IEnumerable<string> Dependencies => Array.Empty<string>();
@@ -15,7 +17,10 @@ public class ControlAnimalMod : IMod
 
     public void OnLoad(IModEventBus eventBus, IModInjector modInjector)
     {
-        eventBus.SubscribeEvent("GameDatabase.GameDatabase", args =>
+        OnUnload();
+        m_eventBus = eventBus;
+        // Source: EntitySystem/SuAPI/IModEventBus.cs:IModEventBus.SubscribeEvent
+        m_databaseSubscription = eventBus.SubscribeEvent("GameDatabase.GameDatabase", args =>
         {
             return HandleGameDatabase((Database)args[0]);
         }, EventPriority.HIGHEST);
@@ -101,5 +106,10 @@ public class ControlAnimalMod : IMod
 
     public void OnUnload()
     {
+        // Source: EntitySystem/SuAPI/IModEventBus.cs:IModEventBus.UnsubscribeEvent
+        if (m_databaseSubscription != null)
+            m_eventBus.UnsubscribeEvent(m_databaseSubscription);
+        m_databaseSubscription = null;
+        m_eventBus = null;
     }
 }

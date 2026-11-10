@@ -1,16 +1,11 @@
-﻿<?xml version='1.0'?>
+<?xml version="1.0" encoding="utf-8"?>
 <Obfuscator>
-	<Var name="InPath" value=".\bin\Debug\net8.0" />
-	<Var name="OutPath" value=".\bin\Debug\net8.0\Obfuscar" />
-
-	<!-- 强制跳过所有外部依赖检查 -->
-	<Var name="SkipExtraDependencies" value="true" />
-
-
-	<!-- 设置仅处理当前程序集 
-		
-	-->
-	<Module file="$(InPath)\EntitySystem.dll"/>
-	<Module file="$(InPath)\TemperatureImmunity.dll"/>
-
+    <Var name="InPath" value=".\bin\Release\net10.0" />
+    <Var name="OutPath" value=".\bin\Release\net10.0\Obfuscar" />
+    <Var name="SkipExtraDependencies" value="true" />
+    <AssemblySearchPath path=".\obj\Release\net10.0\ObfuscarDependencies" />
+    <Module file="$(InPath)\TemperatureImmunity.dll">
+        <!-- Source: Plug/TemperatureImmunity.cs:TemperatureImmunityMod. -->
+        <SkipType name="TemperatureImmunity.TemperatureImmunityMod" />
+    </Module>
 </Obfuscator>

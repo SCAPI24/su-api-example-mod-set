@@ -1,54 +1,36 @@
-using System;
-using Engine;
 using Game;
-using GameEntitySystem;
-using TemplatesDatabase;
+using SuAPI;
 
 namespace RainWithoutDawn
 {
-    public class RWDSubsystemTimeOfDay : Game.SubsystemTimeOfDay,IUpdateable
+    public sealed class RWDWeatherExtension : UpdateExtension<SubsystemWeather>
     {
-        private SubsystemGameInfo m_subsystemGameInfo;
-        private SubsystemWeather m_subsystemWeather;
+        private SubsystemGameInfo m_gameInfo;
+        private SubsystemTimeOfDay m_timeOfDay;
 
-        private SubsystemSeasons m_subsystemSeasons;
+        public RWDWeatherExtension(SubsystemWeather host) : base(host) { }
 
-        public UpdateOrder UpdateOrder => UpdateOrder.Default;
-
-        public void Update(float dt)
+        // Source: RWDSubsystemTimeOfDay.cs:RWDSubsystemTimeOfDay.Load
+        public override void Attached()
         {
-            if (m_subsystemGameInfo != null)
+            m_gameInfo = Host.Project.FindSubsystem<SubsystemGameInfo>(throwOnError: true);
+            m_timeOfDay = Host.Project.FindSubsystem<SubsystemTimeOfDay>(throwOnError: true);
+        }
+
+        // Source: RWDSubsystemTimeOfDay.cs:RWDSubsystemTimeOfDay.Update/IsNotMidnight
+        // Keep the original midnight interval and public weather controls on the real hosts.
+        public override void AfterUpdate(float dt, InvocationResult result)
+        {
+            if (!Host.IsPrecipitationStarted) Host.ManualPrecipitationStart();
+            if (!Host.IsFogStarted) Host.ManualFogStart();
+
+            if (!(IntervalUtils.IsBetween(m_timeOfDay.TimeOfDay, m_timeOfDay.Midnight - 0.1f, m_timeOfDay.Midnight)
+                || IntervalUtils.IsBetween(m_timeOfDay.TimeOfDay, 0f, 0.1f)))
             {
-                if (!m_subsystemWeather.IsPrecipitationStarted) m_subsystemWeather.ManualPrecipitationStart();
-                if (!m_subsystemWeather.IsFogStarted) m_subsystemWeather.ManualFogStart();
+                float timeToMidnight = IntervalUtils.Interval(
+                    m_timeOfDay.CalculateTimeOfDay(m_gameInfo.TotalElapsedGameTime), m_timeOfDay.Midnight - 0.09f);
+                m_timeOfDay.TimeOfDayOffset += timeToMidnight;
             }
-            if (IsNotMidnight())
-            {            // 计算当前时间到午夜的偏移量
-                float timeToMidnight = IntervalUtils.Interval(CalculateTimeOfDay(m_subsystemGameInfo.TotalElapsedGameTime), Midnight-0.09f);
-
-                // 强制跳转到午夜
-                TimeOfDayOffset += timeToMidnight;
-            }
-
-        }
-
-        // 方法1：直接比较 TimeOfDay 和 Midnight
-        private bool IsNotMidnight()
-        {
-            return !(IntervalUtils.IsBetween(TimeOfDay, Midnight - 0.1f, Midnight) || IntervalUtils.IsBetween(TimeOfDay, 0, 0.1f));
-        }
-        protected override void Load(ValuesDictionary valuesDictionary)
-        {
-            base.Load(valuesDictionary);
-            m_subsystemWeather = base.Project.FindSubsystem<SubsystemWeather>();
-            m_subsystemGameInfo = base.Project.FindSubsystem<SubsystemGameInfo>(throwOnError: true);
-            m_subsystemSeasons = base.Project.FindSubsystem<SubsystemSeasons>(throwOnError: true);
-
-        }
-
-        protected override void Save(ValuesDictionary valuesDictionary)
-        {
-            base.Save(valuesDictionary);
         }
     }
 }

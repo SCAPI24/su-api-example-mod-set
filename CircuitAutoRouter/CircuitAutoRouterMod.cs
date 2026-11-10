@@ -15,11 +15,18 @@ namespace CircuitAutoRouter
         public bool IsEnabled { get; set; }
         public bool IsMergeLib => true;
 
+        private IModEventBus m_eventBus;
+        private EventSubscriptionToken m_databaseToken;
+        private EventSubscriptionToken m_blocksToken;
+
         public void OnLoad(IModEventBus eventBus, IModInjector modInjector)
         {
-            // Register SubsystemCircuitRouter as a new subsystem via GameDatabase manipulation
+            // Source: IModEventBus.cs:SubscribeEvent/UnsubscribeEvent; own only this Mod's subscriptions.
+            OnUnload();
+            m_eventBus = eventBus ?? throw new ArgumentNullException(nameof(eventBus));
+            // This independent subsystem is additive; no vanilla subsystem or shared host is replaced.
             // Source: Database.xml SubsystemTemplate/MemberSubsystemTemplate structure
-            eventBus.SubscribeEvent("GameDatabase.GameDatabase", args =>
+            m_databaseToken = eventBus.SubscribeEvent("GameDatabase.GameDatabase", args =>
             {
                 return HandleGameDatabase((Database)args[0]);
             }, EventPriority.HIGHEST);
@@ -28,7 +35,7 @@ namespace CircuitAutoRouter
             // Source: BlocksManager.Initialize event fires after blocks are loaded
             // Source: Block.cs line 54 — IsEditable is a public bool field
             // Source: RodBlock Index=195, BlocksData.csv IsEditable=FALSE (column 22)
-            eventBus.SubscribeEvent("BlocksManager.Initialize", args =>
+            m_blocksToken = eventBus.SubscribeEvent("BlocksManager.Initialize", args =>
             {
                 try
                 {
@@ -38,7 +45,8 @@ namespace CircuitAutoRouter
                 }
                 catch (Exception ex)
                 {
-                    Log.Error($"[CircuitAutoRouter] Failed to set Rod IsEditable: {ex.Message}");
+                    Log.Error($"[CircuitAutoRouter] Failed to set Rod IsEditable: {ex}");
+                    return new object[] { false, args[0] };
                 }
                 // Return format: { bool success, Block[] blocks }
                 return new object[] { true, args[0] };
@@ -104,11 +112,21 @@ namespace CircuitAutoRouter
             }
             catch (Exception ex)
             {
-                Log.Error($"[CircuitAutoRouter] HandleGameDatabase ERROR: {ex.Message}");
+                Log.Error($"[CircuitAutoRouter] HandleGameDatabase ERROR: {ex}");
                 return new object[] { false, database };
             }
         }
 
-        public void OnUnload() { }
+        // Source: IModEventBus.cs:UnsubscribeEvent(EventSubscriptionToken).
+        public void OnUnload()
+        {
+            if (m_eventBus != null && m_databaseToken != null)
+                m_eventBus.UnsubscribeEvent(m_databaseToken);
+            if (m_eventBus != null && m_blocksToken != null)
+                m_eventBus.UnsubscribeEvent(m_blocksToken);
+            m_databaseToken = null;
+            m_blocksToken = null;
+            m_eventBus = null;
+        }
     }
 }
