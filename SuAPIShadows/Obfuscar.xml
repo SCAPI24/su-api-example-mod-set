@@ -15,5 +15,7 @@
   <Module file="$(InPath)\SuAPIShadows.dll">
     <SkipType name="SuAPIShadows.ShadowsMod" />
     <SkipType name="SuAPIShadows.SubsystemDynamicShadows" />
+    <SkipType name="SuAPIShadows.Foliage.Foliage*" />
+    <SkipType name="SuAPIShadows.VegetationMotionControl" />
   </Module>
 </Obfuscator>

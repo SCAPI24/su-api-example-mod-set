@@ -33,6 +33,7 @@ varying vec4 v_nearDynamicShadowPosition;
 varying vec3 v_worldPosition;
 varying float v_celestialShadowVisibility;
 
+""" + VegetationMotionShaders.Shared + """
 float fogIntegral(float y)
 {
     return smoothstep(u_fogBottomTopDensity.x, u_fogBottomTopDensity.y, y) *
@@ -56,31 +57,32 @@ float calculateFog(vec3 position)
 
 void main()
 {
+    vec3 position = vegetationPosition(a_position, a_color.a);
     v_texcoord = a_texcoord;
-    v_color = a_color;
-    v_fog = calculateFog(a_position);
+    v_color = vec4(a_color.rgb, vegetationAlpha(a_color.a));
+    v_fog = calculateFog(position);
     v_shadowPosition = u_shadowMatrix * vec4(
-        a_position.x - u_shadowOrigin.x,
-        a_position.y,
-        a_position.z - u_shadowOrigin.y,
+        position.x - u_shadowOrigin.x,
+        position.y,
+        position.z - u_shadowOrigin.y,
         1.0);
     // Source: ModelShadowRenderer.cs:Draw — near casters use a separate world-origin projection.
     v_nearDynamicShadowPosition = u_nearDynamicShadowMatrix * vec4(
-        a_position.x - u_nearDynamicShadowOrigin.x,
-        a_position.y,
-        a_position.z - u_nearDynamicShadowOrigin.y,
+        position.x - u_nearDynamicShadowOrigin.x,
+        position.y,
+        position.z - u_nearDynamicShadowOrigin.y,
         1.0);
-    v_worldPosition = a_position;
+    v_worldPosition = position;
     // Source: SubsystemSky.ViewFogBottom/ViewFogTop; fog blocks celestial shadows below its
     // layer, fades through the layer and leaves terrain above it unaffected.
     v_celestialShadowVisibility = mix(
         1.0,
-        smoothstep(u_fogBottomTopDensity.x, u_fogBottomTopDensity.y, a_position.y),
+        smoothstep(u_fogBottomTopDensity.x, u_fogBottomTopDensity.y, position.y),
         u_fogShadowFactor);
     gl_Position = u_viewProjectionMatrix * vec4(
-        a_position.x - u_origin.x,
-        a_position.y,
-        a_position.z - u_origin.y,
+        position.x - u_origin.x,
+        position.y,
+        position.z - u_origin.y,
         1.0);
     OPENGL_POSITION_FIX;
 }
@@ -357,23 +359,27 @@ void main()
     // Survivalcraft/Game/TerrainRenderer.cs:DrawTerrainChunkGeometrySubsets
     public const string ShadowMapVertex = """
 // <Semantic Name='POSITION' Attribute='a_position' />
+// <Semantic Name='COLOR' Attribute='a_color' />
 // <Semantic Name='TEXCOORD' Attribute='a_texcoord' />
 
 uniform vec2 u_shadowOrigin;
 uniform mat4 u_shadowMatrix;
 
 attribute vec3 a_position;
+attribute vec4 a_color;
 attribute vec2 a_texcoord;
 
 varying vec2 v_texcoord;
 varying float v_depth;
+""" + VegetationMotionShaders.Shared + """
 void main()
 {
+    vec3 movingPosition = vegetationPosition(a_position, a_color.a);
     v_texcoord = a_texcoord;
     vec4 position = u_shadowMatrix * vec4(
-        a_position.x - u_shadowOrigin.x,
-        a_position.y,
-        a_position.z - u_shadowOrigin.y,
+        movingPosition.x - u_shadowOrigin.x,
+        movingPosition.y,
+        movingPosition.z - u_shadowOrigin.y,
         1.0);
     v_depth = position.z / position.w;
     gl_Position = position;
@@ -411,6 +417,7 @@ void main()
     // Engine/Matrix.cs:Matrix.CreatePerspectiveFieldOfView
     public const string PointShadowMapVertex = """
 // <Semantic Name='POSITION' Attribute='a_position' />
+// <Semantic Name='COLOR' Attribute='a_color' />
 // <Semantic Name='TEXCOORD' Attribute='a_texcoord' />
 
 uniform vec2 u_shadowOrigin;
@@ -419,18 +426,21 @@ uniform vec3 u_lightPosition;
 uniform float u_lightRadius;
 
 attribute vec3 a_position;
+attribute vec4 a_color;
 attribute vec2 a_texcoord;
 
 varying vec2 v_texcoord;
 varying vec3 v_localPosition;
 
+""" + VegetationMotionShaders.Shared + """
 void main()
 {
+    vec3 movingPosition = vegetationPosition(a_position, a_color.a);
     v_texcoord = a_texcoord;
     vec3 position = vec3(
-        a_position.x - u_shadowOrigin.x,
-        a_position.y,
-        a_position.z - u_shadowOrigin.y);
+        movingPosition.x - u_shadowOrigin.x,
+        movingPosition.y,
+        movingPosition.z - u_shadowOrigin.y);
     v_localPosition = position;
     gl_Position = u_shadowMatrix * vec4(position, 1.0);
     OPENGL_POSITION_FIX;

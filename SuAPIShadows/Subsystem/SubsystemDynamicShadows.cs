@@ -6,6 +6,7 @@ using Game;
 using GameEntitySystem;
 using SuAPI;
 using TemplatesDatabase;
+using SuAPIShadows.Foliage;
 
 namespace SuAPIShadows;
 
@@ -109,6 +110,8 @@ public sealed partial class SubsystemDynamicShadows : SubsystemBlockBehavior, ID
     private sealed class TerrainShadowState
     {
         public RenderTarget2D Target;
+        public VegetationMotionFrame VegetationSnapshot;
+        public double NextVegetationUpdate;
         public RenderTarget2D DynamicTarget;
         public RenderTarget2D NearDynamicTarget;
         public Matrix NearDynamicMatrix;
@@ -243,6 +246,15 @@ public sealed partial class SubsystemDynamicShadows : SubsystemBlockBehavior, ID
             }
             return;
         }
+        try
+        {
+            m_vegetation.Update();
+        }
+        catch (Exception error)
+        {
+            m_renderFailure = new InvalidOperationException("[SuAPIShadows] Vegetation update failed.", error);
+            return;
+        }
         // Source: Engine.Time.FrameDuration and SubsystemGlow.Draw
         UpdatePerformanceBudget(dt);
         if (Time.RealTime >= m_nextGlowRefresh)
@@ -259,6 +271,8 @@ public sealed partial class SubsystemDynamicShadows : SubsystemBlockBehavior, ID
         try { DrawCore(camera, drawOrder); }
         catch (Exception error)
         {
+            try { m_vegetationBounds.End(); }
+            catch (Exception cleanupError) { error = new AggregateException(error, cleanupError); }
             m_renderFailure = new InvalidOperationException(
                 "[SuAPIShadows] Drawing stage " + drawOrder + " failed.", error);
         }
@@ -269,15 +283,21 @@ public sealed partial class SubsystemDynamicShadows : SubsystemBlockBehavior, ID
         if (camera == null) return;
         if (drawOrder == -1)
         {
+            CaptureVegetation(camera);
             PrepareTerrainShadowReceiver(camera);
+            ApplyVegetation(m_shadowedOpaqueTerrainShader, m_vegetationFrame);
+            ApplyVegetation(m_shadowedAlphaTestedTerrainShader, m_vegetationFrame);
+            if (m_vegetationFrame.Enabled) m_vegetationBounds.Begin(m_terrain);
             return;
         }
         if (drawOrder == 2)
         {
+            m_vegetationBounds.End();
             m_emissiveRenderer.Draw(camera, m_terrain, m_sky);
             return;
         }
         if (!SettingsManager.ObjectsShadowsEnabled) return;
+        CaptureVegetation(camera);
         m_modelShadowRenderer.Prepare(camera, 128f);
         UpdateTerrainShadowMap(camera);
         if (m_terrainShadowStates.TryGetValue(camera, out TerrainShadowState state))
@@ -320,24 +340,28 @@ public sealed partial class SubsystemDynamicShadows : SubsystemBlockBehavior, ID
     {
         UpdateBlockLight(value, x, y, z);
         m_emissiveRenderer.Observe(value, x, y, z);
+        InvalidateKelpColumn(value, oldValue, x, z);
     }
 
     public override void OnBlockRemoved(int value, int newValue, int x, int y, int z)
     {
         RemoveBlockLight(new Point3(x, y, z));
         m_emissiveRenderer.Observe(newValue, x, y, z);
+        InvalidateKelpColumn(newValue, value, x, z);
     }
 
     public override void OnBlockModified(int value, int oldValue, int x, int y, int z)
     {
         UpdateBlockLight(value, x, y, z);
         m_emissiveRenderer.Observe(value, x, y, z);
+        InvalidateKelpColumn(value, oldValue, x, z);
     }
 
     public override void OnChunkDiscarding(TerrainChunk chunk)
     {
         // Source: SubsystemBlockBehavior.OnChunkDiscarding
         m_emissiveRenderer.DiscardChunk(chunk);
+        m_vegetationGeometry.Discard(chunk);
         Point2 chunkKey = chunk.Coords;
         if (!m_chunkLights.TryGetValue(chunkKey, out List<Point3> points))
             return;
@@ -351,6 +375,7 @@ public sealed partial class SubsystemDynamicShadows : SubsystemBlockBehavior, ID
     protected override void Load(ValuesDictionary valuesDictionary)
     {
         base.Load(valuesDictionary);
+        ShadowsMod.CheckFoliage();
         m_terrain = Project.FindSubsystem<SubsystemTerrain>(true);
         m_sky = Project.FindSubsystem<SubsystemSky>(true);
         m_timeOfDay = Project.FindSubsystem<SubsystemTimeOfDay>(true);
@@ -372,12 +397,19 @@ public sealed partial class SubsystemDynamicShadows : SubsystemBlockBehavior, ID
             SamplerState.LinearClamp);
         InitializeTerrainShadows();
         m_emissiveRenderer = new EmissiveTerrainRenderer();
+        m_vegetation = new VegetationMotionState(m_terrain, Project.FindSubsystem<SubsystemTime>(true),
+            Project.FindSubsystem<SubsystemSeasons>(true), m_weather, m_terrain.SubsystemGameInfo,
+            Project.FindSubsystem<SubsystemBodies>(true));
         Display.DeviceReset += InvalidateShadowTargets;
     }
 
     public override void Dispose()
     {
         Display.DeviceReset -= InvalidateShadowTargets;
+        m_vegetationBounds.Dispose();
+        m_vegetationGeometry.Clear();
+        m_vegetation = null;
+        m_vegetationFrame = null;
         m_modelShadowRenderer.Dispose();
         m_emissiveRenderer?.Dispose();
         RestoreOriginalModelShadows();
@@ -549,7 +581,7 @@ public sealed partial class SubsystemDynamicShadows : SubsystemBlockBehavior, ID
         Vector2 shadowOrigin,
         Matrix shadowMatrix,
         Vector3 center,
-        float coverage)
+        float coverage, VegetationMotionFrame vegetation)
     {
         RenderTarget2D previousTarget = Display.RenderTarget;
         Viewport previousViewport = Display.Viewport;
@@ -564,6 +596,7 @@ public sealed partial class SubsystemDynamicShadows : SubsystemBlockBehavior, ID
             Display.BlendState = BlendState.Opaque;
             Display.DepthStencilState = DepthStencilState.Default;
             Display.RasterizerState = RasterizerState.CullCounterClockwiseScissor;
+            ApplyVegetation(m_shadowMapShader, vegetation);
             m_shadowMapShader.GetParameter("u_shadowOrigin").SetValue(shadowOrigin);
             m_shadowMapShader.GetParameter("u_shadowMatrix").SetValue(shadowMatrix);
             m_shadowMapShader.GetParameter("u_texture").SetValue(
@@ -774,7 +807,12 @@ public sealed partial class SubsystemDynamicShadows : SubsystemBlockBehavior, ID
             WickerLampBlock.Index,
             LightbulbBlock.Index,
             ChristmasTreeBlock.Index,
-            JackOLanternBlock.Index
+            JackOLanternBlock.Index,
+            TallGrassBlock.Index, RedFlowerBlock.Index, WhiteFlowerBlock.Index, PurpleFlowerBlock.Index,
+            RyeBlock.Index, CottonBlock.Index, PumpkinBlock.Index, RottenPumpkinBlock.Index,
+            DryBushBlock.Index, LargeDryBushBlock.Index, KelpBlock.Index, SeagrassBlock.Index,
+            BirchLeavesBlock.Index, MimosaLeavesBlock.Index, OakLeavesBlock.Index, PoplarLeavesBlock.Index,
+            SpruceLeavesBlock.Index, TallSpruceLeavesBlock.Index
         };
     }
 

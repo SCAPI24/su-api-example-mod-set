@@ -9,9 +9,9 @@
     <CopyLocalLockFileAssemblies>true</CopyLocalLockFileAssemblies>
   </PropertyGroup>
   <ItemGroup>
-    <PackageReference Include="Engine" Version="[0.2.0.0]" />
-    <PackageReference Include="EntitySystem" Version="[0.2.0.0]" />
-    <PackageReference Include="Survivalcraft" Version="[0.2.0.0]" />
+    <PackageReference Include="Engine" Version="[0.2.1.0]" />
+    <PackageReference Include="EntitySystem" Version="[0.2.1.0]" />
+    <PackageReference Include="Survivalcraft" Version="[0.2.1.0]" />
     <PackageReference Include="Obfuscar" Version="2.2.49">
       <PrivateAssets>all</PrivateAssets>
       <IncludeAssets>runtime;build;native;contentfiles;analyzers;buildtransitive</IncludeAssets>

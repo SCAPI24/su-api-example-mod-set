@@ -55,3 +55,11 @@ Release Rebuild与Obfuscar通过（0警告、0错误），同名scmod已替换�
 - 实际游戏单实例进入原世界，角色持有物品且处于白天，运行日志无本轮SuAPIShadows错误；地面轮廓、各类物品及切换观感仍需场景验收。
 
 Source: ComponentHumanModel.cs:DrawExtras；BlocksManager.cs:DrawMeshBlock/DrawCubeBlock/DrawFlatBlock；BasePrimitivesRenderer.cs:FlatBatches/TexturedBatches/FontBatches；VertexBuffer.cs:HandleDeviceReset。
+
+## 2026-11-11 植被风动与0.2.1适配
+
+最新CNB三核心包精确升级为0.2.1.0；主框架未修改。新增18类草/叶/花/作物/灌木/水草包装、共享GPU位移、稳定季节风、有限生物移动扰动、水下专用波动及公开内存开关。具体参数、边界和实测记录见 foliage-wind-implementation-plan.md 文末。
+
+纯Mod接线识别原生BlocksManager.Initialize事件的两种负载：Block[]执行植被注册，ClothingData[]明确不参与。共享injector注册在取得原生Block数组后进行，避免其他Mod较早ApplyBlocks提前消费本方记录。冲突或注册错误明确保存并报告，不猜类型或静默覆盖。
+
+Release编译与Obfuscar通过（0警告、0错误）；最终包已替换指定Mods目录，真实原世界加载及开关关闭/恢复检查通过；诊断代码已移除再重编部署。最新文件为[SuAPI]SuAPIShadows-1.0.1-API0.2.1.0.scmod。当前部署目录仅本包，完整多Mod组合、水下与季节场景、帧时间对照未作通过声明。

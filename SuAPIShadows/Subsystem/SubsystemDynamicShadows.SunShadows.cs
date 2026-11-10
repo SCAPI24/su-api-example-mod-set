@@ -21,6 +21,7 @@ public sealed partial class SubsystemDynamicShadows
             snapshot.Values.Add(chunk.ModificationCounter);
             snapshot.Values.Add(chunk.NewGeometryData ? 1 : 0);
             if (chunk.Geometry == null) { snapshot.Values.Add(-1); continue; }
+            snapshot.VegetationFlags |= m_vegetationGeometry.Flags(chunk);
             snapshot.Values.Add(chunk.Geometry.Buffers.Count);
             foreach (TerrainChunkGeometry.Buffer buffer in chunk.Geometry.Buffers)
             {
@@ -48,13 +49,17 @@ public sealed partial class SubsystemDynamicShadows
             state.NearDynamicValid = false;
             return;
         }
-        if (Time.RealTime < state.NextUpdateTime && state.IsValid) return;
+        bool controlChanged = state.VegetationSnapshot == null || state.VegetationSnapshot.Version != m_vegetationFrame.Version;
+        if (Time.RealTime < state.NextUpdateTime && state.IsValid && !controlChanged) return;
         state.NextUpdateTime = Time.RealTime + GetTerrainShadowInterval();
         float coverage = m_qualityPenalty == 0 ? 80f : 64f;
         Vector3 previousCenter = state.AnchorCenter;
         Vector3 center = GetStableShadowAnchor(state, camera.ViewPosition);
         CaptureSunGeometry(center, coverage, state.PendingGeometry);
-        if (state.IsValid && center == previousCenter && coverage == state.Coverage &&
+        bool moving = HasActiveVegetation(state.PendingGeometry.VegetationFlags, m_vegetationFrame) ||
+            HasActiveVegetation(state.PendingGeometry.VegetationFlags, state.VegetationSnapshot);
+        bool vegetationDue = moving && m_vegetationFrame.SimulationTime >= state.NextVegetationUpdate;
+        if (!controlChanged && !vegetationDue && state.IsValid && center == previousCenter && coverage == state.Coverage &&
             Vector3.DistanceSquared(direction, state.LastLightDirection) < 0.000004f &&
             state.CachedGeometry.Matches(state.PendingGeometry)) return;
 
@@ -63,7 +68,10 @@ public sealed partial class SubsystemDynamicShadows
         Vector3 localCenter = center - origin;
         Matrix matrix = Matrix.CreateLookAt(localCenter + 300f * direction, localCenter, up) *
             Matrix.CreateOrthographic(coverage, coverage, 1f, 600f);
-        RenderTerrainShadowMap(state.Target, origin.XZ, matrix, center, coverage);
+        VegetationMotionFrame vegetation = m_vegetationFrame.Clone();
+        RenderTerrainShadowMap(state.Target, origin.XZ, matrix, center, coverage, vegetation);
+        state.VegetationSnapshot = vegetation;
+        state.NextVegetationUpdate = m_vegetationFrame.SimulationTime + 0.5;
         state.ShadowOrigin = origin.XZ;
         state.ShadowMatrix = matrix;
         state.LastLightDirection = direction;

@@ -2,11 +2,22 @@ using System;
 using System.Collections.Generic;
 using SuAPI;
 using TemplatesDatabase;
+using SuAPIShadows.Foliage;
 
 namespace SuAPIShadows;
 
 public sealed class ShadowsMod : IMod
 {
+    private IModEventBus m_events;
+    private EventSubscriptionToken m_databaseToken;
+    private static FoliageBlockRegistration s_foliage;
+
+    internal static void CheckFoliage()
+    {
+        if (s_foliage == null) throw new InvalidOperationException("[SuAPIShadows] Foliage registration is not loaded.");
+        s_foliage.Check();
+    }
+
     public string Name => "Dynamic Shadows";
 
     public string Version => "1.0.1";
@@ -19,14 +30,28 @@ public sealed class ShadowsMod : IMod
 
     public void OnLoad(IModEventBus eventBus = null, IModInjector modInjector = null)
     {
-        eventBus?.SubscribeEvent("GameDatabase.GameDatabase", args =>
+        if (m_events != null || s_foliage != null) throw new InvalidOperationException("[SuAPIShadows] The Mod is already loaded.");
+        m_events = eventBus ?? throw new ArgumentNullException(nameof(eventBus));
+        try
         {
-            return RegisterSubsystem((Database)args[0]);
-        }, EventPriority.HIGHEST);
+            s_foliage = FoliageBlockRegistration.Install(eventBus, modInjector);
+            m_databaseToken = eventBus.SubscribeEvent("GameDatabase.GameDatabase", args =>
+            {
+                if (args == null || args.Length != 1 || !(args[0] is Database database))
+                    throw new InvalidOperationException("[SuAPIShadows] Invalid GameDatabase event arguments.");
+                return RegisterSubsystem(database);
+            }, EventPriority.HIGHEST);
+        }
+        catch { OnUnload(); throw; }
     }
 
     public void OnUnload()
     {
+        if (m_databaseToken != null) m_events.UnsubscribeEvent(m_databaseToken);
+        m_databaseToken = null;
+        m_events = null;
+        s_foliage?.Dispose();
+        s_foliage = null;
     }
 
     private static object[] RegisterSubsystem(Database database)

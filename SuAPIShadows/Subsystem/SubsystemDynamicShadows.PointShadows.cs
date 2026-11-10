@@ -53,12 +53,14 @@ void main()
         public readonly List<TerrainChunk> Chunks = new List<TerrainChunk>();
         public readonly List<object> Identities = new List<object>();
         public readonly List<int> Values = new List<int>();
+        public int VegetationFlags;
 
         public void Clear()
         {
             Chunks.Clear();
             Identities.Clear();
             Values.Clear();
+            VegetationFlags = 0;
         }
 
         public bool Matches(ShadowGeometrySnapshot other)
@@ -86,6 +88,8 @@ void main()
         public long DynamicRevision = long.MinValue;
         public double NextDynamicCheck;
         public double LastTaskTime;
+        public VegetationMotionFrame VegetationSnapshot;
+        public double NextVegetationUpdate;
         public ShadowGeometrySnapshot Cached = new ShadowGeometrySnapshot();
         public ShadowGeometrySnapshot Pending = new ShadowGeometrySnapshot();
     }
@@ -186,9 +190,15 @@ void main()
             if (!slot.Selected)
                 continue;
             CapturePointGeometry(slot.Light, slot.Pending);
-            slot.StaticDirty = !slot.StaticValid || !slot.Cached.Matches(slot.Pending);
-            if (slot.StaticDirty)
-                slot.StaticValid = false;
+            bool controlChanged = slot.VegetationSnapshot == null || slot.VegetationSnapshot.Version != m_vegetationFrame.Version;
+            bool moving = HasActiveVegetation(slot.Pending.VegetationFlags, m_vegetationFrame) ||
+                HasActiveVegetation(slot.Pending.VegetationFlags, slot.VegetationSnapshot);
+            bool vegetationDue = moving && m_vegetationFrame.SimulationTime >= slot.NextVegetationUpdate;
+            bool invalid = !slot.StaticValid || !slot.Cached.Matches(slot.Pending) || controlChanged;
+            slot.StaticDirty = slot.StaticDirty || invalid || vegetationDue;
+            // A normal low-rate wind refresh can keep sampling the previous completed map while queued.
+            // Changed geometry/control requires invalidation; merely reaching the next wind phase does not.
+            if (invalid) slot.StaticValid = false;
         }
         state.PointLightCount = count;
         state.IsPointValid = count > 0;
@@ -243,7 +253,10 @@ void main()
                 }
             }
             if (!chunk.NewGeometryData && chunk.Geometry.Buffers.Count > 0)
+            {
                 snapshot.Chunks.Add(chunk);
+                snapshot.VegetationFlags |= m_vegetationGeometry.Flags(chunk);
+            }
         }
     }
 
@@ -368,10 +381,12 @@ void main()
         if (renderStatic)
             slot.StaticValid = false;
         slot.DynamicValid = false;
+        VegetationMotionFrame vegetation = renderStatic ? m_vegetationFrame.Clone() : slot.VegetationSnapshot;
         try
         {
             if (renderStatic)
             {
+                ApplyVegetation(m_pointShadowMapShader, vegetation);
                 m_pointShadowMapShader.GetParameter("u_texture").SetValue(
                     m_terrain.SubsystemAnimatedTextures.AnimatedBlocksTexture);
                 m_pointShadowMapShader.GetParameter("u_samplerState").SetValue(SamplerState.PointClamp);
@@ -391,8 +406,9 @@ void main()
                     m_pointShadowMapShader.GetParameter("u_shadowMatrix").SetValue(matrix);
                     foreach (TerrainChunk chunk in slot.Pending.Chunks)
                     {
-                        BoundingBox localBox = new BoundingBox(chunk.BoundingBox.Min - origin,
-                            chunk.BoundingBox.Max - origin);
+                        Vector3 margin = new Vector3(0.11f, 0f, 0.11f);
+                        BoundingBox localBox = new BoundingBox(chunk.BoundingBox.Min - origin - margin,
+                            chunk.BoundingBox.Max - origin + margin);
                         if (frustum.Intersection(localBox))
                             DrawTerrainSubsets(m_pointShadowMapShader, chunk.Geometry, 63);
                     }
@@ -407,6 +423,8 @@ void main()
                 slot.Pending = previous;
                 slot.StaticDirty = false;
                 slot.StaticValid = true;
+                slot.VegetationSnapshot = vegetation;
+                slot.NextVegetationUpdate = m_vegetationFrame.SimulationTime + 1.0;
             }
             slot.DynamicValid = true;
             slot.DynamicRevision = revision;
