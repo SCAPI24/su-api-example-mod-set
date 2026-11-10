@@ -1,3 +1,5 @@
+> 历史方案提示（2026-11-10）：本文的自动 Register→Add、多实例 Chain.IsLast 路线已由主仓库 [Screen 生命周期与共享宿主设计](../../doc/screen-lifecycle-dispatch-design.md) 替代。当前附加使用独立扩展对象、统一调用执行器和真实 Host；本文保留为设计演变记录，不作为新 API 使用指南。
+
 # SuAPI 子系统分发器 —— 最小可行实验指南
 
 > 目的：**用一个最小案例验证核心机制是否成立**，再决定是否推广到 110 个子系统
@@ -87,27 +89,33 @@ public class SubsystemTimeOfDay : Subsystem        // ← 不实现 IUpdateable
 
 ## 3. 步骤 1：SuAPI 分发器类
 
-### 放在哪
+### 放在哪（2026-11-09 定稿）
 
-**`EntitySystem/SuAPICore/`** 下（SuAPI Core 是内置 Mod，所有端都有）。
+**`Survivalcraft/SuAPI/`** → 编译进 **`Survivalcraft.dll`**（Mod 引用的三件套之一）。
 
-⚠️ **不要**放到某个外部 Mod —— 否则那个 Mod 没装时，`Class` 指向的类找不到 → **游戏启动崩溃**。
+| 位置 | 能否继承 `Game.Subsystem*` | Mod 能否引用 | 结论 |
+|---|---|---|---|
+| `EntitySystem/SuAPI/` | ❌ EntitySystem 不引用 Survivalcraft | ✅ | 不可行（循环依赖） |
+| `EntitySystem/SuAPICore/` | ✅ | ❌ 不在三件套里 | 可用但 Mod 访问不到类型 |
+| **`Survivalcraft/SuAPI/`** | ✅ | ✅ **就在三件套里** | ✅ **采用** |
+
+⚠️ **不要**放到某个外部 Mod —— 那个 Mod 没装时 `Class` 指向的类找不到 → **游戏启动崩溃**。
 
 ### 代码
 
 ```csharp
-// EntitySystem/SuAPICore/Dispatch/SubsystemTimeOfDay.cs
+// Survivalcraft/SuAPI/SubsystemTimeOfDay.cs
 using Game;
 using GameEntitySystem;
 using TemplatesDatabase;
 
-namespace SuAPI.Dispatch
+namespace SuAPI
 {
     /// <summary>
     /// 替换 Game.SubsystemTimeOfDay 的分发器。
     ///
     /// 职责只有一个：占住 Class 参数位置，把引擎的调用时刻转发成事件。
-    /// **不预设任何 Mod 需求** —— Mod 需要什么，从 args[0]（本实例）上自己取。
+    /// 不预设任何 Mod 需求 —— Mod 需要什么，从事件的 Host 上自己取。
     /// </summary>
     public class SubsystemTimeOfDay : Game.SubsystemTimeOfDay, IUpdateable
     {
@@ -132,10 +140,48 @@ namespace SuAPI.Dispatch
 
         private void Fire(string operation, object payload)
         {
+            var e = new DispatchEventArgs
+            {
+                Host = this,
+                Operation = operation,
+                Payload = payload
+            };
             ModManager.Instance?.ModEventBus?.TriggerEvent(
-                "SuAPI.SubsystemTimeOfDay." + operation,
-                new object[] { this, payload });
+                "SuAPI.SubsystemTimeOfDay",
+                new object[] { e });      // ← 只传一个元素，里面是强类型对象
         }
+    }
+}
+```
+
+### 配套：事件参数类
+
+```csharp
+// Survivalcraft/SuAPI/DispatchEventArgs.cs
+namespace SuAPI
+{
+    /// <summary>分发器事件参数：字段有名字，Mod 不需要记 args 位置。</summary>
+    public sealed class DispatchEventArgs
+    {
+        /// <summary>分发器实例（被引擎创建的那个子系统），可访问所有 public 成员。</summary>
+        public Game.SubsystemTimeOfDay Host { get; init; }
+
+        /// <summary>操作名，用 Operations 常量比较。</summary>
+        public string Operation { get; init; }
+
+        /// <summary>原生参数：Load/Save 是 ValuesDictionary，Update 是 float dt。</summary>
+        public object Payload { get; init; }
+
+        /// <summary>结果槽（bool 返回值的方法用到）。</summary>
+        public bool Handled { get; set; }
+    }
+
+    /// <summary>操作名常量：拼错会编译报错。</summary>
+    public static class Operations
+    {
+        public const string Load   = "Load";
+        public const string Save   = "Save";
+        public const string Update = "Update";
     }
 }
 ```
@@ -145,11 +191,10 @@ namespace SuAPI.Dispatch
 | 项 | 说明 |
 |---|---|
 | `base.Load(vd)` 必须调 | 否则 `m_subsystemGameInfo` / `m_subsystemSeasons` 为 null，`TimeOfDay` 取值会 NRE |
-| `Update` **不能**调 `base.Update` | 父类没有 `Update` 方法 |
+| `Update` **不能**调 `base.Update` | 父类 `SubsystemTimeOfDay` 根本没有 `Update` 方法 |
 | `UpdateOrder` 默认值 | `UpdateOrder.Default`（= 0）。若与其他子系统有顺序要求需调整 |
-| 事件名 | `SuAPI.SubsystemTimeOfDay.Load` / `.Update` / `.Save` |
-
----
+| 事件名 | `"SuAPI.SubsystemTimeOfDay"`（**一个子系统一个事件**，用 `Operation` 区分操作） |
+| `args[0]` | 是 `SuAPI.DispatchEventArgs`，不是裸的宿主实例 |
 
 ## 4. 步骤 2：抢占 Class 参数
 
@@ -165,7 +210,7 @@ public void OnLoad(IModEventBus eventBus, IModInjector modInjector)
     // ── 新增：抢占子系统 Class 参数 ──
     modInjector.Register(
         "Game.SubsystemTimeOfDay",                  // Original
-        "SuAPI.Dispatch.SubsystemTimeOfDay");       // New = 分发器
+        "SuAPI.SubsystemTimeOfDay");              // New = 分发器
 
     // ── 新增：在 GameDatabase 事件里 Apply ──
     eventBus.SubscribeEvent("GameDatabase.GameDatabase", args =>
@@ -229,7 +274,7 @@ eventBus.SubscribeEvent("GameDatabase.GameDatabase", args =>
 }, EventPriority.HIGHEST);
 ```
 
-**预期日志**：`[SuAPI-实验] TimeOfDay.Class = SuAPI.Dispatch.SubsystemTimeOfDay`
+**预期日志**：`[SuAPI-实验] TimeOfDay.Class = SuAPI.SubsystemTimeOfDay`
 
 > ⚠️ 诊断日志用 `[SuAPI-实验]` 前缀，**验证完立即删除**（AGENTS.md 要求）。
 
@@ -237,7 +282,7 @@ eventBus.SubscribeEvent("GameDatabase.GameDatabase", args =>
 
 | 现象 | 原因 | 修法 |
 |---|---|---|
-| 启动崩溃 `Type "SuAPI.Dispatch.SubsystemTimeOfDay" not found` | 分发器类不在已加载程序集里 | 确认在 SuAPICore 工程内、且 SuAPICore 先于 GameDatabase 加载 |
+| 启动崩溃 `Type "SuAPI.SubsystemTimeOfDay" not found` | 分发器类不在已加载程序集里 | 确认文件在 `Survivalcraft/SuAPI/` 下（编进 Survivalcraft.dll） |
 | 时间不动 | `Load` 里没调 `base.Load` | 补上 |
 | `NullReferenceException` in `TimeOfDay` getter | `m_subsystemGameInfo` 为 null | 同上 |
 
@@ -260,17 +305,15 @@ namespace TestMod
 
         public void OnLoad(IModEventBus eventBus, IModInjector modInjector)
         {
-            eventBus.SubscribeEvent("SuAPI.SubsystemTimeOfDay.Load", args =>
+            // 泛型扩展：事件名自动取 typeof(T).FullName，host 已是强类型
+            eventBus.SubscribeDispatch<SuAPI.SubsystemTimeOfDay>((host, e) =>
             {
-                Log.Information("[TestModA] Load 被调用！");
-                return new object[] { false };
-            }, EventPriority.NORMAL);
-
-            eventBus.SubscribeEvent("SuAPI.SubsystemTimeOfDay.Update", args =>
-            {
-                // 每帧触发，别打日志（会刷屏），用计数器
-                return new object[] { false };
-            }, EventPriority.NORMAL);
+                if (e.Operation == SuAPI.Operations.Load)
+                {
+                    Log.Information("[TestModA] Load 被调用！");
+                }
+                // Update 每帧触发，别打日志（会刷屏）
+            });
         }
 
         public void OnUnload() { }
@@ -327,28 +370,27 @@ public void OnLoad(IModEventBus eventBus, IModInjector modInjector)
 {
     SubsystemWeather m_weather = null;
 
-    eventBus.SubscribeEvent("SuAPI.SubsystemTimeOfDay.Load", args =>
+    eventBus.SubscribeDispatch<SuAPI.SubsystemTimeOfDay>((host, e) =>
     {
-        var host = (Game.SubsystemTimeOfDay)args[0];
+        // Load 时刻：自己找需要的子系统（SuAPI 不知道也不关心）
+        if (e.Operation == SuAPI.Operations.Load)
+        {
+            // 用户口径：Load 时机不保证对方已 Load 完 → 自己判空，不要 throwOnError: true
+            m_weather = host.Project.FindSubsystem<SubsystemWeather>(false);
+            Log.Information("[TestModA] Weather = " + (m_weather != null ? "OK" : "null"));
+            return;
+        }
 
-        // 用户口径：Load 时机不保证对方已 Load 完 → 自己判空，不要 throwOnError: true
-        m_weather = host.Project.FindSubsystem<SubsystemWeather>(false);
-        Log.Information("[TestModA] Weather = " + (m_weather != null ? "OK" : "null"));
-        return new object[] { false };
-    }, EventPriority.NORMAL);
-
-    eventBus.SubscribeEvent("SuAPI.SubsystemTimeOfDay.Update", args =>
-    {
-        var host = (Game.SubsystemTimeOfDay)args[0];
+        // Update 时刻：每帧强制天气
+        if (e.Operation != SuAPI.Operations.Update) return;
         if (m_weather == null)
         {
             m_weather = host.Project.FindSubsystem<SubsystemWeather>(false);   // 迟到的补拿
-            if (m_weather == null) return new object[] { false };
+            if (m_weather == null) return;
         }
         if (!m_weather.IsPrecipitationStarted) m_weather.ManualPrecipitationStart();
         if (!m_weather.IsFogStarted)           m_weather.ManualFogStart();
-        return new object[] { false };
-    }, EventPriority.NORMAL);
+    });
 }
 ```
 
@@ -360,30 +402,29 @@ public void OnLoad(IModEventBus eventBus, IModInjector modInjector)
     IModParentField parentField = modInjector.ModParentField;   // ← SuAPI 已有工具
     SubsystemGameInfo m_gameInfo = null;
 
-    eventBus.SubscribeEvent("SuAPI.SubsystemTimeOfDay.Load", args =>
+    eventBus.SubscribeDispatch<SuAPI.SubsystemTimeOfDay>((host, e) =>
     {
-        var host = (Game.SubsystemTimeOfDay)args[0];
-        m_gameInfo = parentField.GetParentField<SubsystemGameInfo>(
-            host, "m_subsystemGameInfo");
-        Log.Information("[TestModB] GameInfo = " + (m_gameInfo != null ? "OK" : "null"));
-        return new object[] { false };
-    }, EventPriority.NORMAL);
+        // Load 时刻：用 SuAPI 工具拿父类私有字段
+        if (e.Operation == SuAPI.Operations.Load)
+        {
+            m_gameInfo = parentField.GetParentField<SubsystemGameInfo>(
+                host, "m_subsystemGameInfo");
+            Log.Information("[TestModB] GameInfo = " + (m_gameInfo != null ? "OK" : "null"));
+            return;
+        }
 
-    eventBus.SubscribeEvent("SuAPI.SubsystemTimeOfDay.Update", args =>
-    {
-        var host = (Game.SubsystemTimeOfDay)args[0];
-        if (m_gameInfo == null) return new object[] { false };
+        // Update 时刻：强制跳到午夜（RainWithoutDawn 的原逻辑）
+        if (e.Operation != SuAPI.Operations.Update) return;
+        if (m_gameInfo == null) return;               // 自己判空
 
-        // 强制跳到午夜（RainWithoutDawn 的原逻辑）
         if (IsNotMidnight(host))
         {
             float timeToMidnight = IntervalUtils.Interval(
                 host.CalculateTimeOfDay(m_gameInfo.TotalElapsedGameTime),
                 host.Midnight - 0.09f);
-            host.TimeOfDayOffset += timeToMidnight;
+            host.TimeOfDayOffset += timeToMidnight;    // public set，直接改
         }
-        return new object[] { false };
-    }, EventPriority.NORMAL);
+    });
 }
 
 private static bool IsNotMidnight(Game.SubsystemTimeOfDay host) =>
