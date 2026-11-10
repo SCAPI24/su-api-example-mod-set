@@ -88,7 +88,7 @@ namespace SuMultiplayer.UI
         /// <summary>
         /// 上一帧是否在游戏世界里。用于识别"**从世界退出**"（Project 变 null）：
         /// 引擎游戏内退出走 GameMenuDialog → DisposeProject → SwitchScreen("MainMenu")，
-        /// **不进 Play 屏**，所以 SuPlayScreen.Enter 的 LeaveRoom 根本不会执行（实测客户端
+        /// **不进 Play 屏**，所以 SuPlayScreenExtension.Enter 的 LeaveRoom 根本不会执行（实测客户端
         /// 退房后 TCP 一直不断、主机 4.5 分钟仍看到角色留在地图）。
         /// 只有"之前在世界里"才算退出，避免加入房间/加载世界期间（Project 还没建好）误退房。
         /// </summary>

@@ -1,9 +1,11 @@
 using System;
 using System.Collections.Generic;
+using System.Reflection;
 using System.Threading.Tasks;
 using System.Xml.Linq;
 using Engine;
 using Game;
+using SuAPI;
 using SuMultiplayer.Engine;
 using SuMultiplayer.Modules;
 using SuMultiplayer.Session;
@@ -11,7 +13,7 @@ using SuMultiplayer.Session;
 namespace SuMultiplayer.UI
 {
     /// <summary>
-    /// Play 屏（世界列表）—— **加入房间的唯一入口**。
+    /// 附加到真实 Play 屏的混合世界列表控制器—— **加入房间的唯一入口**。
     ///
     /// 迁移自旧实现 <c>Mod/ScMultiplayer/Func/Screen/SuPlayScreen.cs</c>：
     ///   · 局域网房间和本地世界一样是**列表里的一行**（本地行在前，房间行在后）；
@@ -24,12 +26,18 @@ namespace SuMultiplayer.UI
     ///
     /// 演示页标记：PLAY01。
     /// </summary>
-    public sealed class SuPlayScreen : PlayScreen
+    public sealed class SuPlayScreenExtension : ScreenExtension<PlayScreen>
     {
+        // Source: PlayScreen.cs:PlayScreen.Update — return native bookkeeping when this Mod releases the list.
+        private static readonly FieldInfo s_nativeWorldsSize = typeof(PlayScreen).GetField(
+            "m_totalWorldsSize", BindingFlags.Instance | BindingFlags.NonPublic)
+            ?? throw new MissingFieldException(typeof(PlayScreen).FullName, "m_totalWorldsSize");
+        private readonly IModEventBus m_eventBus;
         private readonly IRoomBrowsePort m_rooms;
         private readonly IWorldReadyPort m_ready;
         private readonly IDownloadedWorldPort m_downloads;
-        private readonly ListPanelWidget m_list;
+        private ListPanelWidget m_list;
+        private ListPanelControllerToken m_listController;
         private readonly List<WorldInfo> m_localWorlds = new List<WorldInfo>();
         private readonly List<RoomRow> m_roomOrder = new List<RoomRow>();
         private readonly Dictionary<string, RoomRow> m_roomRows = new Dictionary<string, RoomRow>(StringComparer.Ordinal);
@@ -48,28 +56,45 @@ namespace SuMultiplayer.UI
             public string Key => Entry?.Key ?? string.Empty;
         }
 
-        public SuPlayScreen(IRoomBrowsePort rooms, IWorldReadyPort ready, IDownloadedWorldPort downloads)
-            : base()
+        // Source: SuPlayScreen.cs:SuPlayScreen.SuPlayScreen; ScreenExtension.cs:ScreenExtension<TScreen>
+        public SuPlayScreenExtension(PlayScreen host, IModEventBus eventBus,
+            IRoomBrowsePort rooms, IWorldReadyPort ready, IDownloadedWorldPort downloads)
+            : base(host)
         {
+            m_eventBus = eventBus ?? throw new ArgumentNullException(nameof(eventBus));
             m_rooms = rooms;
             m_ready = ready;
             m_downloads = downloads;
-            m_list = Children.Find<ListPanelWidget>("WorldsList");
+        }
 
-            // Source: Survivalcraft/Game/PlayScreen.cs:PlayScreen.PlayScreen
-            // 基类已经把自己的工厂和"双击=打开本地世界"的回调装上了，两个都必须换掉。
-            m_list.ItemWidgetFactory = CreateWorldItemWidget;
-            // Source: Mod/ScMultiplayer/Func/Screen/SuPlayScreen.cs:SuPlayScreen.SuPlayScreen
-            Game.Program.ModManager.ModParentField.ModifyParentField(
-                m_list, "ItemClicked", null, typeof(ListPanelWidget));
-            m_list.ItemClicked += delegate (object item)
-            {
-                if (item == null || m_list.SelectedItem != item) return;
-                ActivateWorld(item);
-            };
+        // Source: SuPlayScreen.cs:SuPlayScreen.SuPlayScreen; ListPanelControl.cs:RegisterListPanelController
+        public override void Attached()
+        {
+            m_list = Host.Children.Find<ListPanelWidget>("WorldsList");
+            m_listController = m_eventBus.RegisterListPanelController(m_list, "SuMultiplayer.Play",
+                CreateWorldItemWidget, OnItemClicked);
+            m_list.ClearItems();
+            // 已经进入的真实宿主也允许动态附加，不能等下一次切屏才开始扫描和发现。
+            if (IsEntered) BeginWorldListVisit();
+        }
+
+        // Source: SuPlayScreen.cs:SuPlayScreen.SuPlayScreen
+        private void OnItemClicked(object item)
+        {
+            if (item == null || m_list.SelectedItem != item) return;
+            ActivateWorld(item);
         }
 
         public override void Enter(object[] parameters)
+        {
+            BeginWorldListVisit();
+            // The Mod owns this screen's data initialization. Other Mod Enter callbacks still run.
+            // Do not add list-specific conditions to the original PlayScreen.
+            base.Enter(parameters, false);
+        }
+
+        // Source: SuPlayScreen.cs:SuPlayScreen.Enter
+        private void BeginWorldListVisit()
         {
             // Source: Mod/ScMultiplayer/Func/Screen/SuPlayScreen.cs:SuPlayScreen.Enter
             // 回到世界列表 = 已经不在联机世界里：
@@ -95,7 +120,33 @@ namespace SuMultiplayer.UI
             m_rooms?.SetListVisible(false);
             HideJoinDialog();
             m_selectedKey = null;
-            base.Leave();
+            base.Leave(true);
+        }
+
+        // Source: PlayScreen.cs:PlayScreen.Update; SuPlayScreen.cs:SuPlayScreen.Leave
+        public override void Detached()
+        {
+            m_scanGeneration++;
+            m_rooms?.SetListVisible(false);
+            HideJoinDialog();
+            m_selectedKey = null;
+            WorldInfo selectedWorld = m_list?.SelectedItem as WorldInfo;
+            var nativeWorlds = new List<WorldInfo>(m_localWorlds);
+            long nativeWorldsSize = m_totalWorldsSize;
+            m_localWorlds.Clear();
+            m_roomRows.Clear();
+            m_roomOrder.Clear();
+            m_desired.Clear();
+            if (m_listController == null) return;
+            // Return only real native WorldInfo entries. Original callbacks must never see RoomRow.
+            m_list.ClearItems();
+            foreach (WorldInfo world in nativeWorlds) m_list.AddItem(world);
+            if (selectedWorld != null && nativeWorlds.Contains(selectedWorld))
+                m_list.SelectedItem = selectedWorld;
+            s_nativeWorldsSize.SetValue(Host, nativeWorldsSize);
+            Host.Children.Find<ButtonWidget>("Properties").Text = "...";
+            m_listController.Dispose();
+            m_listController = null;
         }
 
         /// <summary>
@@ -105,6 +156,7 @@ namespace SuMultiplayer.UI
         private void StartLocalScan()
         {
             int generation = ++m_scanGeneration;
+            long visit = VisitId;
             Task.Run(delegate
             {
                 List<WorldInfo> worlds = null;
@@ -121,7 +173,8 @@ namespace SuMultiplayer.UI
                 }
                 Dispatcher.Dispatch(delegate
                 {
-                    if (generation != m_scanGeneration) return;
+                    if (generation != m_scanGeneration || visit != VisitId || !IsAttached || !IsEntered ||
+                        m_listController == null || !m_listController.IsRegistered) return;
                     if (error != null)
                     {
                         global::Engine.Log.Error("[SuMP][play] 扫描本地世界失败：" + error.GetType().Name + " " + error.Message);
@@ -173,19 +226,20 @@ namespace SuMultiplayer.UI
             object selected = m_list.SelectedItem;
             m_selectedKey = KeyOf(selected);
             bool isRoom = selected is RoomRow;
-            Children.Find("Play").IsEnabled = selected != null;
+            Host.Children.Find("Play").IsEnabled = selected != null;
             RoomRow personalRow = selected as RoomRow;
             bool isPersonalRoom = personalRow != null &&
                 personalRow.Entry?.Source == RoomSource.Personal;
-            Children.Find("Properties").IsEnabled = selected != null && (!isRoom || isPersonalRoom);
+            Host.Children.Find("Properties").IsEnabled = selected != null && (!isRoom || isPersonalRoom);
             // 右下角三点按钮的原文案是 "..."（Pak/Screens/PlayScreen.xml）。
             // 只有选中个人服务器时才临时变成 "Remove"，其它情况必须还原成三点。
-            ButtonWidget propertiesButton = Children.Find<ButtonWidget>("Properties");
+            ButtonWidget propertiesButton = Host.Children.Find<ButtonWidget>("Properties");
             if (propertiesButton != null)
                 propertiesButton.Text = isPersonalRoom ? "Remove" : "...";
-            if (Children.Find<ButtonWidget>("Play")?.IsClicked == true && selected != null)
+            if (Host.Children.Find<ButtonWidget>("Play")?.IsClicked == true && selected != null)
                 ActivateWorld(selected);
-            if (Children.Find<ButtonWidget>("NewWorld").IsClicked)
+            // Source: PlayScreen.cs:PlayScreen.Update — this Mod owns its complete native-method replacement.
+            if (Host.Children.Find<ButtonWidget>("NewWorld").IsClicked)
             {
                 if (WorldsManager.WorldInfos.Count >= 30)
                 {
@@ -199,7 +253,7 @@ namespace SuMultiplayer.UI
                     m_list.SelectedItem = null;
                 }
             }
-            if (Children.Find<ButtonWidget>("Properties").IsClicked)
+            if (Host.Children.Find<ButtonWidget>("Properties").IsClicked)
             {
                 if (selected is WorldInfo worldInfo)
                 {
@@ -221,14 +275,15 @@ namespace SuMultiplayer.UI
                         }));
                 }
             }
-            if (base.Input.Back || base.Input.Cancel || Children.Find<ButtonWidget>("TopBar.Back").IsClicked)
+            if (Host.Input.Back || Host.Input.Cancel || Host.Children.Find<ButtonWidget>("TopBar.Back").IsClicked)
             {
                 ScreensManager.SwitchScreen("MainMenu");
                 m_list.SelectedItem = null;
             }
-
             UpdateJoinDialog();
             PollReadyWorld();
+            // SuAPI still calls every other Mod; only the original method body is suppressed.
+            base.Update(false);
         }
 
         // ---------------------------------------------------------------- 房间行
@@ -310,7 +365,7 @@ namespace SuMultiplayer.UI
         private void UpdateTopBar()
         {
             int count = m_localWorlds.Count + m_roomOrder.Count;
-            Children.Find<LabelWidget>("TopBar.Label").Text = count > 0
+            Host.Children.Find<LabelWidget>("TopBar.Label").Text = count > 0
                 ? string.Format("{0} {1}, {2}", count, count == 1 ? "world" : "worlds",
                     DataSizeFormatter.Format(m_totalWorldsSize, 2))
                 : "No worlds";
@@ -322,7 +377,7 @@ namespace SuMultiplayer.UI
         private Widget CreateWorldItemWidget(object item)
         {
             XElement node = ContentManager.Get<XElement>("Widgets/SavedWorldItem");
-            ContainerWidget container = (ContainerWidget)Widget.LoadWidget(this, node, null);
+            ContainerWidget container = (ContainerWidget)Widget.LoadWidget(Host, node, null);
             container.Tag = item;
             UpdateRowWidget(container, item);
             return container;

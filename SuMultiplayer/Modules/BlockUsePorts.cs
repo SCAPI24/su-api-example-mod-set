@@ -172,7 +172,7 @@ namespace SuMultiplayer.Modules
     }
 
     /// <summary>
-    /// 客户端输入外壳（Engine/EntityRequestInput.cs:SuComponentInput）到模块的提交入口。
+    /// 客户端输入附加（Engine/EntityRequestInput.cs:SuComponentInputExtension）到模块的提交入口。
     /// 返回 true = 请求已入队发送（调用方随后必须吞掉原生输入，客户端不产生本地效果）。
     /// </summary>
     public interface IBlockUseRequestSink

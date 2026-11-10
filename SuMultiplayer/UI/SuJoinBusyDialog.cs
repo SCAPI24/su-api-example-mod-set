@@ -7,7 +7,7 @@ namespace SuMultiplayer.UI
 {
     /// <summary>
     /// 客户端加入过程对话框（引擎 BusyDialog 的加 Cancel 版，2026-10-26）：
-    ///   · LargeLabel / SmallLabel / BusyBar 与引擎 BusyDialog 相同（状态行由 SuPlayScreen 驱动：
+    ///   · LargeLabel / SmallLabel / BusyBar 与引擎 BusyDialog 相同（状态行由 SuPlayScreenExtension 驱动：
     ///     Connecting → Waiting for approval (+Ping) → hold → Downloading…）；
     ///   · **Cancel 按钮**（用户口径）：点击 = 中止加入过程（回调 + 关窗）；重新加入 = 全程从头；
     ///   · Esc 同 Cancel（Input.Cancel / Input.Back）。
@@ -63,7 +63,7 @@ namespace SuMultiplayer.UI
             }
         }
 
-        /// <summary>加入流程自然走完（进入世界 / 失败提示已另弹）时由 SuPlayScreen 调用：只关窗不触发 Cancel。</summary>
+        /// <summary>加入流程自然走完（进入世界 / 失败提示已另弹）时由 SuPlayScreenExtension 调用：只关窗不触发 Cancel。</summary>
         public void CloseQuietly()
         {
             if (m_finished) return;

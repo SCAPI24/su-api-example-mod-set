@@ -1492,7 +1492,7 @@ namespace SuMultiplayer.Engine
                             updateable is ComponentBoat || updateable is ComponentDamage ||
                             ReferenceEquals(updateable, spawn))
                         {
-                            subsystemUpdate.RemoveUpdateable(updateable);
+                            MultiplayerUpdateScheduling.Suspend("SuMultiplayer.CreatureReplica", updateable);
                         }
                     }
                 }

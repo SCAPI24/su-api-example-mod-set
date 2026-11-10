@@ -25,7 +25,7 @@ namespace SuMultiplayer
     ///   ① 读参数（data:/Mods/SuMultiplayer.json；里面没有 host/client 模式）
     ///   ② 注册引擎注入点（Game.SubsystemTerrain → SuMultiplayer.Engine.SuSubsystemTerrain）
     ///   ③ 建 ModuleHost，注册模块与端口
-    ///   ④ 替换 Play 屏（加入房间入口）+ 每帧挂 CR 按钮（建房入口）
+    ///   ④ 附加 Play 屏列表（加入房间入口）+ 每帧挂 CR 按钮（建房入口）
     ///   ⑤ 订阅 Frame.Update 驱动 tick；订阅 GameDatabase.GameDatabase 触发注入
     ///
     /// 联机的两个入口都是**玩家操作**，不是启动配置：
@@ -48,6 +48,8 @@ namespace SuMultiplayer
         private SpawnPointSyncModule m_spawnSyncModule;
         /// <summary>联机角色引擎适配器（统计模块要按 clientId 找本机 / 联机角色，UI 要定位本机玩家）。</summary>
         private NetworkAvatarSpawner m_avatarSpawner;
+        private MultiplayerComponentExtensions m_componentExtensions;
+        private IDisposable m_playScreenExtension;
         /// <summary>统计 / 成就的引擎侧端口（本机 PlayerStats 读写 + 角色记录落盘）。</summary>
         private PlayerStatsStore m_statsPort;
         /// <summary>统计 / 成就同步模块（主机权威 / 客户端只展示）。</summary>
@@ -234,7 +236,8 @@ namespace SuMultiplayer
         public string Version => ModVersionText;
         public bool IsEnabled { get; set; } = true;
         public bool IsMergeLib => true;
-        public IEnumerable<string> Dependencies => Array.Empty<string>();
+        // Source: SuMultiplayer.csproj:Google.Protobuf; ModInfo.xml:Dependencies
+        public IEnumerable<string> Dependencies => new[] { "Google.Protobuf" };
 
         // 游戏内**不再有 SK 换肤按钮**：名字 / 皮肤统一走引擎自己的
         // ESC → More → Edit Players → 点角色 → PlayerScreen；组合根只在屏幕切换时驱动
@@ -347,6 +350,10 @@ namespace SuMultiplayer
                 diagnostics, m_skinCounters);
             avatarSpawner.SkinMaterializer = m_skinStore;
             m_avatarSpawner = avatarSpawner;
+            // Source: MultiplayerComponentExtensions.cs:MultiplayerComponentExtensions
+            m_componentExtensions = new MultiplayerComponentExtensions(avatarSpawner, engineModManager.ModParentField,
+                () => m_sessionModule != null && m_sessionModule.IsMultiplayerActive,
+                PrepareInputExtensions, PrepareGuiExtensions);
             m_avatarModule = new PlayerAvatarModule(avatarSpawner,
                 new SuMultiplayerPlayersXml("player-avatar", diagnostics), profileStore, m_skinStore);
             // 世界导出前先把联机角色记录（客户端复活点）落盘，保证中途加入客户端下载到的
@@ -423,7 +430,7 @@ namespace SuMultiplayer
             // 拾取物 / 投射物：主机是唯一创建/删除方；客户端只建副本，拾取走请求。
             // 引擎适配器负责对象 → 网络 id、主机拾取执行（引擎 AcquireItems）、客户端插值。
             m_entityEngine = new PickableReplicaEngine(avatarSpawner,
-                engineModManager.ModParentField, diagnostics, "entity-replication", m_reachGate);
+                engineModManager.ModParentField, diagnostics, "entity-replication", m_reachGate, m_componentExtensions);
             // 客户端编辑销毁方块 → 主机补生成掉落：地形桥在 ChangeCell 前后调用这个引擎端口
             // （先 GetDropValues + OnItemHarvested，再 AddPickable），掉落者拿到 1.5s 拾取免疫窗口。
             m_terrainModule.Bridge.HostBlockDrops = m_entityEngine;
@@ -436,7 +443,7 @@ namespace SuMultiplayer
             // 槽位变化走 ContainerEditRequest，主机落地后广播权威 ContainerState。
             m_blockUseEngine = new ContainerReplicaEngine(avatarSpawner,
                 engineModManager.ModParentField, engineModManager.ModParentMethod, diagnostics,
-                "block-use", m_reachGate);
+                "block-use", m_reachGate, m_componentExtensions);
             m_blockUseModule = new BlockUseSyncModule(m_blockUseEngine);
             // Source: Survivalcraft/Game/ComponentMiner.cs:ComponentMiner.Interact
             // Source: Mod/ScMultiplayer/Func/Circuit/CircuitSynchronizer.cs:CircuitSynchronizer
@@ -477,7 +484,7 @@ namespace SuMultiplayer
             // 主机在权威世界上按引擎同款调用执行；状态变化由既有 WorldInfo 快照（~2 Hz）广播生效，
             // 回执让请求者显示与引擎一致的提示。客户端不本地执行（会被快照拉回）。
             m_worldControlEngine = new WorldControlEngine(avatarSpawner, diagnostics,
-                "world-control");
+                "world-control", m_componentExtensions);
             m_worldControlModule = new WorldControlModule(m_worldControlEngine);
             // 家具设计 / 内容同步：主机的世界设计表是唯一权威；客户端的锤子 / 颜料桶只发请求，
             // 主机校验后安装设计并广播。客户端把记录装进**副本表**（不写存档、不进家具库）。
@@ -607,7 +614,7 @@ namespace SuMultiplayer
             // FindNearestMount / StartMounting / StartDismounting（拒绝=Rejected），MountState
             // 广播后所有端的化身镜像挂载。AvatarRiderResolver 用化身表解析 clientId→化身。
             m_mountEngine = new MountReplicaEngine(engineModManager.ModParentField,
-                m_creatureWorld, diagnostics, "mount-sync")
+                m_creatureWorld, diagnostics, "mount-sync", m_componentExtensions)
             {
                 AvatarRiderResolver = delegate (int clientId)
                 {
@@ -632,7 +639,7 @@ namespace SuMultiplayer
             // Source: Survivalcraft/Game/ComponentMiner.cs:293（Hit）/ :376（Raycast）/ :472（AttackBody）
             m_meleeEngine = new MeleeReplicaEngine(avatarSpawner, m_creatureModule, m_creatureWorld,
                 engineModManager.ModParentField, diagnostics, m_terrainModule.TransportPort,
-                m_config.MeleeMaxReach, "melee-sync");
+                m_config.MeleeMaxReach, "melee-sync", m_componentExtensions);
             m_meleeEngine.PredictionEnabled = m_config.MeleePrediction;
             m_meleeModule = new MeleeSyncModule(m_meleeEngine, delegate { return Time.RealTime; });
 
@@ -1133,22 +1140,10 @@ namespace SuMultiplayer
                 "SuMultiplayer.Engine.SuSubsystemCrossbowBlockBehavior");
             modInjector.Register("Game.SubsystemMusketBlockBehavior",
                 "SuMultiplayer.Engine.SuSubsystemMusketBlockBehavior");
-            // 客户端丢弃（Q / 手柄 B）：引擎的丢弃分支在 ComponentPlayer.Update 里先扣物品再
-            // AddPickable（本地扣除 + 本地实体）。这里替换输入组件，在 ComponentInput.Update
-            // 之后、ComponentPlayer.Update 之前把 Drop 意图交给实体复制模块发 PickableDropRequest，
-            // 并清掉 Drop 标志 → 客户端不扣物品、不生成会被清理的幽灵拾取物。
-            // Source: Survivalcraft/Game/ComponentInput.cs:ComponentInput.Update（UpdateOrder.Input）
-            // Source: Survivalcraft/Game/ComponentPlayer.cs:ComponentPlayer.Update（Drop 分支）
-            modInjector.Register("Game.ComponentInput",
-                "SuMultiplayer.Engine.SuComponentInput");
-            // 世界控制（创意四按钮：降水/雾/闪电/时间）：替换 ComponentGui，在 base.Update
-            // （HandleInput 读四按钮）之前**同帧**采集意图发请求并消费标志。不能在
-            // ComponentInput(-10) 抢点击：widget 的 IsClicked 每帧由 input.Click 现算
-            //（ClickableWidget.Update），-10 读到的是上一帧残留 → 晚一帧且消费不掉当帧置位，
-            // 实测客户端本地会先执行一次（本地爆炸 + 复制事件 = 双份特效，2026-10-26）。
-            // 主机 / 非客户端没有 sink，纯粹透传 base.Update，行为与原版一致。
-            modInjector.Register("Game.ComponentGui",
-                "SuMultiplayer.Engine.SuComponentGui");
+            // Source: EntityRequestInput.cs:SuComponentInputExtension; SuComponentGui.cs:SuComponentGuiExtension
+            // Input captures only after the real Host produced this step's input. GUI consumes current
+            // button edges before the same real Host runs. Neither registration replaces a Component.
+            m_componentExtensions.Register(eventBus);
             // 全局主机声音中继：替换 SubsystemAudio，在 base.Update 排空 m_queuedSounds
             // 之前捕获新增条目（非虚 PlaySound 无法用派生外壳截获，见 Engine/RemoteActionAudioReplica.cs）。
             modInjector.Register("Game.SubsystemAudio",
@@ -1210,16 +1205,20 @@ namespace SuMultiplayer
                 return new object[] { false, blocks };
             }, EventPriority.NORMAL);
 
-            // 加入房间入口：替换 Play 屏（旧实现 ScMultiplayerLifecycle.HandleLoading 的同一条路径）。
+            // Source: SuPlayScreen.cs:SuPlayScreen.Enter/Update; ScreenEventBusExtensions.cs:RegisterScreenExtension
+            // 加入入口附加到真实 Play 屏，只接管 WorldsList；新建与返回仍由原屏幕处理。
+            m_playScreenExtension = eventBus.RegisterScreenExtension<PlayScreen>("Play", ModIdentifier,
+                host => new SuPlayScreenExtension(host, eventBus, m_sessionModule,
+                    m_transferModule.ReadyPort, m_transferModule.DownloadedWorldPort));
+
+            // Source: SuMultiplayerMod.cs:SuMultiplayerMod.Initialize — 独立角色屏不替换任何原屏幕。
             eventBus.SubscribeEvent("Loading.Initialize", args =>
             {
                 if (args == null || args.Length == 0 || !(args[0] is Type type) ||
                     type.Name != "LoadingManager")
                     return args;
-                if (!Game.LoadingManager.ReplaceItem("Initialize PlayScreen", delegate
+                Game.LoadingManager.QueueItem("Initialize SuMultiplayerPlayerProfile", delegate
                     {
-                        ScreensManager.AddScreen("Play", new SuPlayScreen(m_sessionModule,
-                            m_transferModule.ReadyPort, m_transferModule.DownloadedWorldPort));
                         // 首次加入没有角色时的创建屏（旧 SuNetworkPlayerScreen 流程）。
                         // 取消 = 放弃本次加入（停通道回 Play），不留下半个角色。
                         ScreensManager.AddScreen("SuMultiplayerPlayerProfile",
@@ -1227,11 +1226,7 @@ namespace SuMultiplayer
                                 delegate { m_sessionModule.LeaveRoom(); },
                                 delegate { m_sessionModule.PreserveJoinOnNextPlayEnter(); },
                                 m_avatarModule.OnCharacterCreated));
-                    }))
-                {
-                    throw new InvalidOperationException(
-                        "没有找到 Loading 项 'Initialize PlayScreen'：Play 屏无法替换，加入房间入口缺失");
-                }
+                    });
                 if (!Game.LoadingManager.ReplaceItem("Initialize SettingsCompatibilityScreen", delegate
                     {
                         ScreensManager.AddScreen("SettingsCompatibility",
@@ -1242,7 +1237,7 @@ namespace SuMultiplayer
                         "没有找到 Loading 项 'Initialize SettingsCompatibilityScreen'：" +
                         "兼容性设置屏无法追加 Network Proxy 行");
                 }
-                ModLog.Info("[SuMP] Play screen replaced; compatibility settings screen appended a Network Proxy row" +
+                ModLog.Info("[SuMP] Play world list extension registered; compatibility settings screen appended a Network Proxy row" +
                     "（代理配置 " + ProxySettings.SettingsPath + "）");
                 return args;
             }, EventPriority.HIGHEST);
@@ -1335,7 +1330,7 @@ namespace SuMultiplayer
                     try { m_editWatcher?.Tick(); }
                     catch (Exception e) { NoteFrameStepFailure("edit-player", e); }
 
-                    // 乘骑：客户端把 MountSink 挂到本机玩家的 SuComponentGui（Project 换新重挂）。
+                    // 乘骑：客户端把 MountSink 挂到本机真实 GUI 的附加 controller（Project 换新重挂）。
                     try { m_mountEngine?.Pump(m_sessionModule != null &&
                         !m_sessionModule.IsHostingRoom && inWorld); }
                     catch (Exception e) { NoteFrameStepFailure("mount-pump", e); }
@@ -2378,8 +2373,30 @@ m_terrainModule?.Bridge.BlockBehaviorNotify.Describe());
             }
         }
 
+        // Source: PickableReplicaEngine.cs:RefreshInputBinding; ContainerReplicaEngine.cs:RefreshInputBinding
+        // These methods synchronize ownership and sink bindings only; they do not tick network modules.
+        private void PrepareInputExtensions(Project project)
+        {
+            m_entityEngine.RefreshInputBinding(project);
+            m_blockUseEngine.RefreshInputBinding(project);
+            m_meleeEngine.RefreshInputBinding(project);
+        }
+
+        // Source: WorldControlEngine.cs:RefreshInputBinding; MountReplicaEngine.cs:Pump
+        private void PrepareGuiExtensions(Project project)
+        {
+            m_worldControlEngine.RefreshInputBinding(project);
+            m_mountEngine.Pump(m_sessionModule.IsClientInRoom && !m_sessionModule.IsHostingRoom);
+        }
+
         public void OnUnload()
         {
+            // Source: SuPlayScreenExtension.cs:Detached — detach before the session/transfer ports are disposed.
+            m_playScreenExtension?.Dispose();
+            m_playScreenExtension = null;
+            // Source: MultiplayerComponentExtensions.cs:Dispose
+            m_componentExtensions?.Dispose();
+            m_componentExtensions = null;
             try
             {
                 global::Engine.Window.Closed -= HandleWindowClosedForHostShutdown;

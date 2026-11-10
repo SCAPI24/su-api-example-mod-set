@@ -764,7 +764,7 @@ namespace SuMultiplayer.Engine
                     {
                         if (updateable is ComponentPlayer || updateable is ComponentInput ||
                             updateable is ComponentLocomotion || updateable is ComponentMiner)
-                            subsystemUpdate.RemoveUpdateable(updateable);
+                            MultiplayerUpdateScheduling.Suspend("SuMultiplayer.NetworkAvatar", updateable);
                         continue;
                     }
                     // 主机化身：只摘掉 ComponentInput 的每帧刷新。它没有输入设备，每帧会把
@@ -772,7 +772,7 @@ namespace SuMultiplayer.Engine
                     // **原生** ComponentPlayer.Update 的 Steed/Boat Order 桥生效
                     //（Source: ComponentPlayer.cs:126-133）。ComponentPlayer/Locomotion/Miner
                     // 在主机保留（化身物理、表现、拾取都要）。
-                    if (updateable is ComponentInput) subsystemUpdate.RemoveUpdateable(updateable);
+                    if (updateable is ComponentInput) MultiplayerUpdateScheduling.Suspend("SuMultiplayer.NetworkAvatar", updateable);
                 }
 
                 // ★ 关键：把网络角色的实体从 Project 的实体表里摘掉。

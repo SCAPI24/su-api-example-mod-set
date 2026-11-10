@@ -54,6 +54,7 @@ namespace SuMultiplayer.Engine
         private const int ProblemLogMs = 5000;
 
         private readonly NetworkAvatarSpawner m_spawner;
+        private readonly MultiplayerComponentExtensions m_components;
         private readonly InteractionReachGate m_reachGate;
         private readonly IModParentField m_parentField;
         private readonly IModParentMethod m_parentMethod;
@@ -82,7 +83,7 @@ namespace SuMultiplayer.Engine
         private Project m_project;
         private bool m_clientReplica;
         private IBlockUseRequestSink m_requestSink;
-        private SuComponentInput m_useInput;
+        private SuComponentInputExtension m_useInput;
         private IEntityUseInputSink m_useInputOverride;
         private ModFieldRef<ComponentInput, PlayerInput> m_inputRef;
 
@@ -157,9 +158,10 @@ namespace SuMultiplayer.Engine
 
         public ContainerReplicaEngine(NetworkAvatarSpawner spawner, IModParentField parentField,
             IModParentMethod parentMethod, IModuleDiagnostics diagnostics, string ownerId,
-            InteractionReachGate reachGate)
+            InteractionReachGate reachGate, MultiplayerComponentExtensions components)
         {
             m_spawner = spawner ?? throw new ArgumentNullException(nameof(spawner));
+            m_components = components ?? throw new ArgumentNullException(nameof(components));
             m_reachGate = reachGate ?? throw new ArgumentNullException(nameof(reachGate));
             m_parentField = parentField ?? throw new ArgumentNullException(nameof(parentField));
             m_parentMethod = parentMethod ?? throw new ArgumentNullException(nameof(parentMethod));
@@ -175,32 +177,27 @@ namespace SuMultiplayer.Engine
         public void Pump()
         {
             Project project = GameManager.Project;
+            RefreshInputBinding(project);
+            if (project != null && m_clientReplica) SweepClientReplicaEntities(project);
+        }
+
+        // Source: ContainerReplicaEngine.cs:Pump; EntityRequestInput.cs:SuComponentInputExtension.Update
+        internal void RefreshInputBinding(Project project)
+        {
             if (!ReferenceEquals(project, m_project))
             {
                 ResetEngineState("project-change");
                 m_project = project;
             }
-            if (project == null)
-            {
-                DetachUseInput();
-                return;
-            }
-            bool client = project.FindSubsystem<SubsystemTerrain>(false) is SuSubsystemTerrain shell &&
-                shell.ClientReplica;
+            if (project == null) { DetachUseInput(); return; }
+            bool client = project.FindSubsystem<SubsystemTerrain>(false) is SuSubsystemTerrain shell && shell.ClientReplica;
             if (client != m_clientReplica)
             {
                 ResetEngineState("role-change");
                 m_clientReplica = client;
             }
-            if (client)
-            {
-                UpdateUseInput(project);
-                SweepClientReplicaEntities(project);
-            }
-            else
-            {
-                DetachUseInput();
-            }
+            if (client) UpdateUseInput(project);
+            else DetachUseInput();
         }
 
         public void SetRequestSink(IBlockUseRequestSink sink) => m_requestSink = sink;
@@ -249,7 +246,7 @@ namespace SuMultiplayer.Engine
             {
                 ComponentPlayer player = local?.ComponentPlayer;
                 ComponentInput input = player?.Entity?.FindComponent<ComponentInput>();
-                if (input is SuComponentInput shell)
+                if (m_components.TryGetInput(input, out SuComponentInputExtension shell))
                 {
                     if (!ReferenceEquals(shell, m_useInput))
                     {
@@ -266,8 +263,8 @@ namespace SuMultiplayer.Engine
                     m_inputInjectionLogged = true;
                     m_inputInjectionMissing++;
                     LogProblem("use-input-injection",
-                        "客户端没有注入 SuComponentInput（当前：" + input.GetType().Name +
-                        "）→ 无法在本地交互之前拦截（请检查 Game.ComponentInput 注入）");
+                        "客户端无法取得 ComponentInput 的联机附加 controller（当前：" + input.GetType().Name +
+                        "）→ 无法在本地交互之前拦截（请检查原类型替换/附加注册状态）");
                 }
             }
             DetachUseInput();
@@ -2153,7 +2150,7 @@ namespace SuMultiplayer.Engine
             if (update != null)
             {
                 foreach (IUpdateable updateable in entity.FindComponents<IUpdateable>())
-                    update.RemoveUpdateable(updateable);
+                    MultiplayerUpdateScheduling.Suspend("SuMultiplayer.ContainerReplica", updateable);
             }
             Dictionary<Entity, bool> saveMap = m_parentField.GetParentField<
                 Dictionary<Entity, bool>>(m_project, "m_entities", typeof(Project));

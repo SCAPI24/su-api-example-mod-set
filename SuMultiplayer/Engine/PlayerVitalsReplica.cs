@@ -3022,7 +3022,7 @@ namespace SuMultiplayer.Engine
                         !(updateable is ComponentSleep) && !(updateable is ComponentFlu) &&
                         !(updateable is ComponentSickness) && !(updateable is ComponentOnFire))
                         continue;
-                    update.RemoveUpdateable(updateable);
+                    MultiplayerUpdateScheduling.Suspend("SuMultiplayer.LocalVitals", updateable);
                 }
                 if (player.ComponentHealth != null)
                 {
@@ -3091,26 +3091,7 @@ namespace SuMultiplayer.Engine
                 reason = "找不到 SubsystemUpdate（无法恢复本机角色的生命 / 体征模拟）";
                 return false;
             }
-            IDictionary updateables;
-            Dictionary<IUpdateable, bool> pendingUpdateables;
-            try
-            {
-                // Source: Survivalcraft/Game/SubsystemUpdate.cs:SubsystemUpdate.Update
-                // Update applies pending adds with Dictionary.Add, so restoration must not
-                // enqueue an object that is already present or scheduled for addition.
-                updateables = m_parentField.GetParentField<IDictionary>(update,
-                    "m_updateables", typeof(SubsystemUpdate));
-                pendingUpdateables = m_parentField.GetParentField<
-                    Dictionary<IUpdateable, bool>>(update, "m_toAddOrRemove",
-                        typeof(SubsystemUpdate));
-                if (updateables == null || pendingUpdateables == null)
-                    throw new InvalidOperationException("SubsystemUpdate registration tables are unavailable.");
-            }
-            catch (Exception e)
-            {
-                reason = "读取 SubsystemUpdate 登记状态失败：" + e.GetType().Name + " " + e.Message;
-                return false;
-            }
+            // Source: UpdateExtensionRegistry.cs:ResumeHostUpdates; owned suspension is idempotent.
             foreach (KeyValuePair<int, int> item in m_disabledLocalSlots)
             {
                 if (!TryResolveLocal(item.Key, out PlayerData playerData,
@@ -3128,8 +3109,7 @@ namespace SuMultiplayer.Engine
                         updateable is ComponentSleep || updateable is ComponentFlu ||
                         updateable is ComponentSickness || updateable is ComponentOnFire)
                     {
-                        if (!TryQueueUpdateableRestore(update, updateable, updateables,
-                                pendingUpdateables, out reason))
+                        if (!TryQueueUpdateableRestore(updateable, out reason))
                             return false;
                     }
                 }
@@ -3176,28 +3156,18 @@ namespace SuMultiplayer.Engine
             return true;
         }
 
-        private static bool TryQueueUpdateableRestore(SubsystemUpdate update,
-            IUpdateable updateable, IDictionary updateables,
-            Dictionary<IUpdateable, bool> pendingUpdateables, out string reason)
+        // Source: UpdateExtensionRegistry.cs:ResumeHostUpdates
+        private static bool TryQueueUpdateableRestore(IUpdateable updateable, out string reason)
         {
             reason = null;
-            if (pendingUpdateables.TryGetValue(updateable, out bool pendingAdd))
-            {
-                if (pendingAdd) return true;
-                reason = "组件 " + updateable.GetType().Name +
-                    " 的移除仍在 SubsystemUpdate 队列中；保留恢复状态并重试";
-                return false;
-            }
-            if (updateables.Contains(updateable)) return true;
             try
             {
-                update.AddUpdateable(updateable);
+                MultiplayerUpdateScheduling.Resume("SuMultiplayer.LocalVitals", updateable);
                 return true;
             }
-            catch (Exception e)
+            catch (Exception error)
             {
-                reason = "登记组件 " + updateable.GetType().Name + " 的恢复更新失败：" +
-                    e.GetType().Name + " " + e.Message;
+                reason = "恢复组件 " + updateable.GetType().Name + " 的联机暂停登记失败：" + error;
                 return false;
             }
         }
@@ -3365,7 +3335,7 @@ namespace SuMultiplayer.Engine
                     if (!(updateable is ComponentHealth) && !(updateable is ComponentVitalStats) &&
                         !(updateable is ComponentSleep))
                         continue;
-                    update.RemoveUpdateable(updateable);
+                    MultiplayerUpdateScheduling.Suspend("SuMultiplayer.RemoteVitals", updateable);
                 }
                 // 直接 Injure(...) 的调用方（生物攻击 / 爆炸 / 摔落结算）走 invulnerability 兜底：
                 // 我们自己的写入是字段赋值，不经过 Injure，所以不受它影响。

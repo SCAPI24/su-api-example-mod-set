@@ -15,7 +15,7 @@ namespace SuMultiplayer.Engine
     ///
     ///   · 客户端：骑乘按钮边沿（<c>ComponentGui.Update:582-589</c> 的
     ///     <c>m_mountButtonWidget.IsClicked / playerInput.ToggleMount</c>）由
-    ///     <see cref="SuComponentGui.MountSink"/> 同帧拦截 → 发 MountRequest；
+    ///     <see cref="SuComponentGuiExtension.MountSink"/> 同帧拦截 → 发 MountRequest；
     ///     **本地绝不** StartMounting/StartDismounting。收 MountState 后按
     ///     state_sequence 应用：化身 ParentBody 挂到权威坐骑（引擎自己的
     ///     ComponentRider 动画），观察端同步应用。
@@ -52,9 +52,10 @@ namespace SuMultiplayer.Engine
         public event Action<MountStateData> StateBroadcast;
 
         public MountReplicaEngine(IModParentField parentField, ICreatureWorld creatureWorld,
-            IModuleDiagnostics diagnostics, string ownerId)
+            IModuleDiagnostics diagnostics, string ownerId, MultiplayerComponentExtensions components)
         {
             m_parentField = parentField ?? throw new ArgumentNullException(nameof(parentField));
+            m_components = components ?? throw new ArgumentNullException(nameof(components));
             m_creatureWorld = creatureWorld;
             m_diagnostics = diagnostics;
             m_ownerId = string.IsNullOrEmpty(ownerId) ? "mount-sync" : ownerId;
@@ -63,9 +64,10 @@ namespace SuMultiplayer.Engine
         // ------------------------------------------------------------ 挂接（照 WorldControlEngine 模式）
 
         private Project m_guiProject;
-        private SuComponentGui m_gui;
+        private SuComponentGuiExtension m_gui;
+        private readonly MultiplayerComponentExtensions m_components;
 
-        /// <summary>组合根每帧调用：客户端把 MountSink 挂到本机玩家的 SuComponentGui 上。</summary>
+        /// <summary>组合根每帧调用：客户端把 MountSink 挂到本机玩家的 SuComponentGuiExtension 上。</summary>
         public void Pump(bool clientReplica)
         {
             Project project = GameManager.Project;
@@ -76,16 +78,19 @@ namespace SuMultiplayer.Engine
             }
             if (project == null) return;
             if (!clientReplica) { DetachGui(); return; }
-            if (m_gui != null) return;
             SubsystemPlayers players = project.FindSubsystem<SubsystemPlayers>(false);
-            if (players == null || players.ComponentPlayers.Count == 0) return;
-            ComponentPlayer player = players.ComponentPlayers[0];
-            if (player?.ComponentGui is SuComponentGui shell)
+            if (players == null || players.ComponentPlayers.Count == 0) { DetachGui(); return; }
+            ComponentPlayer player = null;
+            foreach (ComponentPlayer candidate in players.ComponentPlayers)
+                if (m_components.IsLocalPlayer(candidate)) { player = candidate; break; }
+            if (m_components.TryGetGui(player?.ComponentGui, out SuComponentGuiExtension shell))
             {
+                if (!ReferenceEquals(shell, m_gui)) DetachGui();
                 shell.MountSink = this;
                 m_gui = shell;
-                LogThrottled("gui-attached", "乘骑拦截已挂接到本机玩家的 SuComponentGui", 60000);
+                LogThrottled("gui-attached", "乘骑拦截已挂接到本机玩家的 SuComponentGuiExtension", 60000);
             }
+            else DetachGui();
         }
 
         private void DetachGui()
@@ -170,7 +175,7 @@ namespace SuMultiplayer.Engine
             SubsystemPlayers players = project.FindSubsystem<SubsystemPlayers>(false);
             // 先按 RiderClientId 解析**远端化身**：观察端（客户端 B / 主机）必须把 A 的
             // MountState 应用到 A 的化身，而不是"本端随便一个本机玩家"。旧逻辑先找本端任意
-            // SuComponentInput 玩家 → 客户端 B 把 A 的挂载状态套到自己身上、A 的化身留在马旁
+            // SuComponentInputExtension 玩家 → 客户端 B 把 A 的挂载状态套到自己身上、A 的化身留在马旁
             //（实机：B 看到 A 站在马侧面/上方；主机看 A 正常）。找不到化身（骑手自己 / 主机的
             // 本机玩家）才回退成本机玩家。2026-10-26 骑马状态未同步给其他客户端修复。
             ComponentPlayer rider = ResolveAvatarRider(state.RiderClientId);
@@ -179,7 +184,7 @@ namespace SuMultiplayer.Engine
             {
                 foreach (ComponentPlayer p in players.ComponentPlayers)
                 {
-                    if (p.ComponentInput is SuComponentInput)
+                    if (m_components.IsLocalPlayer(p))
                     {
                         rider = p;
                         isLocal = true;

@@ -11,7 +11,7 @@ namespace SuMultiplayer.Modules
     ///
     /// 语义（参照 = 旧联机 mod 的 WorldControlRequest/Result 一族 +
     /// Source: Survivalcraft/Game/ComponentGui.cs:679-737 引擎原生行为）：
-    ///   · 客户端**不在本地执行**：输入外壳（Engine/EntityRequestInput.cs:SuComponentInput）
+    ///   · 客户端**不在本地执行**：GUI 附加（Engine/SuComponentGui.cs:SuComponentGuiExtension）
     ///     在 ComponentGui 读到按钮之前捕获意图，经本模块发 <c>WORLD_CONTROL_REQUEST</c>，
     ///     并消费点击（防本地执行后被 2 Hz 快照拉回的"按了又弹回"）；
     ///   · 主机收到请求后在**权威世界**上执行引擎同款调用，状态变化由既有

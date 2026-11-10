@@ -51,125 +51,61 @@ namespace SuMultiplayer.Engine
     }
 
     /// <summary>
-    /// 本地玩家输入组件的**薄外壳**（新文件，不改引擎源码；由组合根通过
-    /// <c>Game.ComponentInput → SuMultiplayer.Engine.SuComponentInput</c> 的数据库注入替换）。
-    ///
-    /// 为什么必须在这里拦：引擎的丢弃分支在 <c>ComponentPlayer.Update</c> 里，
-    /// 它先 <c>inventory.RemoveSlotItems(active, count)</c>（本地扣除）再
-    /// <c>SubsystemPickables.AddPickable</c>（本地生成）。客户端不允许本地扣除 / 本地生成实体，
-    /// 而在 ComponentPlayer.Update 里没有可覆写的入口（非 virtual）。因此：
-    ///
-    ///   · UpdateOrder.Input(-10) 的 ComponentInput.Update 先跑完，把 <c>PlayerInput.Drop</c> 置位；
-    ///   · 本外壳在 base.Update 之后把 Drop 意图交给 <see cref="IEntityDropInputSink"/>；
-    ///   · sink 发送 PickableDropRequest 成功后，把 <c>ComponentInput.m_playerInput.Drop</c> 清掉；
-    ///   · 随后 UpdateOrder.Default(0) 的 ComponentPlayer.Update 读到的 Drop = false，
-    ///     原生掉落分支整段不执行 → 客户端既不扣物品、也不生成会被清理的幽灵拾取物。
-    ///
-    /// 无静态状态：sink 是实例属性，由适配器在每帧 Pump 时按本机玩家写入。
-    /// Source: Survivalcraft/Game/ComponentInput.cs:ComponentInput.Update（UpdateOrder.Input）
-    /// Source: Survivalcraft/Game/ComponentPlayer.cs:ComponentPlayer.Update（Drop 分支）
+    /// Shared-host input extension. The real ComponentInput runs once before network intent capture.
+    /// Source: Survivalcraft/Game/ComponentInput.cs:Update; ComponentPlayer.cs:Update
     /// </summary>
-    public sealed class SuComponentInput : ComponentInput, IUpdateable
+    public sealed class SuComponentInputExtension : SuAPI.UpdateExtension<ComponentInput>
     {
-        private bool m_faultLogged;
-        private bool m_useFaultLogged;
-        private bool m_hitFaultLogged;
-
-        /// <summary>本帧攻击输入是否已被接管（诊断 / 自检用；不改变行为）。</summary>
+        private readonly MultiplayerComponentExtensions m_owner;
         private bool m_hitAccepted;
-
-        /// <summary>最近一次 Update 是否接管了攻击输入（只读诊断口径）。</summary>
         public bool HitInputAcceptedLastFrame => m_hitAccepted;
-
-        /// <summary>
-        /// 丢弃意图接收方（Engine/PickableReplicaEngine.cs 每帧写给本机玩家）。
-        /// null = 没有联机会话 / 本端是主机 / 模块未上线：完全走原生行为。
-        /// </summary>
+        public bool IsAttached { get; private set; }
         public IEntityDropInputSink DropSink { get; set; }
-
-        /// <summary>
-        /// 方块使用 / 交互意图接收方（Engine/ContainerReplicaEngine.cs 每帧写给本机玩家）。
-        ///
-        /// 与丢弃同一条纪律：客户端**不**在本地执行交互。sink 会提交 BlockUseRequest 并
-        /// 通过 <c>ModFieldRef&lt;ComponentInput, PlayerInput&gt;</c> 把
-        /// <c>m_playerInput.Interact</c> 清空，随后 UpdateOrder.Default 的
-        /// <c>ComponentPlayer.Update</c> 读到 Interact = null → 原生 Use / Interact / Place
-        /// 整段不执行。null = 没有联机会话 / 本端是主机 / 模块未上线：完全走原生行为。
-        /// Source: Survivalcraft/Game/ComponentPlayer.cs:ComponentPlayer.Update（Interact 分支）
-        /// </summary>
         public IEntityUseInputSink UseSink { get; set; }
-
-        /// <summary>
-        /// 近战攻击意图接收方（Engine/MeleeReplicaEngine.cs 每帧写给本机玩家的输入组件）。
-        /// 与 UseSink 同一条纪律：客户端**不**在本地执行攻击（不 roll 命中、不扣血），
-        /// 只做预测表现并上行请求；主要求由主机回执确认 / 回滚。
-        /// null = 没有联机会话 / 模块未上线：完全走原生行为。
-        /// </summary>
         public IHitInputSink HitSink { get; set; }
 
-        void IUpdateable.Update(float dt)
+        internal SuComponentInputExtension(ComponentInput host, MultiplayerComponentExtensions owner) : base(host)
         {
-            base.Update(dt);
+            m_owner = owner ?? throw new ArgumentNullException(nameof(owner));
+        }
+
+        public override void Attached() => IsAttached = true;
+
+        public override void Update(float dt)
+        {
             m_hitAccepted = false;
-            ComponentPlayer player = Entity?.FindComponent<ComponentPlayer>();
+            // Bind the local player's sinks before its first actual simulation update, not one Frame.Update later.
+            if (!m_owner.PrepareInput(Host)) ClearSinks();
+            base.Update(dt);
+        }
+
+        public override void AfterUpdate(float dt, SuAPI.InvocationResult result)
+        {
+            // A veto leaves no newly produced input to send. Never replay last frame's PlayerInput.
+            if (!result.HostExecuted) return;
+            ComponentPlayer player = Host.Entity?.FindComponent<ComponentPlayer>();
             if (player == null) return;
-            IEntityDropInputSink dropSink = DropSink;
-            if (dropSink != null && this.PlayerInput.Drop)
+            try
             {
-                try
-                {
-                    dropSink.TryAcceptDrop(this, player);
-                }
-                catch (Exception e)
-                {
-                    if (!m_faultLogged)
-                    {
-                        m_faultLogged = true;
-                        Log.Error("[SuMP] 丢弃输入拦截异常：" + e.GetType().Name + " " + e.Message +
-                            " → 本帧按原生行为处理（客户端可能本地扣除并生成被清理的拾取物；只记录一次）");
-                    }
-                }
+                if (DropSink != null && Host.PlayerInput.Drop) DropSink.TryAcceptDrop(Host, player);
+                // Preserve native Use-before-Hit ownership: a saddle/item use can consume Hit itself.
+                if (UseSink != null && Host.PlayerInput.Interact.HasValue) UseSink.TryAcceptInteract(Host, player);
+                if (HitSink != null && Host.PlayerInput.Hit.HasValue)
+                    m_hitAccepted = HitSink.TryAcceptHit(Host, player);
             }
-            // 引擎语义（ComponentPlayer.cs:151-242）：同一帧的 tap 同时携带 Interact + Hit，
-            // **Use 优先**——手持物 OnUse 命中（马鞍装马）时 flag=true 挡住 Hit。镜像顺序必须
-            // 一致：UseSink 在 HitSink 之前，UseSink 消费掉使用意图时会连 Hit 一起清。
-            IEntityUseInputSink useSink = UseSink;
-            if (useSink != null && this.PlayerInput.Interact.HasValue)
+            catch (Exception error)
             {
-                try
-                {
-                    useSink.TryAcceptInteract(this, player);
-                }
-                catch (Exception e)
-                {
-                    if (!m_useFaultLogged)
-                    {
-                        m_useFaultLogged = true;
-                        Log.Error("[SuMP] 方块使用输入拦截异常：" + e.GetType().Name + " " +
-                            e.Message + " → 本帧按原生行为处理（客户端可能本地执行一次交互；只记录一次）");
-                    }
-                }
+                m_owner.ClearFailedInput(Host);
+                throw new InvalidOperationException("[SuMP] Network input interception failed; native Drop/Interact/Hit were cleared for this update.", error);
             }
-            IHitInputSink hitSink = HitSink;
-            if (hitSink != null && this.PlayerInput.Hit.HasValue)
-            {
-                try
-                {
-                    if (hitSink.TryAcceptHit(this, player)) m_hitAccepted = true;
-                }
-                catch (Exception e)
-                {
-                    if (!m_hitFaultLogged)
-                    {
-                        m_hitFaultLogged = true;
-                        Log.Error("[SuMP] 攻击输入拦截异常：" + e.GetType().Name + " " +
-                            e.Message + " → 本帧按原生行为处理（本机可能本地 roll 一次命中；只记录一次）");
-                    }
-                }
-            }
-            // 世界控制已改由 SuComponentGui（Injector 替换 ComponentGui）同帧拦截：
-            // 这里在 -10 抢点击会晚一帧（widget 的 IsClicked 每帧由 input.Click 现算），
-            // 实测导致客户端本地先执行一次（2026-10-26 双重爆炸根因）。
+        }
+
+        internal void ClearSinks() { DropSink = null; UseSink = null; HitSink = null; }
+
+        public override void Detached()
+        {
+            IsAttached = false;
+            m_owner.Release(this);
         }
     }
 }

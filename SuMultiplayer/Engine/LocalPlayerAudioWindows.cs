@@ -37,13 +37,9 @@ namespace SuMultiplayer.Engine
     ///   · 只有"在这一个组件 Update 的调用栈内"做队列差集，才能把新增条目绑定到**唯一**
     ///     的角色（同一帧里多个角色都会产生声音，按时间分不出来）。
     ///
-    /// 实现方式（不改引擎源码）：
-    ///   · 组合根没有替换任何组件类；这里运行时调用 <c>SubsystemUpdate.RemoveUpdateable(组件)</c>
-    ///     并把 <see cref="LocalUpdateWindowProxy"/> 加进去；
-    ///   · 代理的 <see cref="IUpdateable.UpdateOrder"/> 透传原组件，
-    ///     <see cref="LocalUpdateWindowProxy.GetHashCode"/> 也返回原组件的哈希 ——
-    ///     <c>SubsystemUpdate.Comparer</c> 的排序键 (UpdateOrder, GetHashCode) 与原状完全一致，
-    ///     **不改变任何组件的执行顺序**；
+    /// 实现方式：通过 SuAPI.RegisterHostUpdateScope 围住真实宿主的整轮附加 + 原版 + After。
+    /// 不替换组件，不安装另一个 IUpdateable 代理，也不直接调用宿主 Update。
+    /// finally 关闭声音归属窗口；唯一调度代理及原排序键由 SuAPI 统一维护。
     ///   · 每帧由适配层 <c>Pump</c> 对账（角色增删 / 重生 / 关捕获 / 换世界）；
     ///   · 远端化身（NetworkAvatarSpawner 管理的 PlayerData）**不包**：它们的动作声音由
     ///     远端动作窗口的精确锚点负责，不能算到主机本机角色头上。
@@ -62,6 +58,7 @@ namespace SuMultiplayer.Engine
         private long m_installFailures;
         private long m_teardownRestores;
         private bool m_missingLogged;
+        private bool m_enabled;
 
         public LocalPlayerAudioWindows(NetworkAvatarSpawner spawner,
             ILocalPlayerAudioWindowSink sink)
@@ -94,23 +91,20 @@ namespace SuMultiplayer.Engine
             public Entity Entity;
             public SubsystemUpdate Update;
             public readonly List<IUpdateable> Originals = new List<IUpdateable>();
-            public readonly List<LocalUpdateWindowProxy> Proxies =
-                new List<LocalUpdateWindowProxy>();
+            public readonly List<IDisposable> ScopeTokens = new List<IDisposable>();
+            public readonly List<LocalUpdateWindowScope> Scopes =
+                new List<LocalUpdateWindowScope>();
         }
 
         /// <summary>
-        /// 每帧对账（模块 Tick 调用；此时本帧的 Project.Update 已结束，新增 / 移除的
-        /// updateable 会在下一帧派发开始时生效，因此绝不会有一帧同时跑原组件和代理）。
-        ///
-        /// <paramref name="allowRestore"/> = 本帧是否已经过一个完整的
-        /// <c>SubsystemUpdate.Update</c> 派发（只有 <see cref="RemoteActionAudioReplica"/>
-        /// 的每帧 <c>Pump</c> 传 true；同一 Tick 里的 <c>SetHostCaptureEnabled</c> 传 false）。
-        /// 原因：刚安装的代理在本帧派发前就还原本组件会把"移除 / 添加"两次登记压成
-        /// <c>Add(已经存在的组件)</c>（SubsystemUpdate 的 Add 会抛异常）。传 false 时
-        /// 先不还原（窗口在关闭捕获后本来就不采集），下一帧再安全地还。
+        /// 每帧对账本机角色的声音作用域；停止捕获或卸载时立即注销本 Mod 的 token。
+        /// allowRestore 保留调用签名，但不再阻挡注销；SuAPI 负责安全的延后调度交接，
+        /// 不会把本 Mod 的关闭变成直接 Add 原宿主，也不会恢复其他 owner 的暂停。
+        /// Source: UpdateExtensionRegistry.cs:RegisterHostUpdateScope
         /// </summary>
         public void Pump(Project project, bool enabled, bool allowRestore)
         {
+            m_enabled = enabled && project != null;
             if (!ReferenceEquals(project, m_project))
             {
                 // 换世界：旧 Project 的实体已卸载，绝不把旧组件重新塞回旧 update 表。
@@ -129,7 +123,7 @@ namespace SuMultiplayer.Engine
             }
             if (!enabled)
             {
-                if (allowRestore) TeardownAll(restore: true);
+                TeardownAll(restore: true);
                 m_localSlots = 0;
                 m_missingLogged = false;
                 return;
@@ -138,7 +132,7 @@ namespace SuMultiplayer.Engine
             SubsystemUpdate update = project.FindSubsystem<SubsystemUpdate>(false);
             if (players == null || update == null)
             {
-                if (allowRestore) TeardownAll(restore: true);
+                TeardownAll(restore: true);
                 m_update = null;
                 m_localSlots = 0;
                 if (!m_missingLogged)
@@ -185,7 +179,6 @@ namespace SuMultiplayer.Engine
                 SlotState state = m_slots[i];
                 if (FindDesiredIndex(state, out _)) continue;
                 bool restore = CanRestore(state);
-                if (restore && !allowRestore) continue;   // 下一帧安全还原
                 m_slots.RemoveAt(i);
                 Teardown(state, restore: restore);
             }
@@ -201,14 +194,13 @@ namespace SuMultiplayer.Engine
                     // 组件集合在实体创建时就固定；同一实体 / 同一 update 表无需重建。
                     state.Slot = desired.Slot;
                     state.PlayerIndex = desired.PlayerIndex;
-                    for (int p = 0; p < state.Proxies.Count; p++)
-                        state.Proxies[p].SetSlot(desired.Slot, desired.PlayerIndex);
+                    for (int p = 0; p < state.Scopes.Count; p++)
+                        state.Scopes[p].SetSlot(desired.Slot, desired.PlayerIndex);
                     continue;
                 }
                 if (state != null)
                 {
                     bool restore = CanRestore(state);
-                    if (restore && !allowRestore) continue;   // 下一帧安全还原 / 重建
                     m_slots.Remove(state);
                     Teardown(state, restore: restore);
                 }
@@ -216,68 +208,45 @@ namespace SuMultiplayer.Engine
             }
         }
 
-        private sealed class LocalUpdateWindowProxy : IUpdateable
+        // Source: UpdateExtensionRegistry.cs:RegisterHostUpdateScope
+        // SuAPI owns the only scheduler proxy. This object opens attribution and never calls Host.Update.
+        private sealed class LocalUpdateWindowScope
         {
-            private readonly IUpdateable m_inner;
             private readonly ILocalPlayerAudioWindowSink m_sink;
             private readonly ComponentPlayer m_player;
+            private readonly Func<bool> m_isEnabled;
             private int m_slot;
             private int m_playerIndex;
 
-            public LocalUpdateWindowProxy(IUpdateable inner, ILocalPlayerAudioWindowSink sink,
-                ComponentPlayer player, int slot, int playerIndex)
+            public LocalUpdateWindowScope(ILocalPlayerAudioWindowSink sink, ComponentPlayer player, int slot, int playerIndex, Func<bool> isEnabled)
             {
-                m_inner = inner ?? throw new ArgumentNullException(nameof(inner));
-                m_sink = sink;
+                m_sink = sink ?? throw new ArgumentNullException(nameof(sink));
                 m_player = player;
-                m_slot = slot;
-                m_playerIndex = playerIndex;
+                m_isEnabled = isEnabled ?? throw new ArgumentNullException(nameof(isEnabled));
+                SetSlot(slot, playerIndex);
             }
 
-            public UpdateOrder UpdateOrder => m_inner.UpdateOrder;
+            public void SetSlot(int slot, int playerIndex) { m_slot = slot; m_playerIndex = playerIndex; }
+            // null explicitly means capture is disabled for this update; it is not an exception fallback.
+            public IDisposable Enter(float dt) => m_isEnabled() ? new Capture(m_sink, m_player, m_slot, m_playerIndex) : null;
 
-            /// <summary>
-            /// 与引擎排序键保持一致：SubsystemUpdate.Comparer 用 (UpdateOrder, GetHashCode)
-            /// 排序（Source: Survivalcraft/Game/SubsystemUpdate.cs:19-27）。返回原组件的哈希，
-            /// 代理与原组件在排序里的位置完全相同 —— 不改变同序组件的相对执行顺序。
-            /// </summary>
-            public override int GetHashCode() => m_inner.GetHashCode();
-
-            public void SetSlot(int slot, int playerIndex)
+            private sealed class Capture : IDisposable
             {
-                m_slot = slot;
-                m_playerIndex = playerIndex;
-            }
-
-            public void Update(float dt)
-            {
-                bool opened = false;
-                try
+                private readonly ILocalPlayerAudioWindowSink m_sink;
+                private readonly int m_slot, m_playerIndex;
+                private bool m_closed;
+                public Capture(ILocalPlayerAudioWindowSink sink, ComponentPlayer player, int slot, int playerIndex)
                 {
-                    try
-                    {
-                        m_sink.BeginLocalAudioWindow(m_slot, m_playerIndex, m_player);
-                        opened = true;
-                    }
-                    catch (Exception)
-                    {
-                        // 归属失败不能影响角色本身的 Update。
-                    }
-                    m_inner.Update(dt);
+                    m_sink = sink;
+                    m_slot = slot;
+                    m_playerIndex = playerIndex;
+                    sink.BeginLocalAudioWindow(slot, playerIndex, player);
                 }
-                finally
+                public void Dispose()
                 {
-                    if (opened)
-                    {
-                        try
-                        {
-                            m_sink.EndLocalAudioWindow(m_slot, m_playerIndex);
-                        }
-                        catch (Exception)
-                        {
-                            // 同上：中继侧异常绝不冒泡到引擎的更新派发。
-                        }
-                    }
+                    if (m_closed) return;
+                    m_closed = true;
+                    m_sink.EndLocalAudioWindow(m_slot, m_playerIndex);
                 }
             }
         }
@@ -326,14 +295,11 @@ namespace SuMultiplayer.Engine
                 foreach (IUpdateable original in state.Entity.FindComponents<IUpdateable>())
                 {
                     if (original == null) continue;
-                    var proxy = new LocalUpdateWindowProxy(original, m_sink, state.Player,
-                        state.Slot, state.PlayerIndex);
-                    // 先记账再动 update 表：中途异常时 Teardown(restore:true) 才能把
-                    // 已经摘掉的组件原样还回去（否则它再也不会被更新）。
+                    var scope = new LocalUpdateWindowScope(m_sink, state.Player, state.Slot, state.PlayerIndex, () => m_enabled);
+                    IDisposable token = MultiplayerUpdateScheduling.RegisterScope("SuMultiplayer.LocalAudio", original, scope.Enter);
                     state.Originals.Add(original);
-                    update.RemoveUpdateable(original);
-                    state.Proxies.Add(proxy);
-                    update.AddUpdateable(proxy);
+                    state.Scopes.Add(scope);
+                    state.ScopeTokens.Add(token);
                 }
             }
             catch (Exception e)
@@ -341,9 +307,9 @@ namespace SuMultiplayer.Engine
                 m_installFailures++;
                 m_sink.NoteLocalPlayerWindowProblem("slot-install:" + e.GetType().Name,
                     "安装本机角色声音窗口失败（playerIndex=" + desired.PlayerIndex + " " +
-                    e.GetType().Name + " " + e.Message + "）→ 回滚该角色，声音按全局路径处理");
+                    e.GetType().Name + " " + e.Message + "）→ 撤销本次声音作用域登记，明确失败");
                 Teardown(state, restore: true);
-                return;
+                throw;
             }
             m_slots.Add(state);
         }
@@ -362,51 +328,35 @@ namespace SuMultiplayer.Engine
 
         private void TeardownAll(bool restore)
         {
+            List<Exception> errors = null;
             for (int i = m_slots.Count - 1; i >= 0; i--)
             {
-                Teardown(m_slots[i], restore);
+                try { Teardown(m_slots[i], restore); }
+                catch (Exception error) { (errors ??= new List<Exception>()).Add(error); }
             }
             m_slots.Clear();
+            if (errors != null) throw new AggregateException("Local audio scope cleanup failed.", errors);
         }
 
+        // Source: UpdateExtensionRegistry.cs:RegisterHostUpdateScope (token disposal preserves other owners)
         private void Teardown(SlotState state, bool restore)
         {
             if (state == null) return;
-            SubsystemUpdate update = state.Update;
-            if (update != null)
+            List<Exception> errors = null;
+            foreach (IDisposable token in state.ScopeTokens)
             {
-                for (int i = 0; i < state.Proxies.Count; i++)
+                try { token.Dispose(); if (restore) m_teardownRestores++; }
+                catch (Exception error)
                 {
-                    try { update.RemoveUpdateable(state.Proxies[i]); }
-                    catch (Exception e)
-                    {
-                        m_sink.NoteLocalPlayerWindowProblem("slot-remove:" + e.GetType().Name,
-                            "移除本机角色声音窗口代理失败（playerIndex=" + state.PlayerIndex +
-                            " " + e.GetType().Name + " " + e.Message + "）→ 明确计数");
-                    }
-                }
-                if (restore)
-                {
-                    for (int i = 0; i < state.Originals.Count; i++)
-                    {
-                        try
-                        {
-                            update.AddUpdateable(state.Originals[i]);
-                            m_teardownRestores++;
-                        }
-                        catch (Exception e)
-                        {
-                            m_sink.NoteLocalPlayerWindowProblem(
-                                "slot-restore:" + e.GetType().Name,
-                                "还原本机角色组件 Update 失败（playerIndex=" + state.PlayerIndex +
-                                " " + e.GetType().Name + " " + e.Message + "）→ 该组件本帧起" +
-                                "不再更新（明确计数）");
-                        }
-                    }
+                    m_sink.NoteLocalPlayerWindowProblem("scope-remove:" + error.GetType().Name,
+                        "撤销本机声音作用域失败（playerIndex=" + state.PlayerIndex + "）：" + error);
+                    (errors ??= new List<Exception>()).Add(error);
                 }
             }
+            state.ScopeTokens.Clear();
             state.Originals.Clear();
-            state.Proxies.Clear();
+            state.Scopes.Clear();
+            if (errors != null) throw new AggregateException("Local audio scope teardown failed.", errors);
         }
     }
 }

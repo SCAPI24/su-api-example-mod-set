@@ -12,8 +12,8 @@ namespace SuMultiplayer.Engine
     /// <see cref="IWorldControlGuiSink"/>；组合根创建，模块每帧 Pump）。
     ///
     /// 三个职责：
-    ///   · **客户端输入捕获**：本端是联机客户端时，把 <see cref="SuComponentGui"/>
-    ///     （Injector 替换的 ComponentGui 外壳）的 WorldControlSink 指向自己；
+    ///   · **客户端输入捕获**：本端是联机客户端时，把 <see cref="SuComponentGuiExtension"/>
+    ///     （共享真实 ComponentGui 的独立 controller）的 WorldControlSink 指向自己；
     ///     拦截点在 ComponentGui.Update 内、base.Update（HandleInput 读四按钮）之前
     ///     —— 与 widget 置位**同一帧**，采集后写回 false，原生本地分支整段不执行。
     ///     （旧实现挂在 ComponentInput(-10) 抢点击晚一帧，实测客户端本地会先执行一次：
@@ -47,6 +47,7 @@ namespace SuMultiplayer.Engine
             "<IsClicked>k__BackingField", BindingFlags.NonPublic | BindingFlags.Instance);
 
         private readonly NetworkAvatarSpawner m_spawner;
+        private readonly MultiplayerComponentExtensions m_components;
         private readonly IModuleDiagnostics m_diagnostics;
         private readonly string m_ownerId;
         private readonly string[] m_buttonNames =
@@ -54,7 +55,7 @@ namespace SuMultiplayer.Engine
 
         private Project m_project;
         private bool m_clientReplica;
-        private SuComponentGui m_gui;
+        private SuComponentGuiExtension m_gui;
         private IWorldControlRequestSink m_requestSink;
 
         // 计数（状态行 / 排障用；热路径不写日志）
@@ -67,9 +68,10 @@ namespace SuMultiplayer.Engine
         private bool m_reflectionFaultLogged;
 
         public WorldControlEngine(NetworkAvatarSpawner spawner, IModuleDiagnostics diagnostics,
-            string ownerId)
+            string ownerId, MultiplayerComponentExtensions components)
         {
             m_spawner = spawner ?? throw new ArgumentNullException(nameof(spawner));
+            m_components = components ?? throw new ArgumentNullException(nameof(components));
             m_diagnostics = diagnostics ?? throw new ArgumentNullException(nameof(diagnostics));
             m_ownerId = string.IsNullOrEmpty(ownerId) ? "world-control" : ownerId;
         }
@@ -84,7 +86,10 @@ namespace SuMultiplayer.Engine
 
         // ================================================================= IWorldControlPort：挂接
 
-        public void Pump()
+        public void Pump() => RefreshInputBinding(GameManager.Project);
+
+        // Source: WorldControlEngine.cs:Pump; SuComponentGui.cs:SuComponentGuiExtension.Update
+        internal void RefreshInputBinding(Project project)
         {
             if (s_guiTimeButton == null || s_guiPrecipButton == null || s_guiFogButton == null ||
                 s_guiLightningButton == null || s_inputPlayerInput == null ||
@@ -100,9 +105,8 @@ namespace SuMultiplayer.Engine
                         " clickable=" + (s_bitmapClickable != null) +
                         " isClicked=" + (s_clickableIsClicked != null));
                 }
-                return;
+                throw new InvalidOperationException("[SuMP] 世界控制 GUI 私有字段绑定失败，不能运行同帧按钮拦截。");
             }
-            Project project = GameManager.Project;
             if (!ReferenceEquals(project, m_project))
             {
                 m_project = project;
@@ -130,25 +134,26 @@ namespace SuMultiplayer.Engine
             m_requestSink = sink;
         }
 
-        /// <summary>客户端：找到本机玩家的 ComponentGui 外壳并挂接（Injector 注入的 SuComponentGui）。</summary>
+        /// <summary>客户端：给本机真实 ComponentGui 对应的独立 controller 挂接 sink。</summary>
         private void UpdateInput(Project project)
         {
             if (m_spawner.TryGetLocalPlayer(project, out PlayerData local, out _))
             {
                 ComponentPlayer player = local?.ComponentPlayer;
-                if (player?.ComponentGui is SuComponentGui gui)
+                if (m_components.TryGetGui(player?.ComponentGui, out SuComponentGuiExtension gui))
                 {
-                    if (!ReferenceEquals(gui, m_gui)) m_gui = gui;
+                    if (!ReferenceEquals(gui, m_gui)) { DetachInput(); m_gui = gui; }
                     gui.WorldControlSink = this;
                     return;
                 }
+                DetachInput();
                 if (player != null && !m_inputShellMissingLogged)
                 {
                     m_inputShellMissingLogged = true;
                     m_inputShellMissing++;
-                    Warn("客户端的 ComponentGui 不是 SuComponentGui（Injector 未生效？当前：" +
+                    Warn("客户端的 ComponentGui 无法取得联机附加 controller（原类型被替换、实体未加入或附加已停用；当前：" +
                         (player.ComponentGui == null ? "null" : player.ComponentGui.GetType().Name) +
-                        "）→ 创意四按钮无法同帧拦截，本地会先执行一次再被快照拉回");
+                        "）→ 联机创意按钮附加未生效");
                 }
             }
             else

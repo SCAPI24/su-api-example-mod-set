@@ -24,7 +24,7 @@ namespace SuMultiplayer.Engine
     ///     swooshSuppressedDig）。
     ///
     /// 客户端：
-    ///   · 通过 <c>SuComponentInput.HitSink</c> 在 <c>ComponentInput.Update</c> 之后、
+    ///   · 通过 <c>SuComponentInputExtension.HitSink</c> 在 <c>ComponentInput.Update</c> 之后、
     ///     <c>ComponentPlayer.Update</c> 之前接管左键攻击（清空 <c>PlayerInput.Hit</c>），
     ///     原生 <c>ComponentMiner.Hit</c> 整段不执行 —— **不 roll 命中、不扣血**；
     ///   · 目标 = 本机射线命中的生物复制体 / 联机角色（解析成主机网络键 / 玩家键）；
@@ -64,6 +64,7 @@ namespace SuMultiplayer.Engine
         private const int ProblemLogMs = 5000;
 
         private readonly NetworkAvatarSpawner m_spawner;
+        private readonly MultiplayerComponentExtensions m_components;
         private readonly CreatureSpawnModule m_creatures;
         private readonly CreatureWorldAdapter m_creatureWorld;
         private readonly IModParentField m_parentField;
@@ -77,7 +78,7 @@ namespace SuMultiplayer.Engine
         private ModFieldRef<ComponentPlayer, bool> m_isDigBlockedRef;
         private bool m_inputBindingFailed;
 
-        private readonly List<SuComponentInput> m_attachedInputs = new List<SuComponentInput>();
+        private readonly List<SuComponentInputExtension> m_attachedInputs = new List<SuComponentInputExtension>();
         private readonly List<PlayerData> m_localPlayers = new List<PlayerData>(PlayerKey.SlotCount);
         private readonly Dictionary<ComponentPlayer, int> m_localSlots =
             new Dictionary<ComponentPlayer, int>(ReferenceEqualityComparer.Instance);
@@ -170,9 +171,10 @@ namespace SuMultiplayer.Engine
         public MeleeReplicaEngine(NetworkAvatarSpawner spawner, CreatureSpawnModule creatures,
             CreatureWorldAdapter creatureWorld, IModParentField parentField,
             IModuleDiagnostics diagnostics, ITransportPort transport, float serverMaxReach,
-            string owner)
+            string owner, MultiplayerComponentExtensions components)
         {
             m_spawner = spawner ?? throw new ArgumentNullException(nameof(spawner));
+            m_components = components ?? throw new ArgumentNullException(nameof(components));
             m_creatures = creatures ?? throw new ArgumentNullException(nameof(creatures));
             m_creatureWorld = creatureWorld ?? throw new ArgumentNullException(nameof(creatureWorld));
             m_parentField = parentField ?? throw new ArgumentNullException(nameof(parentField));
@@ -231,6 +233,13 @@ namespace SuMultiplayer.Engine
         public void Pump()
         {
             Project project = GameManager.Project;
+            RefreshInputBinding(project);
+            if (project != null) ExpirePredictions();
+        }
+
+        // Source: MeleeReplicaEngine.cs:Pump; EntityRequestInput.cs:SuComponentInputExtension.Update
+        internal void RefreshInputBinding(Project project)
+        {
             if (!ReferenceEquals(project, m_project))
             {
                 ResetForProject(project);
@@ -249,7 +258,8 @@ namespace SuMultiplayer.Engine
                 m_authoritativeTick = (long)Math.Floor(time.GameTime * 60.0);
                 m_clientTick = m_authoritativeTick;
             }
-            if (m_inputRef == null && !m_inputBindingFailed)
+            if (m_inputBindingFailed) throw new InvalidOperationException("近战输入字段绑定已失败，不能运行联机输入附加。");
+            if (m_inputRef == null)
             {
                 try
                 {
@@ -261,12 +271,11 @@ namespace SuMultiplayer.Engine
                 {
                     m_inputBindingFailed = true;
                     Problem("input-bind", "无法绑定 ComponentInput.m_playerInput / ComponentMiner.m_lastHitTime（" +
-                        e.GetType().Name + " " + e.Message + "）→ 近战输入拦截不启用（本端走原生攻击）");
-                    return;
+                        e.GetType().Name + " " + e.Message + "）→ 拒绝运行联机输入附加");
+                    throw new InvalidOperationException("近战输入字段绑定失败。", e);
                 }
             }
             AttachInputs(project);
-            ExpirePredictions();
         }
 
         // ---------------------------------------------------------------- 输入拦截
@@ -527,19 +536,19 @@ namespace SuMultiplayer.Engine
                 m_localSlots[player] = slot;
             }
             // 只在本机角色上挂 sink；多余的（换角色 / 换世界）立即摘掉。
-            var keep = new List<SuComponentInput>(m_localPlayers.Count);
+            var keep = new List<SuComponentInputExtension>(m_localPlayers.Count);
             foreach (KeyValuePair<ComponentPlayer, int> pair in m_localSlots)
             {
                 ComponentInput input = pair.Key?.Entity?.FindComponent<ComponentInput>();
-                if (input is SuComponentInput shell && ReferenceEquals(shell.HitSink, this) == false)
+                if (m_components.TryGetInput(input, out SuComponentInputExtension controller))
                 {
-                    shell.HitSink = this;
+                    if (!ReferenceEquals(controller.HitSink, this)) controller.HitSink = this;
+                    keep.Add(controller);
                 }
-                if (input is SuComponentInput attached) keep.Add(attached);
             }
             for (int i = m_attachedInputs.Count - 1; i >= 0; i--)
             {
-                SuComponentInput shell = m_attachedInputs[i];
+                SuComponentInputExtension shell = m_attachedInputs[i];
                 if (shell == null) continue;
                 if (ReferenceEquals(shell.HitSink, this) && !keep.Contains(shell)) shell.HitSink = null;
             }
@@ -547,8 +556,8 @@ namespace SuMultiplayer.Engine
             m_attachedInputs.AddRange(keep);
             if (m_attachedInputs.Count == 0)
             {
-                LogOnce("no-shell", "近战输入拦截：本机玩家没有注入 SuComponentInput（当前没有可接管的输入组件）" +
-                    " → 本端攻击走原生路径（客户端会本地 roll 命中，需检查 Game.ComponentInput 注入）");
+                LogOnce("no-shell", "近战输入拦截：本机玩家没有可用的 ComponentInput 附加 controller（原类型被替换或附加已停用）" +
+                    " → 本端攻击走原生路径（客户端会本地 roll 命中，需检查原类型替换/附加注册状态）");
             }
         }
 
@@ -556,7 +565,7 @@ namespace SuMultiplayer.Engine
         {
             for (int i = 0; i < m_attachedInputs.Count; i++)
             {
-                SuComponentInput shell = m_attachedInputs[i];
+                SuComponentInputExtension shell = m_attachedInputs[i];
                 if (shell != null && ReferenceEquals(shell.HitSink, this)) shell.HitSink = null;
             }
             m_attachedInputs.Clear();

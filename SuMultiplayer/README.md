@@ -10,7 +10,7 @@
 ```text
 SuMultiplayer/
   ModInfo.xml                    # 扁平写法；IsMergeLib=true
-  SuMultiplayer.csproj           # net8.0；引擎走 NuGet 制品源 cnb-nuget
+  SuMultiplayer.csproj           # net10.0；核心 NuGet 精确锁定 [0.2.1.0]（cnb-nuget）
   Plug/SuMultiplayerMod.cs       # IMod 入口：加载/卸载各一行日志
   Journal/                       # 已实现：状态变化队列（内存 + 落盘 + 分类筛选）
   Modules/                       # 已实现：模块宿主（能力依赖解析 + 异常隔离 + 热插拔下线）
@@ -84,10 +84,31 @@ SuMultiplayer/
 ## 构建
 
 ```powershell
-dotnet build Mod\SuMultiplayer\SuMultiplayer.csproj -c Debug
+dotnet build Mod\SuMultiplayer\SuMultiplayer.csproj -c Release
 ```
 
 引擎依赖来自制品库源 `cnb-nuget`，无需克隆引擎工程。
+
+当前目标框架为 `net10.0`，`Engine`、`EntitySystem`、`Survivalcraft`、`SuAPICore`
+均使用精确版本 `[0.2.1.0]`。Mod 自身版本仍为 `2.3.1`，`APIVersion=0.2.1.0`。
+输入与 GUI 使用同一个真实宿主上的独立 `UpdateExtension`：输入意图在 Host 更新后采集，
+世界控制和乘骑在 GUI Host 更新前消费；本机声音捕获使用 `RegisterHostUpdateScope`，
+复制体暂停和恢复按 owner 登记。`SuPlayScreenExtension` 附加到原版 `PlayScreen` 的真实宿主，
+通过 `RegisterListPanelController` 统一显示本地世界和房间行；不会替换 Play 屏、列表工厂或原版点击委托。
+原版 `PlayScreen.cs` 不作任何修改。扩展管理混合列表的选择、Play、Properties、新建世界、返回及加入下载，
+通过 `base.Enter(parameters, false)`、`base.Update(false)` 只截断原方法，其他 Mod 的生命周期回调照常执行。
+扩展撤销时仅留下最近一次扫描的真实本地 `WorldInfo` 条目、恢复其原生统计并释放列表控制权；
+下次正常进入界面由原版自行扫描，不直接调用或重放其他 Mod 的 Enter。
+独立角色创建屏使用自己的 Loading 队列项；创建房间入口仍在游玩中的世界。
+
+屏幕、列表和共享宿主 API 均来自已发布的 `0.2.1.0` NuGet 包。
+直接执行上面的 Release 构建命令即可，无需本地核心 DLL、主仓库编译产物或开发开关。
+
+打包只取 `bin/Release/net10.0/SuMultiplayer.dll` 与同目录的 `Google.Protobuf.dll`，
+放入同一个平铺 `Lib/`。`Google.Protobuf 3.28.3` 是普通运行库，已在 `ModInfo.xml` 的
+`Dependencies` 中声明 `Identifier=Google.Protobuf`、`IsMergeLib=true`，不需要独立 Mod 入口。
+ZIP 根目录放 `ModInfo.xml`，`Content/` 保留本目录资源；不要把输出目录整包复制，
+核心四个 DLL、`System.Drawing.Common.dll` 等游戏依赖和 `Grpc.Tools` 构建工具均不随 Mod 分发。
 
 ## 遵循的硬约束（沿用 Mod 仓库规范）
 

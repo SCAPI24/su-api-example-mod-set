@@ -26,7 +26,7 @@ namespace SuMultiplayer.Engine
     /// 客户端：
     ///   · 只创建 / 更新 / 移除引擎里的 Pickable / Projectile **副本**；
     ///   · 原生拾取由 <c>SuSubsystemPickables</c>（客户端清空玩家列表）抑制；
-    ///   · 丢弃输入（Q / 手柄 B）由 <c>SuComponentInput</c> 在 ComponentPlayer.Update 之前拦下，
+    ///   · 丢弃输入（Q / 手柄 B）由 <c>SuComponentInputExtension</c> 在 ComponentPlayer.Update 之前拦下，
     ///     只发请求、**不本地扣物品**；投掷 / 开火由方块行为外壳只发请求、**不本地生成投射物**；
     ///   · 投射物**不跑** <c>SubsystemProjectiles.Update</c>（它会在客户端 DestroyCell / 伤人 /
     ///     生成掉落物 / 触发爆炸），位置由本适配层按主机快照插值；
@@ -42,6 +42,7 @@ namespace SuMultiplayer.Engine
         private const int ProblemLogMs = 5000;
 
         private readonly NetworkAvatarSpawner m_spawner;
+        private readonly MultiplayerComponentExtensions m_components;
         private readonly InteractionReachGate m_reachGate;
         private readonly IModParentField m_parentField;
         private readonly IModuleDiagnostics m_diagnostics;
@@ -50,7 +51,7 @@ namespace SuMultiplayer.Engine
             new Dictionary<string, long>(StringComparer.Ordinal);
         private readonly HashSet<string> m_loggedOnce = new HashSet<string>(StringComparer.Ordinal);
 
-        // ---- 客户端丢弃输入拦截（SuComponentInput 每帧调用）
+        // ---- 客户端丢弃输入拦截（SuComponentInputExtension 每帧调用）
         /// <summary>
         /// ComponentInput.m_playerInput 的 ref 入口（BindFieldRef 一次绑定、每帧无反射）：
         /// 采集到丢弃意图后把 Drop 标志清掉，引擎的 ComponentPlayer.Update 因此不会本地扣物品 +
@@ -58,7 +59,7 @@ namespace SuMultiplayer.Engine
         /// </summary>
         private readonly ModFieldRef<ComponentInput, PlayerInput> m_inputRef;
         private IEntityRequestSink m_requestSink;
-        private SuComponentInput m_dropInput;
+        private SuComponentInputExtension m_dropInput;
         private bool m_dropInputInjectionMissingLogged;
         private long m_dropIntentSubmissions;
         private long m_dropIntentFailures;
@@ -227,9 +228,11 @@ namespace SuMultiplayer.Engine
         public float LocalReach => EngineReach.LocalReach();
 
         public PickableReplicaEngine(NetworkAvatarSpawner spawner, IModParentField parentField,
-            IModuleDiagnostics diagnostics, string ownerId, InteractionReachGate reachGate)
+            IModuleDiagnostics diagnostics, string ownerId, InteractionReachGate reachGate,
+            MultiplayerComponentExtensions components)
         {
             m_spawner = spawner;
+            m_components = components ?? throw new ArgumentNullException(nameof(components));
             m_reachGate = reachGate ?? throw new ArgumentNullException(nameof(reachGate));
             m_parentField = parentField ?? throw new ArgumentNullException(nameof(parentField));
             m_diagnostics = diagnostics;
@@ -297,20 +300,8 @@ namespace SuMultiplayer.Engine
         public void Pump()
         {
             Project project = GameManager.Project;
-            if (!ReferenceEquals(project, m_project))
-            {
-                ResetEngineState("project-change");
-                m_project = project;
-            }
+            RefreshInputBinding(project);
             if (project == null) return;
-
-            bool clientReplica = project.FindSubsystem<SubsystemTerrain>(false) is SuSubsystemTerrain
-                shell && shell.ClientReplica;
-            if (clientReplica != m_clientReplica)
-            {
-                ResetEngineState("role-change");
-                m_clientReplica = clientReplica;
-            }
 
             SubsystemPickables pickables = project.FindSubsystem<SubsystemPickables>(false);
             if (!ReferenceEquals(pickables, m_pickables))
@@ -413,15 +404,36 @@ namespace SuMultiplayer.Engine
                     " window=" + (!m_clientReplica) +
                     "（主机=把化身注入引擎拾取循环原生拾取；客户端=纯表现）");
             }
-            // 客户端：把丢弃输入钩子挂到本机玩家的 SuComponentInput 上（主机 / 单机不挂）。
+            // 客户端：把丢弃输入钩子挂到本机玩家的 SuComponentInputExtension 上（主机 / 单机不挂）。
             UpdateDropInput(project);
         }
 
         /// <summary>
-        /// 客户端丢弃输入钩子的挂接：找到本机玩家的 <see cref="SuComponentInput"/> 并把本适配器
+        /// 客户端丢弃输入钩子的挂接：取得本机真实输入宿主的 <see cref="SuComponentInputExtension"/> 并把本适配器
         /// 作为 sink 写进去（实例属性，**没有任何静态状态**）。主机会摘掉它（主机自己的丢弃
         /// 走原生路径，由引擎权威执行后被实体复制抓走）。
         /// </summary>
+        // Source: PickableReplicaEngine.cs:Pump; EntityRequestInput.cs:SuComponentInputExtension.Update
+        internal void RefreshInputBinding(Project project)
+        {
+            if (!ReferenceEquals(project, m_project))
+            {
+                ResetEngineState("project-change");
+                m_project = project;
+            }
+            if (project == null) return;
+
+            bool clientReplica = project.FindSubsystem<SubsystemTerrain>(false) is SuSubsystemTerrain
+                shell && shell.ClientReplica;
+            if (clientReplica != m_clientReplica)
+            {
+                ResetEngineState("role-change");
+                m_clientReplica = clientReplica;
+            }
+
+            UpdateDropInput(project);
+        }
+
         private void UpdateDropInput(Project project)
         {
             if (!m_clientReplica)
@@ -443,15 +455,15 @@ namespace SuMultiplayer.Engine
                 DetachDropInput();
                 return;
             }
-            if (!(input is SuComponentInput shell))
+            if (!m_components.TryGetInput(input, out SuComponentInputExtension shell))
             {
                 if (!m_dropInputInjectionMissingLogged)
                 {
                     m_dropInputInjectionMissingLogged = true;
                     LogProblemOnce("drop-input-injection-missing",
-                        "客户端没有注入 SuComponentInput（当前：" + input.GetType().Name +
+                        "客户端无法取得 ComponentInput 的联机附加 controller（当前：" + input.GetType().Name +
                         "）→ 丢弃无法在本地扣除之前拦截，物品可能被引擎原生掉落 + 清理（请检查 " +
-                        "Game.ComponentInput 注入）");
+                        "原类型替换/附加注册状态）");
                 }
                 DetachDropInput();
                 return;
@@ -939,7 +951,7 @@ namespace SuMultiplayer.Engine
         // ================================================================ 客户端：丢弃 / 投掷 / 开火意图
 
         /// <summary>
-        /// 客户端丢弃输入（由 <see cref="SuComponentInput"/> 在 base.Update 之后调用）。
+        /// 客户端丢弃输入（由 <see cref="SuComponentInputExtension"/> 在 base.Update 之后调用）。
         ///
         /// 关键口径：**本地绝不扣除**。这里只采集意图交给模块发 PickableDropRequest，然后把
         /// 引擎这一帧的 <c>PlayerInput.Drop</c> 清掉，让 <c>ComponentPlayer.Update</c> 的

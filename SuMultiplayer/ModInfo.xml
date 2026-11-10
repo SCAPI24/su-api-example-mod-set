@@ -2,7 +2,7 @@
 <!--
   SuMultiplayer —— 联机模块重写工程（ModInfo 必须保持扁平写法：
   <Version> / <APIVersion> 直接挂在 <ModInfo> 下，禁止 <ModVersion><Version> 嵌套）。
-  依赖项等第一段代码真正引入传输层后再补 <Dependencies>，不要提前声明。
+  Google.Protobuf 为随包分发的普通运行库，使用平铺 Lib/，不作为独立 Mod 入口。
 -->
 <Mod>
   <ModInfo>
@@ -12,10 +12,18 @@
       <Text lang="zh_CN">联机模组</Text>
     </LocalizedName>
     <Version>2.3.1</Version>
-    <APIVersion>0.1.7.0</APIVersion>
+    <APIVersion>0.2.1.0</APIVersion>
     <IsMergeLib>true</IsMergeLib>
     <Asset>
       <ContentRoot>Content/</ContentRoot>
     </Asset>
   </ModInfo>
+  <Dependencies>
+    <Dependency>
+      <ModInfo>
+        <Identifier>Google.Protobuf</Identifier>
+        <IsMergeLib>true</IsMergeLib>
+      </ModInfo>
+    </Dependency>
+  </Dependencies>
 </Mod>

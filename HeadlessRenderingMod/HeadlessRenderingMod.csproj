@@ -8,14 +8,11 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <!-- 引擎三件套用项目引用（与 CmdBridgeMod 一致）：ProjectReference 会把
-         Engine.dll / EntitySystem.dll / Survivalcraft.dll 复制到输出目录，
-         而 Obfuscar 的配置要求 $(InPath) 下能找到 EntitySystem.dll（它要一起混淆）。
-         用 PackageReference 时这些依赖不会进输出目录，混淆步骤会直接失败。 -->
-    <PackageReference Include="Engine" Version="0.1.7.0" />
-    <PackageReference Include="EntitySystem" Version="0.1.7.0" />
-    <PackageReference Include="Survivalcraft" Version="0.1.7.0" />
-    <PackageReference Include="SuAPICore" Version="0.1.7.0" />
+    <!-- Source: doc/mod-nuget-compile-guide.md:NuGet dependencies — do not build or bundle the game. -->
+    <PackageReference Include="Engine" Version="[0.2.1.0]" />
+    <PackageReference Include="EntitySystem" Version="[0.2.1.0]" />
+    <PackageReference Include="Survivalcraft" Version="[0.2.1.0]" />
+    <PackageReference Include="SuAPICore" Version="[0.2.1.0]" />
   </ItemGroup>
 
   <ItemGroup>
@@ -47,11 +44,19 @@
     </PackageReference>
   </ItemGroup>
 
-  <Target Name="PostBuild" AfterTargets="PostBuildEvent">
+  <Target Name="ObfuscateMod" AfterTargets="Build" Condition="'$(Configuration)' == 'Release'">
     <PropertyGroup>
       <_ObfuscarConfig>$(MSBuildProjectDirectory)\$(IntermediateOutputPath)Obfuscar.xml</_ObfuscarConfig>
+      <_ObfuscarDependencies>$(MSBuildProjectDirectory)\$(IntermediateOutputPath)ObfuscarDependencies</_ObfuscarDependencies>
       <_ObfuscarOutput>$(TargetDir)Obfuscar</_ObfuscarOutput>
     </PropertyGroup>
+    <!-- Source: ResolveAssemblyReferences:ReferencePath — resolve dependencies from the actual NuGet assets. -->
+    <ItemGroup>
+      <_ObfuscarDependency Include="@(ReferencePath)" Condition="'%(ReferencePath.NuGetPackageId)' != ''" />
+    </ItemGroup>
+    <RemoveDir Directories="$(_ObfuscarDependencies);$(_ObfuscarOutput)" />
+    <MakeDir Directories="$(_ObfuscarDependencies)" />
+    <Copy SourceFiles="@(_ObfuscarDependency)" DestinationFolder="$(_ObfuscarDependencies)" />
     <Copy SourceFiles="Obfuscar.xml" DestinationFiles="$(_ObfuscarConfig)" />
     <XmlPoke XmlInputPath="$(_ObfuscarConfig)"
              Query="/Obfuscator/Var[@name='InPath']/@value"
@@ -59,20 +64,10 @@
     <XmlPoke XmlInputPath="$(_ObfuscarConfig)"
              Query="/Obfuscator/Var[@name='OutPath']/@value"
              Value="$(_ObfuscarOutput)" />
-    <!-- 依赖来自 NuGet 包、默认不进输出目录，但 Obfuscar 需要从 $(InPath) 解析它们
-         （只是解析，不混淆）。所以在混淆前把依赖复制进输出目录，混淆完再删掉，
-         这样输出目录保持干净（只留 mod 自己的 DLL），也不必退回 ProjectReference。 -->
-    <ItemGroup>
-      <_ObfuscarDependency Include="$(NuGetPackageRoot)engine/0.1.7/lib/net10.0/Engine.dll" />
-      <_ObfuscarDependency Include="$(NuGetPackageRoot)entitysystem/0.1.7/lib/net10.0/EntitySystem.dll" />
-      <_ObfuscarDependency Include="$(NuGetPackageRoot)survivalcraft/0.1.7/lib/net10.0/Survivalcraft.dll" />
-    </ItemGroup>
-    <Copy SourceFiles="@(_ObfuscarDependency)" DestinationFolder="$(TargetDir)" SkipUnchangedFiles="true" />
+    <XmlPoke XmlInputPath="$(_ObfuscarConfig)"
+             Query="/Obfuscator/AssemblySearchPath/@path"
+             Value="$(_ObfuscarDependencies)" />
     <Exec Command="&quot;$(Obfuscar)&quot; &quot;$(_ObfuscarConfig)&quot;" />
-    <!-- 混淆完把只为解析而复制进来的依赖删掉，输出目录只留 mod 自己的程序集。 -->
-    <ItemGroup>
-      <_ObfuscarCopiedDependency Include="$(TargetDir)Engine.dll;$(TargetDir)EntitySystem.dll;$(TargetDir)Survivalcraft.dll" />
-    </ItemGroup>
-    <Delete Files="@(_ObfuscarCopiedDependency)" ContinueOnError="true" />
+    <Error Condition="!Exists('$(_ObfuscarOutput)\$(TargetFileName)')" Text="Release obfuscation did not produce $(TargetFileName)." />
   </Target>
 </Project>

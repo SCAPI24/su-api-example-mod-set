@@ -2,6 +2,26 @@
 
 SuAPI-only headless server control for the published Windows Survivalcraft build. The Mod does not patch or replace the game DLLs and does not require any external Mod.
 
+## Build for SuAPI 0.2.1.0
+
+HRM is HeadlessRenderingMod. The Mod version is `1.4.1`; its required API version is
+`0.2.1.0`. The four core dependencies use exact NuGet references `[0.2.1.0]` from
+the configured CNB package source, without building the engine or using local core DLLs.
+
+```text
+dotnet build Mod/HeadlessRenderingMod/HeadlessRenderingMod.csproj -c Release
+```
+
+Release builds run Obfuscar on the Mod itself. Dependency resolution uses MSBuild's
+resolved NuGet assets, not hard-coded package cache versions. Package the final
+`bin/Release/net10.0/Obfuscar/HeadlessRenderingMod.dll` as
+`Lib/HeadlessRenderingMod.dll`, with `ModInfo.xml` at the ZIP root and an empty
+`Content/` directory. Keep `IsMergeLib=true`; do not bundle game core assemblies.
+All eight Windows/Linux native libraries are embedded in this one Mod DLL.
+
+Do not package `server.json`, authentication tokens, world files, or workstation
+deployment credentials. The instance creates its own configuration at runtime.
+
 The published `Survivalcraft.exe` starts normally and loads the Mod. The Mod then:
 
 - disables the root Widget draw tree;

@@ -357,9 +357,9 @@ namespace SuMultiplayer.Engine
                 m_covered.Reset();
                 m_slotSuppress.Clear();
             }
-            // 同一帧安装 / 还原本机角色更新窗口：下一帧派发生效（不会与原组件重复更新）。
-            // 这里传 false：本 Tick 可能刚装好代理、还没经过一次完整派发，禁止立即还原
-            // （否则会把"移除 + 添加"压成对已存在组件再 Add，SubsystemUpdate 会抛异常）。
+            // Source: LocalPlayerAudioWindows.cs:Pump
+            // Scope token disposal is safe even before its first invocation; SuAPI owns deferred
+            // scheduler handoff. Disabling capture immediately releases our scopes on Mod unload.
             PumpLocalWindows(allowRestore: false);
         }
 

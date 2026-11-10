@@ -10,7 +10,7 @@ namespace SuMultiplayer.UI
     /// 引擎 Settings → Compatibility 屏的替换版：在原三行（单线程地形更新 / 查看日志 /
     /// 恢复默认）下面追加一行 <c>Network Proxy:</c>，按钮三态 Default/On/Off。
     ///
-    /// 入口与 Play 屏相同：组合根在 Loading.Initialize 里 ReplaceItem
+    /// 入口：组合根在 Loading.Initialize 里 ReplaceItem（Play 屏已改为独立附加扩展）。
     /// "Initialize SettingsCompatibilityScreen"。不修改引擎源码。
     /// </summary>
     public sealed class SuSettingsCompatibilityScreen : SettingsCompatibilityScreen
