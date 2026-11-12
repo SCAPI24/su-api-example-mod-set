@@ -50,6 +50,7 @@ namespace SuMultiplayer
         private NetworkAvatarSpawner m_avatarSpawner;
         private MultiplayerComponentExtensions m_componentExtensions;
         private IDisposable m_playScreenExtension;
+        private IDisposable m_mainMenuExtension;
         /// <summary>统计 / 成就的引擎侧端口（本机 PlayerStats 读写 + 角色记录落盘）。</summary>
         private PlayerStatsStore m_statsPort;
         /// <summary>统计 / 成就同步模块（主机权威 / 客户端只展示）。</summary>
@@ -1210,6 +1211,8 @@ namespace SuMultiplayer
             m_playScreenExtension = eventBus.RegisterScreenExtension<PlayScreen>("Play", ModIdentifier,
                 host => new SuPlayScreenExtension(host, eventBus, m_sessionModule,
                     m_transferModule.ReadyPort, m_transferModule.DownloadedWorldPort));
+            m_mainMenuExtension = eventBus.RegisterScreenExtension<MainMenuScreen>("MainMenu", ModIdentifier,
+                host => new MultiplayerMainMenuExtension(host));
 
             // Source: SuMultiplayerMod.cs:SuMultiplayerMod.Initialize — 独立角色屏不替换任何原屏幕。
             eventBus.SubscribeEvent("Loading.Initialize", args =>
@@ -2032,7 +2035,7 @@ m_terrainModule?.Bridge.BlockBehaviorNotify.Describe());
         {
             if (m_sessionModule == null) return "Session module is unavailable.";
             return m_sessionModule.TryKickClient(clientId, out string reason)
-                ? "Kicked clientId=" + clientId + " (not banned)."
+                ? "Kick requested for clientId=" + clientId + " (not banned)."
                 : "Kick failed: " + reason;
         }
 
@@ -2391,6 +2394,8 @@ m_terrainModule?.Bridge.BlockBehaviorNotify.Describe());
 
         public void OnUnload()
         {
+            m_mainMenuExtension?.Dispose();
+            m_mainMenuExtension = null;
             // Source: SuPlayScreenExtension.cs:Detached — detach before the session/transfer ports are disposed.
             m_playScreenExtension?.Dispose();
             m_playScreenExtension = null;

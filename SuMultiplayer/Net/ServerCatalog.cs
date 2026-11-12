@@ -9,6 +9,7 @@ using System.Net.Sockets;
 using System.Reflection;
 using System.Text;
 using System.Threading;
+using System.Threading.Tasks;
 using SuMultiplayer.Engine;
 using SuMultiplayer.Session;
 
@@ -68,6 +69,9 @@ namespace SuMultiplayer.Net
         private readonly int m_probePortStart;
         private readonly int m_probePortCount;
         private readonly object m_gate = new object();
+        private readonly object m_personalGate = new object();
+        private readonly ConcurrentDictionary<string, byte> m_probesInFlight = new ConcurrentDictionary<string, byte>();
+        private Task m_refreshTask;
         private readonly List<DirectoryEndpoint> m_endpoints = new List<DirectoryEndpoint>();
         private readonly ConcurrentQueue<DirectoryProbeResult> m_results =
             new ConcurrentQueue<DirectoryProbeResult>();
@@ -118,7 +122,13 @@ namespace SuMultiplayer.Net
             {
                 try
                 {
-                    if (Environment.TickCount64 >= m_nextRefreshMs) RefreshRaw();
+                    if (Environment.TickCount64 >= m_nextRefreshMs &&
+                        (m_refreshTask == null || m_refreshTask.IsCompleted))
+                    {
+                        // HTTP sources can each time out; never block saved-server refresh.
+                        m_nextRefreshMs = long.MaxValue;
+                        m_refreshTask = Task.Run(RefreshRaw);
+                    }
                     RefreshPersonal();
                     long now = Environment.TickCount64;
                     List<DirectoryEndpoint> snapshot;
@@ -132,7 +142,12 @@ namespace SuMultiplayer.Net
                                 continue;
                             m_nextProbe[endpoint.Key] = now + ProbeIntervalMs;
                         }
-                        Probe(endpoint);
+                        if (!m_probesInFlight.TryAdd(endpoint.Key, 0)) continue;
+                        _ = Task.Run(() =>
+                        {
+                            try { Probe(endpoint); }
+                            finally { m_probesInFlight.TryRemove(endpoint.Key, out _); }
+                        });
                     }
                 }
                 catch (Exception error)
@@ -192,7 +207,12 @@ namespace SuMultiplayer.Net
                 ApplyDirectoryHosts(merged.ToList(), "raw×" + succeeded);
         }
 
-        private void RefreshPersonal()
+        public void RefreshPersonal()
+        {
+            lock (m_personalGate) RefreshPersonalLocked();
+        }
+
+        private void RefreshPersonalLocked()
         {
             PersonalServers.Load();
             int revision = PersonalServers.Revision;
@@ -219,6 +239,7 @@ namespace SuMultiplayer.Net
                 };
                 lock (m_gate) RemoveLocked(endpoint.Key);
                 lock (m_gate) m_endpoints.Add(endpoint);
+                lock (m_gate) m_nextProbe.Remove(endpoint.Key);
                 // 先给主线程一条离线行：即使探测失败，个人服务器也能在 Play 屏看到/删除。
                 m_results.Enqueue(new DirectoryProbeResult
                 {
@@ -280,6 +301,7 @@ namespace SuMultiplayer.Net
         {
             string targetHost = endpoint.Host;
             int[] probePorts = endpoint.ProbePorts ?? System.Array.Empty<int>();
+            bool aggregatePersonal = endpoint.Source == RoomSource.Personal && !endpoint.HasExplicitPort;
             try
             {
                 // 一个地址可能对应多个端口（端口段 / 区间）：**逐个探测，每个端口一条结果**。
@@ -311,6 +333,7 @@ namespace SuMultiplayer.Net
                             ModLog.Info("[catalog] Probe failed: " + targetHost + ":" +
                                 discoveryPort + " · " + directError);
                     }
+                    if (aggregatePersonal && info == null) continue;
                     m_results.Enqueue(new DirectoryProbeResult
                     {
                         Endpoint = endpoint,
@@ -321,7 +344,14 @@ namespace SuMultiplayer.Net
                         // 探测端口 = 该槽位的游戏端口（同号方案）→ 房间条目直接用它。
                         Port = discoveryPort
                     });
+                    if (aggregatePersonal) return;
                 }
+                if (aggregatePersonal)
+                    m_results.Enqueue(new DirectoryProbeResult
+                    {
+                        Endpoint = endpoint, Online = false, TargetHost = targetHost,
+                        Port = endpoint.FallbackGamePort
+                    });
             }
             catch (Exception error)
             {

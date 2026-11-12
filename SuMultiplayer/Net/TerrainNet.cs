@@ -377,15 +377,17 @@ namespace SuMultiplayer.Net
 
         private readonly struct SendFrame
         {
-            public SendFrame(byte[] buffer, int length, MessageType type)
+            public SendFrame(byte[] buffer, int length, MessageType type, TaskCompletionSource<bool> completion = null)
             {
                 Buffer = buffer;
                 Length = length;
                 Type = type;
+                Completion = completion;
             }
             public byte[] Buffer { get; }
             public int Length { get; }
             public MessageType Type { get; }
+            public TaskCompletionSource<bool> Completion { get; }
         }
 
         private sealed class Peer
@@ -704,6 +706,7 @@ namespace SuMultiplayer.Net
                     {
                         await peer.Stream.WriteAsync(frame.Buffer, 0, frame.Length).ConfigureAwait(false);
                         peer.Stats.RecordSent(frame.Type, frame.Length);
+                        frame.Completion?.TrySetResult(true);
                         lock (peer.SendQueue)
                         {
                             if (peer.SendQueue.Count < m_queueCapacity && peer.State == ChannelState.Backpressured)
@@ -712,6 +715,7 @@ namespace SuMultiplayer.Net
                     }
                     finally
                     {
+                        frame.Completion?.TrySetResult(false);
                         // 无论写完 / 抛异常，池化帧都必须归还（唯一归还点）。
                         TransportDiagnostics.ReturnBuffer(frame.Buffer);
                     }
@@ -897,7 +901,10 @@ namespace SuMultiplayer.Net
                     break;
                 }
             }
-            if (peer != null && peer.Alive)
+            if (peer == null || !peer.Alive) return;
+            var delivered = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+            bool queued = false;
+            if (peer.Alive)
             {
                 try
                 {
@@ -906,7 +913,21 @@ namespace SuMultiplayer.Net
                         Reason = reason ?? string.Empty,
                         Superseded = superseded
                     };
-                    TrySend(clientId, MessageType.Kicked, message.ToByteArray());
+                    byte[] payload = message.ToByteArray();
+                    int length = TerrainFrame.HeaderBytes + payload.Length;
+                    byte[] frame = TransportDiagnostics.RentBuffer(length);
+                    TerrainFrame.EncodeTo(frame, Interlocked.Increment(ref m_sendSequence),
+                        MessageType.Kicked, payload);
+                    lock (peer.SendQueue)
+                    {
+                        if (peer.Alive && peer.SendQueue.Count < m_queueCapacity)
+                        {
+                            peer.SendQueue.Enqueue(new SendFrame(frame, length, MessageType.Kicked, delivered));
+                            peer.SendSignal.Release();
+                            queued = true;
+                        }
+                    }
+                    if (!queued) TransportDiagnostics.ReturnBuffer(frame);
                 }
                 catch (Exception e)
                 {
@@ -915,10 +936,15 @@ namespace SuMultiplayer.Net
                         " → 仍然继续踢出（对端可能已不可达）");
                 }
             }
-            // 附属两条一起断：孤儿 Peer 会一直挂在 m_terrainPeers / m_circuitPeers 里。
-            DisconnectTerrainClient(clientId, reason ?? "host-kicked");
-            DisconnectCircuitClient(clientId, reason ?? "host-kicked");
-            if (peer != null) Fail(peer, reason ?? "host-kicked");
+            // Let the serialized send loop finish writing the kick before closing the socket.
+            // Bound the wait: a stalled peer must never block the game thread indefinitely.
+            _ = Task.Run(async () =>
+            {
+                if (queued) await Task.WhenAny(delivered.Task, Task.Delay(500)).ConfigureAwait(false);
+                DisconnectTerrainClient(clientId, reason ?? "host-kicked");
+                DisconnectCircuitClient(clientId, reason ?? "host-kicked");
+                Fail(peer, reason ?? "host-kicked");
+            });
         }
 
         private bool Enqueue(Peer peer, MessageType type, byte[] payload)
@@ -1027,9 +1053,12 @@ namespace SuMultiplayer.Net
             }
             try
             {
-                peer.ConnectionClosed = true;
-                peer.Tcp?.Close();
-                CloseCircuitForPrimary(clientId, "primary-disconnected");
+                if (!peer.Alive || peer.IsCircuit || peer.IsTerrain)
+                {
+                    reason = "Player connection is no longer active.";
+                    return false;
+                }
+                KickPrimaryClient(clientId, "You were removed by the host.", false);
                 reason = null;
                 return true;
             }
@@ -1190,6 +1219,7 @@ namespace SuMultiplayer.Net
                     frame = peer.SendQueue.Dequeue();
                 }
                 TransportDiagnostics.ReturnBuffer(frame.Buffer);
+                frame.Completion?.TrySetResult(false);
             }
         }
 

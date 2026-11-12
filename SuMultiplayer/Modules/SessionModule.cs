@@ -342,9 +342,7 @@ namespace SuMultiplayer.Modules
             SelectedPort = entry.Port;
             m_joinAnnounced = true;
             m_join.BeginConnect(entry.Key, now);
-            m_join.Connected(now);
-            Log("加入房间「" + entry.Name + "」→ 已连接 " + entry.HostAddress + ":" + entry.Port +
-                "（世界随后由主机下发）");
+            Log("Joining room: connecting to " + entry.HostAddress + ":" + entry.Port);
             return true;
         }
 
@@ -430,7 +428,7 @@ namespace SuMultiplayer.Modules
                 //   · ServerDns 来源 → **UDP 在线才显示**（探测不到就当这个地址没有房间，自然也无法连接）；
                 //   · 个人服务器（From Link）写明端口 → UDP 离线也保留一行，可点它做 TCP 强制连接；
                 //   · 个人服务器没写端口（走默认端口段）→ 与 ServerDns 同样只显示在线的。
-                bool keepOffline = personal && endpoint.HasExplicitPort;
+                bool keepOffline = personal;
                 if (info == null && !keepOffline) continue;
                 // 同号方案：探测用的端口就是该槽位的游戏端口；探测在线时以主机应答里的端口为准。
                 int gamePort = info?.Port > 0 ? info.Port : result.Port;
@@ -439,8 +437,8 @@ namespace SuMultiplayer.Modules
                 {
                     // 一个地址可能展开成多个端口（端口段/区间）：Key 必须带端口，
                     // 否则同一主机的多个房间会互相覆盖。
-                    Key = endpoint.Key + ":" + gamePort,
-                    Name = info == null || string.IsNullOrEmpty(info.RoomName)
+                    Key = personal ? endpoint.Key : endpoint.Key + ":" + gamePort,
+                    Name = personal ? endpoint.Name : info == null || string.IsNullOrEmpty(info.RoomName)
                         ? (personal ? endpoint.Name + ":" + gamePort : endpoint.Host + ":" + gamePort)
                         : info.RoomName,
                     HostAddress = result.TargetHost ?? endpoint.Host,
@@ -505,7 +503,10 @@ namespace SuMultiplayer.Modules
             // RoomDirectory / m_join 的 LastSeen 全部用 Environment.TickCount64 写入；
             // 这里必须用同一时间基，否则 LastSeen 看起来在未来，超时房间永远不会被清掉。
             long nowMs = Environment.TickCount64;
+            m_serverCatalog?.RefreshPersonal();
             DrainServerCatalog(nowMs);
+            if (m_join.Stage == JoinStage.Connecting && m_transportControl?.IsChannelRunning == true)
+                m_join.Connected(nowMs);
             if (m_beaconClient == null) return;
             int removed = m_directory.RemoveStale(nowMs);
             if (removed > 0) Log("房间列表移除 " + removed + " 个超时条目（现在 " + m_directory.Count + " 个）");
