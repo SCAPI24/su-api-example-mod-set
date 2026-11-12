@@ -8,6 +8,7 @@ using Game;
 using SuAPI;
 using SuMultiplayer.Engine;
 using SuMultiplayer.Modules;
+using SuMultiplayer.Net;
 using SuMultiplayer.Session;
 
 namespace SuMultiplayer.UI
@@ -28,6 +29,8 @@ namespace SuMultiplayer.UI
     /// </summary>
     public sealed class SuPlayScreenExtension : ScreenExtension<PlayScreen>
     {
+        public const string MultiplayerMarker = "SuMultiplayer.Browse";
+        private bool m_multiplayer;
         // Source: PlayScreen.cs:PlayScreen.Update — return native bookkeeping when this Mod releases the list.
         private static readonly FieldInfo s_nativeWorldsSize = typeof(PlayScreen).GetField(
             "m_totalWorldsSize", BindingFlags.Instance | BindingFlags.NonPublic)
@@ -87,14 +90,18 @@ namespace SuMultiplayer.UI
 
         public override void Enter(object[] parameters)
         {
-            BeginWorldListVisit();
+            bool preserveJoin = m_rooms?.ConsumePreserveJoinOnNextPlayEnter() == true;
+            m_multiplayer = (parameters != null && parameters.Length > 0 &&
+                parameters[0] is string marker && marker == MultiplayerMarker) ||
+                (preserveJoin && m_multiplayer);
+            BeginWorldListVisit(preserveJoin);
             // The Mod owns this screen's data initialization. Other Mod Enter callbacks still run.
             // Do not add list-specific conditions to the original PlayScreen.
             base.Enter(parameters, false);
         }
 
         // Source: SuPlayScreen.cs:SuPlayScreen.Enter
-        private void BeginWorldListVisit()
+        private void BeginWorldListVisit(bool preserveJoin = false)
         {
             // Source: Mod/ScMultiplayer/Func/Screen/SuPlayScreen.cs:SuPlayScreen.Enter
             // 回到世界列表 = 已经不在联机世界里：
@@ -104,14 +111,15 @@ namespace SuMultiplayer.UI
             //      下载世界是临时的，不清就会每加入一次多堆一个同名世界目录。
             // 从"角色创建屏"返回：这是同一次加入的继续，不能 LeaveRoom（否则连接被停掉，
             // 客户端拿不到世界）；其它情况下回到世界列表 = 离开上一个房间。
-            if (m_rooms == null || !m_rooms.ConsumePreserveJoinOnNextPlayEnter())
+            if (!preserveJoin)
             {
                 m_rooms?.LeaveRoom();
             }
             // 只有这个屏幕可见时才做局域网房间探测；回主菜单/进世界后停止（不留后台发现流量）。
-            m_rooms?.SetListVisible(true);
+            m_rooms?.SetListVisible(m_multiplayer);
             if (m_downloads != null) m_downloads.TryCleanup(out string cleanupNote);
-            StartLocalScan();
+            if (m_multiplayer) m_localWorlds.Clear();
+            else StartLocalScan();
         }
 
         public override void Leave()
@@ -145,6 +153,8 @@ namespace SuMultiplayer.UI
                 m_list.SelectedItem = selectedWorld;
             s_nativeWorldsSize.SetValue(Host, nativeWorldsSize);
             Host.Children.Find<ButtonWidget>("Properties").Text = "...";
+            Host.Children.Find<ButtonWidget>("NewWorld").Text = "New World";
+            Host.Children.Find<ButtonWidget>("Play").Text = "Play";
             m_listController.Dispose();
             m_listController = null;
         }
@@ -236,12 +246,18 @@ namespace SuMultiplayer.UI
             ButtonWidget propertiesButton = Host.Children.Find<ButtonWidget>("Properties");
             if (propertiesButton != null)
                 propertiesButton.Text = isPersonalRoom ? "Remove" : "...";
+            Host.Children.Find<ButtonWidget>("NewWorld").Text = m_multiplayer ? "Add Server" : "New World";
+            Host.Children.Find<ButtonWidget>("Play").Text = m_multiplayer ? "Join" : "Play";
             if (Host.Children.Find<ButtonWidget>("Play")?.IsClicked == true && selected != null)
                 ActivateWorld(selected);
             // Source: PlayScreen.cs:PlayScreen.Update — this Mod owns its complete native-method replacement.
             if (Host.Children.Find<ButtonWidget>("NewWorld").IsClicked)
             {
-                if (WorldsManager.WorldInfos.Count >= 30)
+                if (m_multiplayer)
+                {
+                    ShowAddServer();
+                }
+                else if (WorldsManager.WorldInfos.Count >= 30)
                 {
                     DialogsManager.ShowDialog(null, new MessageDialog("Too many worlds",
                         "A maximum of 30 worlds is allowed on a device. Delete some to make space for new ones.",
@@ -286,6 +302,26 @@ namespace SuMultiplayer.UI
             base.Update(false);
         }
 
+        private void ShowAddServer()
+        {
+            DialogsManager.ShowDialog(null, new TextBoxDialog("Server address (host or host:port)",
+                string.Empty, 255, address =>
+                {
+                    if (address == null) return;
+                    if (!PersonalServers.TryNormalizeAddress(address, out string normalized, out _))
+                    {
+                        ShowMessage("Add Server", "Enter a valid IP address or hostname, optionally followed by a port.");
+                        return;
+                    }
+                    DialogsManager.ShowDialog(null, new TextBoxDialog("Server nickname", normalized, 50, name =>
+                    {
+                        if (name == null) return;
+                        if (!PersonalServers.TryAdd(normalized, name, out _))
+                            ShowMessage("Add Server", "Could not save the server. Check its nickname and try again.");
+                    }));
+                }));
+        }
+
         // ---------------------------------------------------------------- 房间行
 
         private void SyncRoomRows()
@@ -327,8 +363,10 @@ namespace SuMultiplayer.UI
         private void RebuildListIfNeeded()
         {
             m_desired.Clear();
-            for (int i = 0; i < m_localWorlds.Count; i++) m_desired.Add(m_localWorlds[i]);
-            for (int i = 0; i < m_roomOrder.Count; i++) m_desired.Add(m_roomOrder[i]);
+            if (!m_multiplayer)
+                for (int i = 0; i < m_localWorlds.Count; i++) m_desired.Add(m_localWorlds[i]);
+            if (m_multiplayer)
+                for (int i = 0; i < m_roomOrder.Count; i++) m_desired.Add(m_roomOrder[i]);
 
             bool changed = m_desired.Count != m_list.Items.Count;
             if (!changed)
@@ -364,6 +402,11 @@ namespace SuMultiplayer.UI
 
         private void UpdateTopBar()
         {
+            if (m_multiplayer)
+            {
+                Host.Children.Find<LabelWidget>("TopBar.Label").Text = "MULTIPLAYER";
+                return;
+            }
             int count = m_localWorlds.Count + m_roomOrder.Count;
             Host.Children.Find<LabelWidget>("TopBar.Label").Text = count > 0
                 ? string.Format("{0} {1}, {2}", count, count == 1 ? "world" : "worlds",
@@ -486,8 +529,7 @@ namespace SuMultiplayer.UI
                 return mapName;
             if (entry.Source == RoomSource.Personal)
             {
-                string owner = string.IsNullOrEmpty(entry.Name) ? string.Empty : entry.Name + " @ ";
-                return mapName + " (" + owner + entry.DisplayAddress + ")";
+                return entry.Name + " (" + entry.DisplayAddress + ")";
             }
             // ServerDns / 显式端点：Ery Terstates (Suceru.site)
             return mapName + " (" + entry.DisplayAddress + ")";
