@@ -85,11 +85,16 @@ void main()
         public bool StaticValid;
         public bool DynamicValid;
         public bool StaticDirty;
-        public long DynamicRevision = long.MinValue;
+        public int Generation;
+        public int StaticPhysicalSlot;
+        public int DynamicPhysicalSlot;
+        public int DynamicFaceMask;
+        public int PendingFrame = -1;
+        public ModelShadowRenderer.PointSnapshot CompletedModels;
         public double NextDynamicCheck;
-        public double LastTaskTime;
         public VegetationMotionFrame VegetationSnapshot;
         public double NextVegetationUpdate;
+        public double NextGeometryCheck;
         public ShadowGeometrySnapshot Cached = new ShadowGeometrySnapshot();
         public ShadowGeometrySnapshot Pending = new ShadowGeometrySnapshot();
     }
@@ -97,35 +102,40 @@ void main()
     private sealed class PointShadowState
     {
         public readonly PointShadowSlot[] Slots = new PointShadowSlot[MaxTerrainPointShadowLights];
-        public readonly Vector2[] Valid = new Vector2[MaxTerrainPointShadowLights];
         public RenderTarget2D StaticTarget;
         public RenderTarget2D DynamicTarget;
+        public int StaticFreeSlot = MaxTerrainPointShadowLights;
+        public int DynamicFreeSlot = MaxTerrainPointShadowLights;
+        public PointStaticBuild StaticBuild;
+        public PointDynamicBuild DynamicBuild;
+        public readonly ShadowGeometrySnapshot VerifyGeometry = new ShadowGeometrySnapshot();
         public Shader ClearShader;
         public double NextSelection;
         public int LastUpdateFrame = -1;
-        public int LastTaskFrame = -1;
-        public int NextSlot;
+        public int NextStaticSlot;
+        public int NextDynamicSlot;
+        public int NextGeometrySlot;
 
         public PointShadowState()
         {
             for (int i = 0; i < Slots.Length; i++)
-                Slots[i] = new PointShadowSlot();
+                Slots[i] = new PointShadowSlot { StaticPhysicalSlot = i, DynamicPhysicalSlot = i };
             Display.DeviceReset += InvalidateTargets;
         }
 
         // Source: RenderTarget2D.cs:HandleDeviceReset; recreated GPU storage has no cached contents.
         public void InvalidateTargets()
         {
-            foreach (PointShadowSlot slot in Slots)
+            for (int i = 0; i < Slots.Length; i++)
             {
-                slot.StaticValid = false;
-                slot.DynamicValid = false;
-                slot.StaticDirty = true;
-                slot.NextDynamicCheck = 0.0;
+                PointShadowSlot slot = Slots[i];
+                InvalidatePointSlot(this, slot);
+                slot.StaticPhysicalSlot = i;
+                slot.DynamicPhysicalSlot = i;
             }
+            StaticFreeSlot = DynamicFreeSlot = MaxTerrainPointShadowLights;
             NextSelection = 0.0;
             LastUpdateFrame = -1;
-            LastTaskFrame = -1;
         }
     }
 
@@ -150,7 +160,7 @@ void main()
                 PointShadowSlot slot = points.Slots[j];
                 if (slot.Key != null && Equals(slot.Key, light.Key))
                 {
-                    AssignPointLight(slot, light);
+                    AssignPointLight(points, slot, light);
                     break;
                 }
             }
@@ -158,11 +168,10 @@ void main()
         for (int i = 0; i < points.Slots.Length; i++)
         {
             PointShadowSlot slot = points.Slots[i];
-            if (!slot.Selected)
+            if (!slot.Selected && slot.Key != null)
             {
+                InvalidatePointSlot(points, slot);
                 slot.Key = null;
-                slot.StaticValid = false;
-                slot.DynamicValid = false;
                 slot.Cached.Clear();
                 slot.Pending.Clear();
             }
@@ -179,7 +188,7 @@ void main()
             {
                 if (points.Slots[j].Key != null)
                     continue;
-                AssignPointLight(points.Slots[j], light);
+                AssignPointLight(points, points.Slots[j], light);
                 break;
             }
         }
@@ -187,39 +196,67 @@ void main()
         {
             PointShadowSlot slot = points.Slots[i];
             state.PointLightKeys[i] = slot.Key;
-            if (!slot.Selected)
-                continue;
-            CapturePointGeometry(slot.Light, slot.Pending);
-            bool controlChanged = slot.VegetationSnapshot == null || slot.VegetationSnapshot.Version != m_vegetationFrame.Version;
-            bool moving = HasActiveVegetation(slot.Pending.VegetationFlags, m_vegetationFrame) ||
-                HasActiveVegetation(slot.Pending.VegetationFlags, slot.VegetationSnapshot);
-            bool vegetationDue = moving && m_vegetationFrame.SimulationTime >= slot.NextVegetationUpdate;
-            bool invalid = !slot.StaticValid || !slot.Cached.Matches(slot.Pending) || controlChanged;
-            slot.StaticDirty = slot.StaticDirty || invalid || vegetationDue;
-            // A normal low-rate wind refresh can keep sampling the previous completed map while queued.
-            // Changed geometry/control requires invalidation; merely reaching the next wind phase does not.
-            if (invalid) slot.StaticValid = false;
         }
         state.PointLightCount = count;
         state.IsPointValid = count > 0;
         points.NextSelection = Time.RealTime + 0.1;
     }
 
-    private static void AssignPointLight(PointShadowSlot slot, PointLight light)
+    // Source: CapturePointGeometry; selection and dynamic poses do not require scanning static GPU buffers.
+    private void CheckPointShadowGeometry(PointShadowState points)
+    {
+        double now = Time.RealTime;
+        foreach (PointShadowSlot slot in points.Slots)
+        {
+            if (!slot.Selected) continue;
+            bool controlChanged = slot.VegetationSnapshot == null || slot.VegetationSnapshot.Version != m_vegetationFrame.Version;
+            if (controlChanged)
+            {
+                slot.StaticValid = false;
+                slot.StaticDirty = true;
+                // The old front version stays invalid while its replacement builds; do not restart that same version every frame.
+                if (points.StaticBuild != null && ReferenceEquals(points.StaticBuild.Slot, slot) &&
+                    points.StaticBuild.Vegetation.Version != m_vegetationFrame.Version) points.StaticBuild = null;
+            }
+            bool moving = HasActiveVegetation(slot.Cached.VegetationFlags, m_vegetationFrame) ||
+                HasActiveVegetation(slot.Cached.VegetationFlags, slot.VegetationSnapshot);
+            bool vegetationDue = moving && m_vegetationFrame.SimulationTime >= slot.NextVegetationUpdate;
+            slot.StaticDirty |= vegetationDue;
+            if (slot.DynamicValid && !m_modelShadowRenderer.PointSnapshotResourcesValid(slot.CompletedModels))
+            {
+                slot.DynamicValid = false;
+                slot.DynamicFaceMask = 0;
+            }
+        }
+
+        // Source: RequestTerrainGeometryCheck; simultaneous invalidations stay requests, with one fair scan per frame.
+        for (int offset = 0; offset < points.Slots.Length; offset++)
+        {
+            int index = (points.NextGeometrySlot + offset) % points.Slots.Length;
+            PointShadowSlot slot = points.Slots[index];
+            if (!slot.Selected || slot.StaticDirty || now < slot.NextGeometryCheck ||
+                (points.StaticBuild != null && ReferenceEquals(points.StaticBuild.Slot, slot))) continue;
+            CapturePointGeometry(slot.Light, slot.Pending);
+            slot.PendingFrame = Time.FrameIndex;
+            slot.NextGeometryCheck = now + GetTerrainGeometryInterval();
+            if (!slot.Cached.Matches(slot.Pending))
+            {
+                slot.StaticValid = false;
+                slot.StaticDirty = true;
+            }
+            points.NextGeometrySlot = (index + 1) % points.Slots.Length;
+            break;
+        }
+    }
+
+    private static void AssignPointLight(PointShadowState points, PointShadowSlot slot, PointLight light)
     {
         bool moved = slot.Key == null || !Equals(slot.Key, light.Key) ||
             slot.Light.Position != light.Position || slot.Light.Radius != light.Radius;
+        if (moved) InvalidatePointSlot(points, slot);
         slot.Key = light.Key;
         slot.Light = light;
         slot.Selected = true;
-        if (moved)
-        {
-            slot.StaticValid = false;
-            slot.DynamicValid = false;
-            slot.StaticDirty = true;
-            slot.DynamicRevision = long.MinValue;
-            slot.NextDynamicCheck = 0.0;
-        }
     }
 
     private void CapturePointGeometry(PointLight light, ShadowGeometrySnapshot snapshot)
@@ -260,67 +297,22 @@ void main()
         }
     }
 
-    // Source: SubsystemShadowMap.cs:ShouldRenderCascade; reuse valid results and spread
-    // changed work over frames. One camera performs at most one complete lamp task per frame.
+    // Source: SurvivalcraftMiniMap.SuComponentMap.SwapBuffers; keep completed fronts while independent layers build.
+    // GPU calls remain on the rendering thread. CPU tasks cannot reduce the receiver's GPU work.
     private void UpdatePointShadows(Camera camera, TerrainShadowState state)
     {
-        if (!m_terrainShadowsAvailable || camera == null)
-            return;
+        if (!m_terrainShadowsAvailable || camera == null) return;
         PointShadowState points = state.PointShadows ??= new PointShadowState();
-        if (points.LastUpdateFrame == Time.FrameIndex)
-            return;
+        if (points.LastUpdateFrame == Time.FrameIndex) return;
         points.LastUpdateFrame = Time.FrameIndex;
-        if (Time.RealTime >= points.NextSelection)
-            UpdatePointShadowSelection(camera, state);
-        if (state.PointLightCount == 0 || points.LastTaskFrame == Time.FrameIndex)
-            return;
-
-        bool needsCheck = false;
-        for (int i = 0; i < points.Slots.Length; i++)
-        {
-            PointShadowSlot slot = points.Slots[i];
-            needsCheck |= slot.Selected && (slot.StaticDirty ||
-                !slot.DynamicValid || Time.RealTime >= slot.NextDynamicCheck);
-        }
-        if (!needsCheck)
-            return;
-
-        // Source: SubsystemDynamicShadows.cs:Draw; its camera batch prepares models once
-        // with the shared range, before solar and local-light work consume the revision.
-        long revision = m_modelShadowRenderer.Revision;
-        int selectedSlot = -1;
-        double bestPriority = double.MinValue;
-        for (int offset = 0; offset < points.Slots.Length; offset++)
-        {
-            int index = (points.NextSlot + offset) % points.Slots.Length;
-            PointShadowSlot slot = points.Slots[index];
-            if (!slot.Selected)
-                continue;
-            bool due = Time.RealTime >= slot.NextDynamicCheck;
-            bool dynamicDirty = !slot.DynamicValid || (due && slot.DynamicRevision != revision);
-            if (due && !dynamicDirty)
-                slot.NextDynamicCheck = Time.RealTime + PointDynamicInterval(camera, slot.Light);
-            if (!slot.StaticDirty && !dynamicDirty)
-                continue;
-            double priority = Time.RealTime - slot.LastTaskTime;
-            if (!slot.StaticValid || !slot.DynamicValid)
-                priority += 10000.0;
-            if (priority > bestPriority)
-            {
-                bestPriority = priority;
-                selectedSlot = index;
-            }
-        }
-        if (selectedSlot < 0)
-            return;
-        EnsurePointShadowResources(points);
-        PointShadowSlot task = points.Slots[selectedSlot];
-        // Geometry may have uploaded since the 10 Hz selection pass. Capture at submission.
-        CapturePointGeometry(task.Light, task.Pending);
-        task.StaticDirty |= !task.Cached.Matches(task.Pending);
-        RenderPointShadowTask(camera, state, selectedSlot, revision);
-        points.LastTaskFrame = Time.FrameIndex;
-        points.NextSlot = (selectedSlot + 1) % points.Slots.Length;
+        if (Time.RealTime >= points.NextSelection) UpdatePointShadowSelection(camera, state);
+        if (state.PointLightCount == 0) return;
+        CheckPointShadowGeometry(points);
+        // Allocate at most one target/frame; no partially initialized atlas is published.
+        if (!EnsurePointShadowResources(points)) return;
+        if (points.DynamicBuild == null) StartPointDynamicBuild(camera, points);
+        if (points.StaticBuild == null) StartPointStaticBuild(points);
+        AdvancePointBuilds(camera, points);
     }
 
     private static double PointDynamicInterval(Camera camera, PointLight light)
@@ -328,29 +320,20 @@ void main()
         return Vector3.DistanceSquared(camera.ViewPosition, light.Position) < 256f ? 0.1 : 0.25;
     }
 
-    private static void EnsurePointShadowResources(PointShadowState points)
+    // Source: RenderTarget2D.RenderTarget2D; six horizontal faces leave eleven rows within GLES 2.0's 2048px limit.
+    private static bool EnsurePointShadowResources(PointShadowState points)
     {
         RenderTarget2D previous = Display.RenderTarget;
         Viewport viewport = Display.Viewport;
         Rectangle scissor = Display.ScissorRectangle;
         try
         {
-            if (points.ClearShader == null)
-                points.ClearShader = new Shader(PointTileClearVertex, PointTileClearPixel);
+            if (points.ClearShader == null) points.ClearShader = new Shader(PointTileClearVertex, PointTileClearPixel);
             if (points.StaticTarget == null)
-            {
-                points.StaticTarget = new RenderTarget2D(3 * 96, 2 * MaxTerrainPointShadowLights * 96,
-                    1, ColorFormat.Rgba8888, DepthFormat.Depth16);
-                Display.RenderTarget = points.StaticTarget;
-                Display.Clear(Color.White, 1f);
-            }
-            if (points.DynamicTarget == null)
-            {
-                points.DynamicTarget = new RenderTarget2D(3 * 64, 2 * MaxTerrainPointShadowLights * 64,
-                    1, ColorFormat.Rgba8888, DepthFormat.Depth16);
-                Display.RenderTarget = points.DynamicTarget;
-                Display.Clear(Color.White, 1f);
-            }
+                points.StaticTarget = CreatePointTarget(96, MaxTerrainPointShadowLights + 1);
+            else if (points.DynamicTarget == null)
+                points.DynamicTarget = CreatePointTarget(64, MaxTerrainPointShadowLights + 1);
+            return points.StaticTarget != null && points.DynamicTarget != null;
         }
         finally
         {
@@ -360,93 +343,24 @@ void main()
         }
     }
 
-    private void RenderPointShadowTask(Camera camera, TerrainShadowState state, int index, long revision)
+    private static RenderTarget2D CreatePointTarget(int faceSize, int slots)
     {
-        PointShadowState points = state.PointShadows;
-        PointShadowSlot slot = points.Slots[index];
-        PointLight light = slot.Light;
-        Vector3 origin = new Vector3(MathUtils.Floor(light.Position.X), 0f,
-            MathUtils.Floor(light.Position.Z));
-        Vector3 localLight = light.Position - origin;
-        Matrix projection = Matrix.CreatePerspectiveFieldOfView((float)Math.PI / 2f,
-            1f, 0.08f, light.Radius);
-        RenderTarget2D previousTarget = Display.RenderTarget;
-        Viewport previousViewport = Display.Viewport;
-        Rectangle previousScissor = Display.ScissorRectangle;
-        BlendState previousBlend = Display.BlendState;
-        DepthStencilState previousDepth = Display.DepthStencilState;
-        RasterizerState previousRasterizer = Display.RasterizerState;
-        // A partially completed task must never be sampled after an explicit render failure.
-        bool renderStatic = slot.StaticDirty || !slot.StaticValid;
-        if (renderStatic)
-            slot.StaticValid = false;
-        slot.DynamicValid = false;
-        VegetationMotionFrame vegetation = renderStatic ? m_vegetationFrame.Clone() : slot.VegetationSnapshot;
+        RenderTarget2D target = new RenderTarget2D(6 * faceSize, slots * faceSize,
+            1, ColorFormat.Rgba8888, DepthFormat.Depth16);
         try
         {
-            if (renderStatic)
-            {
-                ApplyVegetation(m_pointShadowMapShader, vegetation);
-                m_pointShadowMapShader.GetParameter("u_texture").SetValue(
-                    m_terrain.SubsystemAnimatedTextures.AnimatedBlocksTexture);
-                m_pointShadowMapShader.GetParameter("u_samplerState").SetValue(SamplerState.PointClamp);
-                m_pointShadowMapShader.GetParameter("u_alphaThreshold").SetValue(0.5f);
-                m_pointShadowMapShader.GetParameter("u_shadowOrigin").SetValue(origin.XZ);
-                m_pointShadowMapShader.GetParameter("u_lightPosition").SetValue(localLight);
-                m_pointShadowMapShader.GetParameter("u_lightRadius").SetValue(light.Radius);
-            }
-            for (int face = 0; face < 6; face++)
-            {
-                Matrix matrix = Matrix.CreateLookAt(localLight,
-                    localLight + s_cubeDirections[face], s_cubeUps[face]) * projection;
-                BoundingFrustum frustum = new BoundingFrustum(matrix);
-                if (renderStatic)
-                {
-                    ClearPointShadowFace(points, points.StaticTarget, index, face, 96);
-                    m_pointShadowMapShader.GetParameter("u_shadowMatrix").SetValue(matrix);
-                    foreach (TerrainChunk chunk in slot.Pending.Chunks)
-                    {
-                        Vector3 margin = new Vector3(0.11f, 0f, 0.11f);
-                        BoundingBox localBox = new BoundingBox(chunk.BoundingBox.Min - origin - margin,
-                            chunk.BoundingBox.Max - origin + margin);
-                        if (frustum.Intersection(localBox))
-                            DrawTerrainSubsets(m_pointShadowMapShader, chunk.Geometry, 63);
-                    }
-                }
-                ClearPointShadowFace(points, points.DynamicTarget, index, face, 64);
-                m_modelShadowRenderer.Draw(camera, matrix, origin.XZ, frustum, light.Position, light.Radius);
-            }
-            if (renderStatic)
-            {
-                ShadowGeometrySnapshot previous = slot.Cached;
-                slot.Cached = slot.Pending;
-                slot.Pending = previous;
-                slot.StaticDirty = false;
-                slot.StaticValid = true;
-                slot.VegetationSnapshot = vegetation;
-                slot.NextVegetationUpdate = m_vegetationFrame.SimulationTime + 1.0;
-            }
-            slot.DynamicValid = true;
-            slot.DynamicRevision = revision;
-            slot.NextDynamicCheck = Time.RealTime + PointDynamicInterval(camera, light);
-            slot.LastTaskTime = Time.RealTime;
+            Display.RenderTarget = target;
+            Display.Clear(Color.White, 1f);
+            return target;
         }
-        finally
-        {
-            Display.RenderTarget = previousTarget;
-            Display.Viewport = previousViewport;
-            Display.ScissorRectangle = previousScissor;
-            Display.BlendState = previousBlend;
-            Display.DepthStencilState = previousDepth;
-            Display.RasterizerState = previousRasterizer;
-        }
+        catch { target.Dispose(); throw; }
     }
 
     private static void ClearPointShadowFace(PointShadowState points, RenderTarget2D target,
         int index, int face, int faceSize)
     {
-        int x = face % 3 * faceSize;
-        int y = (index * 2 + face / 3) * faceSize;
+        int x = face * faceSize;
+        int y = index * faceSize;
         Display.RenderTarget = target;
         Display.Viewport = new Viewport(x, y, faceSize, faceSize);
         Display.ScissorRectangle = new Rectangle(x, y, faceSize, faceSize);
@@ -460,45 +374,47 @@ void main()
         Display.RasterizerState = RasterizerState.CullCounterClockwiseScissor;
     }
 
-    private static void SetPointShadowParameters(Shader shader, TerrainShadowState state)
+    // Source: UpdatePointShadowSelection; compact receiver uniforms without moving stable atlas slots.
+    private static void PreparePointShadowReceiver(TerrainShadowState state)
     {
+        state.PointReceiverCount = 0;
         PointShadowState points = state.PointShadows;
-        bool enabled = SettingsManager.ObjectsShadowsEnabled && points != null &&
-            points.StaticTarget != null && points.DynamicTarget != null && state.PointLightCount > 0;
-        shader.GetParameter("u_pointShadowEnabled").SetValue(enabled ? 1f : 0f);
-        // Stable slots can contain holes; validity flags, rather than a compact count, select lights.
-        shader.GetParameter("u_pointShadowCount").SetValue(enabled ? (float)MaxTerrainPointShadowLights : 0f);
-        if (!enabled)
-            return;
+        if (!SettingsManager.ObjectsShadowsEnabled || points == null ||
+            points.StaticTarget == null || points.DynamicTarget == null) return;
         for (int i = 0; i < points.Slots.Length; i++)
         {
             PointShadowSlot slot = points.Slots[i];
-            points.Valid[i] = new Vector2(slot.Selected && slot.StaticValid ? 1f : 0f,
-                slot.Selected && slot.DynamicValid ? 1f : 0f);
-            if (!slot.Selected)
-                continue;
+            if (!slot.Selected || (!slot.StaticValid && !slot.DynamicValid)) continue;
+            int index = state.PointReceiverCount++;
             PointLight light = slot.Light;
             Vector3 origin = new Vector3(MathUtils.Floor(light.Position.X), 0f,
                 MathUtils.Floor(light.Position.Z));
             Vector3 local = light.Position - origin;
-            state.PointShadowOrigins[i] = origin.XZ;
-            state.PointLightPositionRadius[i] = new Vector4(local.X, local.Y, local.Z, light.Radius);
-            state.PointLightDirectionStrength[i] = new Vector4(light.Direction.X,
+            state.PointShadowOrigins[index] = origin.XZ;
+            state.PointLightPositionRadius[index] = new Vector4(local.X, local.Y, local.Z, light.Radius);
+            state.PointLightDirectionStrength[index] = new Vector4(light.Direction.X,
                 light.Direction.Y, light.Direction.Z,
                 light.IsDirectional ? 0.55f * light.Strength : -0.55f * light.Strength);
+            state.PointReceiverValid[index] = new Vector2(slot.StaticValid ? 1f : 0f, slot.DynamicValid ? 64f + slot.DynamicFaceMask : 0f);
+            state.PointReceiverSlots[index] = new Vector2(slot.StaticPhysicalSlot, slot.DynamicPhysicalSlot);
         }
-        shader.GetParameter("u_pointShadowOrigins").SetValue(state.PointShadowOrigins, MaxTerrainPointShadowLights);
-        shader.GetParameter("u_pointShadowLightPositionRadius").SetValue(state.PointLightPositionRadius, MaxTerrainPointShadowLights);
-        shader.GetParameter("u_pointShadowLightDirectionStrength").SetValue(state.PointLightDirectionStrength, MaxTerrainPointShadowLights);
-        shader.GetParameter("u_pointShadowValid").SetValue(points.Valid, MaxTerrainPointShadowLights);
+    }
+
+    private static void SetPointShadowParameters(Shader shader, TerrainShadowState state)
+    {
+        PointShadowState points = state.PointShadows;
+        int count = state.PointReceiverCount;
+        shader.GetParameter("u_pointShadowEnabled").SetValue(1f);
+        shader.GetParameter("u_pointShadowCount").SetValue((float)count);
+        shader.GetParameter("u_pointShadowOrigins").SetValue(state.PointShadowOrigins, count);
+        shader.GetParameter("u_pointShadowLightPositionRadius").SetValue(state.PointLightPositionRadius, count);
+        shader.GetParameter("u_pointShadowLightDirectionStrength").SetValue(state.PointLightDirectionStrength, count);
+        shader.GetParameter("u_pointShadowValid").SetValue(state.PointReceiverValid, count);
+        shader.GetParameter("u_pointShadowSlots").SetValue(state.PointReceiverSlots, count);
         shader.GetParameter("u_pointShadowTexture").SetValue(points.StaticTarget);
         shader.GetParameter("u_pointShadowSamplerState").SetValue(SamplerState.PointClamp);
-        shader.GetParameter("u_pointShadowTexelSize").SetValue(new Vector2(1f / (3f * 96),
-            1f / (2f * MaxTerrainPointShadowLights * 96)));
         shader.GetParameter("u_pointDynamicShadowTexture").SetValue(points.DynamicTarget);
         shader.GetParameter("u_pointDynamicShadowSamplerState").SetValue(SamplerState.PointClamp);
-        shader.GetParameter("u_pointDynamicShadowTexelSize").SetValue(new Vector2(1f / (3f * 64),
-            1f / (2f * MaxTerrainPointShadowLights * 64)));
     }
 
     private static void DisposePointShadows(TerrainShadowState state)
@@ -507,6 +423,7 @@ void main()
         if (points == null)
             return;
         Display.DeviceReset -= points.InvalidateTargets;
+        foreach (PointShadowSlot slot in points.Slots) InvalidatePointSlot(points, slot);
         points.StaticTarget?.Dispose();
         points.DynamicTarget?.Dispose();
         points.ClearShader?.Dispose();

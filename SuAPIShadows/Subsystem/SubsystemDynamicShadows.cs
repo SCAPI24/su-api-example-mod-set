@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using Engine;
 using Engine.Graphics;
@@ -119,6 +119,8 @@ public sealed partial class SubsystemDynamicShadows : SubsystemBlockBehavior, ID
         public Vector3 NearDynamicCenter;
         public bool NearDynamicValid;
         public bool DynamicValid;
+        public Vector4 DynamicBounds = new Vector4(1f, 1f, 0f, 0f);
+        public Vector4 NearDynamicBounds = new Vector4(1f, 1f, 0f, 0f);
         public long DynamicRevision = long.MinValue;
         public double NextDynamicUpdate;
         public Vector3 LastLightDirection;
@@ -129,11 +131,15 @@ public sealed partial class SubsystemDynamicShadows : SubsystemBlockBehavior, ID
         public Matrix ShadowMatrix;
         public Vector2 ShadowOrigin;
         public readonly object[] PointLightKeys = new object[MaxTerrainPointShadowLights];
+        public int PointReceiverCount;
+        public readonly Vector2[] PointReceiverValid = new Vector2[MaxTerrainPointShadowLights];
+        public readonly Vector2[] PointReceiverSlots = new Vector2[MaxTerrainPointShadowLights];
         public readonly Vector2[] PointShadowOrigins = new Vector2[MaxTerrainPointShadowLights];
         public readonly Vector4[] PointLightPositionRadius = new Vector4[MaxTerrainPointShadowLights];
         public readonly Vector4[] PointLightDirectionStrength = new Vector4[MaxTerrainPointShadowLights];
         public Vector3 AnchorCenter;
         public double NextUpdateTime;
+        public double NextGeometryCheck;
         public bool HasAnchorCenter;
         public bool IsValid;
         public bool IsPointValid;
@@ -203,6 +209,10 @@ public sealed partial class SubsystemDynamicShadows : SubsystemBlockBehavior, ID
     private TexturedBatch3D m_batch;
     private Shader m_originalOpaqueTerrainShader;
     private Shader m_originalAlphaTestedTerrainShader;
+    private Shader m_sunOnlyOpaqueTerrainShader;
+    private Shader m_sunOnlyAlphaTestedTerrainShader;
+    private readonly Shader[] m_pointLitOpaqueVariants = new Shader[4];
+    private readonly Shader[] m_pointLitAlphaTestedVariants = new Shader[4];
     private Shader m_shadowedOpaqueTerrainShader;
     private Shader m_shadowedAlphaTestedTerrainShader;
     private Shader m_shadowMapShader;
@@ -217,6 +227,7 @@ public sealed partial class SubsystemDynamicShadows : SubsystemBlockBehavior, ID
     private float m_recoveryTime;
     private int m_qualityPenalty;
     private int m_nextLightRevision;
+    private bool m_shadowsWereEnabled;
 
     public override int[] HandledBlocks
     {
@@ -296,7 +307,19 @@ public sealed partial class SubsystemDynamicShadows : SubsystemBlockBehavior, ID
             m_emissiveRenderer.Draw(camera, m_terrain, m_sky);
             return;
         }
-        if (!SettingsManager.ObjectsShadowsEnabled) return;
+        // Source: SettingsManager.ObjectsShadowsEnabled; cached maps can be stale after shadows were disabled.
+        if (!SettingsManager.ObjectsShadowsEnabled)
+        {
+            m_shadowsWereEnabled = false;
+            return;
+        }
+        if (!m_shadowsWereEnabled)
+        {
+            InvalidateShadowTargets();
+            foreach (TerrainShadowState cached in m_terrainShadowStates.Values)
+                cached.PointShadows?.InvalidateTargets();
+            m_shadowsWereEnabled = true;
+        }
         CaptureVegetation(camera);
         m_modelShadowRenderer.Prepare(camera, 128f);
         UpdateTerrainShadowMap(camera);
@@ -338,6 +361,7 @@ public sealed partial class SubsystemDynamicShadows : SubsystemBlockBehavior, ID
 
     public override void OnBlockAdded(int value, int oldValue, int x, int y, int z)
     {
+        RequestTerrainGeometryCheck(new Vector2(x, z));
         UpdateBlockLight(value, x, y, z);
         m_emissiveRenderer.Observe(value, x, y, z);
         InvalidateKelpColumn(value, oldValue, x, z);
@@ -345,6 +369,7 @@ public sealed partial class SubsystemDynamicShadows : SubsystemBlockBehavior, ID
 
     public override void OnBlockRemoved(int value, int newValue, int x, int y, int z)
     {
+        RequestTerrainGeometryCheck(new Vector2(x, z));
         RemoveBlockLight(new Point3(x, y, z));
         m_emissiveRenderer.Observe(newValue, x, y, z);
         InvalidateKelpColumn(newValue, value, x, z);
@@ -352,13 +377,20 @@ public sealed partial class SubsystemDynamicShadows : SubsystemBlockBehavior, ID
 
     public override void OnBlockModified(int value, int oldValue, int x, int y, int z)
     {
+        RequestTerrainGeometryCheck(new Vector2(x, z));
         UpdateBlockLight(value, x, y, z);
         m_emissiveRenderer.Observe(value, x, y, z);
         InvalidateKelpColumn(value, oldValue, x, z);
     }
 
+    public override void OnChunkInitialized(TerrainChunk chunk)
+    {
+        RequestTerrainGeometryCheck(chunk.Center);
+    }
+
     public override void OnChunkDiscarding(TerrainChunk chunk)
     {
+        RequestTerrainGeometryCheck(chunk.Center);
         // Source: SubsystemBlockBehavior.OnChunkDiscarding
         m_emissiveRenderer.DiscardChunk(chunk);
         m_vegetationGeometry.Discard(chunk);
@@ -410,13 +442,15 @@ public sealed partial class SubsystemDynamicShadows : SubsystemBlockBehavior, ID
         m_vegetationGeometry.Clear();
         m_vegetation = null;
         m_vegetationFrame = null;
+        DisposeTerrainShadowStates();
         m_modelShadowRenderer.Dispose();
         m_emissiveRenderer?.Dispose();
         RestoreOriginalModelShadows();
         RestoreOriginalTerrainShaders();
-        DisposeTerrainShadowStates();
-        m_shadowedOpaqueTerrainShader?.Dispose();
-        m_shadowedAlphaTestedTerrainShader?.Dispose();
+        m_sunOnlyOpaqueTerrainShader?.Dispose();
+        m_sunOnlyAlphaTestedTerrainShader?.Dispose();
+        foreach (Shader shader in m_pointLitOpaqueVariants) shader?.Dispose();
+        foreach (Shader shader in m_pointLitAlphaTestedVariants) shader?.Dispose();
         m_shadowMapShader?.Dispose();
         m_pointShadowMapShader?.Dispose();
         base.Dispose();
@@ -432,13 +466,25 @@ public sealed partial class SubsystemDynamicShadows : SubsystemBlockBehavior, ID
                 .GetParentField<Shader>(renderer, "m_opaqueShader", typeof(TerrainRenderer));
             m_originalAlphaTestedTerrainShader = ModManager.Instance.ModParentField
                 .GetParentField<Shader>(renderer, "m_alphaTestedShader", typeof(TerrainRenderer));
-            m_shadowedOpaqueTerrainShader = new Shader(
+            m_sunOnlyOpaqueTerrainShader = new Shader(
                 TerrainShadowShaders.TerrainVertex,
                 TerrainShadowShaders.TerrainPixel);
-            m_shadowedAlphaTestedTerrainShader = new Shader(
+            m_sunOnlyAlphaTestedTerrainShader = new Shader(
                 TerrainShadowShaders.TerrainVertex,
                 TerrainShadowShaders.TerrainPixel,
                 new ShaderMacro("ALPHATESTED"));
+            // Source: TerrainShadowShaders.samplePointLight; precompile exact common light counts and the full supported limit.
+            for (int variant = 0; variant < m_pointLitOpaqueVariants.Length; variant++)
+            {
+                int limit = variant < 3 ? variant + 1 : MaxTerrainPointShadowLights;
+                var count = new ShaderMacro("POINT_SHADOW_LIGHT_LIMIT", limit.ToString(System.Globalization.CultureInfo.InvariantCulture));
+                m_pointLitOpaqueVariants[variant] = new Shader(TerrainShadowShaders.TerrainVertex,
+                    TerrainShadowShaders.TerrainPixel, new ShaderMacro("POINT_SHADOWS"), count);
+                m_pointLitAlphaTestedVariants[variant] = new Shader(TerrainShadowShaders.TerrainVertex,
+                    TerrainShadowShaders.TerrainPixel, new ShaderMacro("POINT_SHADOWS"), count, new ShaderMacro("ALPHATESTED"));
+            }
+            m_shadowedOpaqueTerrainShader = m_sunOnlyOpaqueTerrainShader;
+            m_shadowedAlphaTestedTerrainShader = m_sunOnlyAlphaTestedTerrainShader;
             m_shadowMapShader = new Shader(
                 TerrainShadowShaders.ShadowMapVertex,
                 TerrainShadowShaders.ShadowMapPixel);
@@ -459,9 +505,23 @@ public sealed partial class SubsystemDynamicShadows : SubsystemBlockBehavior, ID
         }
     }
 
+    // Source: TerrainRenderer.DrawOpaque/DrawAlphaTested; switch once when the available light set changes.
+    private void SelectTerrainShadowShaders(int lightCount)
+    {
+        int variant = lightCount <= 3 ? lightCount - 1 : 3;
+        Shader opaque = lightCount > 0 ? m_pointLitOpaqueVariants[variant] : m_sunOnlyOpaqueTerrainShader;
+        Shader alphaTested = lightCount > 0 ? m_pointLitAlphaTestedVariants[variant] : m_sunOnlyAlphaTestedTerrainShader;
+        if (ReferenceEquals(opaque, m_shadowedOpaqueTerrainShader)) return;
+        TerrainRenderer renderer = m_terrain.TerrainRenderer;
+        ModManager.Instance.ModParentField.ModifyParentField(renderer, "m_opaqueShader", opaque, typeof(TerrainRenderer));
+        ModManager.Instance.ModParentField.ModifyParentField(renderer, "m_alphaTestedShader", alphaTested, typeof(TerrainRenderer));
+        m_shadowedOpaqueTerrainShader = opaque;
+        m_shadowedAlphaTestedTerrainShader = alphaTested;
+    }
+
     private void PrepareTerrainShadowReceiver(Camera camera)
     {
-        if (!m_terrainShadowsAvailable || camera == null)
+        if (!m_terrainShadowsAvailable || camera == null || !SubsystemTerrain.TerrainRenderingEnabled)
             return;
         try
         {
@@ -480,20 +540,24 @@ public sealed partial class SubsystemDynamicShadows : SubsystemBlockBehavior, ID
             bool enabled = SettingsManager.ObjectsShadowsEnabled &&
                 state.IsValid && hasCelestialLight;
             float celestialLightFloor = GetCelestialLightFloor();
+            PreparePointShadowReceiver(state);
+            SelectTerrainShadowShaders(state.PointReceiverCount);
             SetTerrainShadowParameters(
                 m_shadowedOpaqueTerrainShader,
                 state,
                 enabled,
                 celestialStrength,
                 celestialLightFloor,
-                m_weather.FogIntensity);
+                m_weather.FogIntensity,
+                state.PointReceiverCount > 0);
             SetTerrainShadowParameters(
                 m_shadowedAlphaTestedTerrainShader,
                 state,
                 enabled,
                 celestialStrength,
                 celestialLightFloor,
-                m_weather.FogIntensity);
+                m_weather.FogIntensity,
+                state.PointReceiverCount > 0);
         }
         catch (Exception ex)
         {

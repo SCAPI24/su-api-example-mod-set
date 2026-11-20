@@ -11,13 +11,53 @@ namespace SuAPIShadows;
 // Source: ComponentHumanModel.cs:DrawExtras; BasePrimitivesRenderer.cs:FlatBatches/TexturedBatches/FontBatches.
 internal sealed class HeldItemShadowRenderer : IDisposable
 {
-    internal sealed class HeldItemState
+    internal sealed class HeldItemState : IDisposable
     {
         public int Value { get; internal set; }
         public Matrix WorldMatrix { get; internal set; }
         public BoundingBox Bounds { get; internal set; }
         public long Revision { get; internal set; }
         internal readonly List<Part> Parts = new List<Part>();
+        private bool m_frozen;
+        private bool m_disposed;
+
+        // Source: HeldItemShadowRenderer.Capture; point faces retain one item-local mesh and world transform.
+        internal HeldItemState Freeze()
+        {
+            if (m_disposed) throw new ObjectDisposedException(nameof(HeldItemState));
+            var copy = new HeldItemState
+            {
+                Value = Value, WorldMatrix = WorldMatrix, Bounds = Bounds, Revision = Revision, m_frozen = true
+            };
+            try
+            {
+                foreach (Part part in Parts)
+                {
+                    part.Retain();
+                    copy.Parts.Add(part);
+                }
+                return copy;
+            }
+            catch { copy.Dispose(); throw; }
+        }
+
+        internal bool ResourcesValid()
+        {
+            if (m_disposed) return false;
+            foreach (Part part in Parts)
+                if (!ResourceValid(part.Vertices) || !ResourceValid(part.Indices) ||
+                    (part.Texture != null && !ResourceValid(part.Texture))) return false;
+            return true;
+        }
+
+        public void Dispose()
+        {
+            if (m_disposed) return;
+            m_disposed = true;
+            foreach (Part part in Parts)
+                if (m_frozen) part.Release(); else part.Dispose();
+            Parts.Clear();
+        }
     }
 
     internal sealed class Part : IDisposable
@@ -31,10 +71,41 @@ internal sealed class HeldItemShadowRenderer : IDisposable
         internal bool AlphaTest;
         internal bool AlphaBlend;
         internal PrimitiveType Primitive;
-        public void Dispose() { Vertices?.Dispose(); Indices?.Dispose(); }
+        internal HeldItemShadowRenderer Owner;
+        private int m_references = 1;
+        private bool m_ownerReleased;
+
+        // Source: HeldItemShadowRenderer.Remove/Capture; releasing the live owner must preserve frozen faces.
+        internal void Retain()
+        {
+            if (m_references <= 0) throw new ObjectDisposedException(nameof(Part));
+            checked { m_references++; }
+        }
+
+        internal void Release()
+        {
+            if (m_references <= 0) throw new InvalidOperationException("[SuAPI] Held-item part released twice.");
+            if (--m_references != 0) return;
+            Owner?.m_liveParts.Remove(this);
+            Vertices?.Dispose();
+            Indices?.Dispose();
+            Vertices = null;
+            Indices = null;
+        }
+
+        public void Dispose()
+        {
+            if (m_ownerReleased) return;
+            m_ownerReleased = true;
+            Release();
+        }
     }
 
+    // Source: GraphicsResource.cs:m_isDisposed; the engine exposes no public resource-lifetime property.
+    private static readonly ModFieldRef<GraphicsResource, bool> s_disposedRef =
+        ModManager.Instance.ModParentField.BindFieldRef<GraphicsResource, bool>("m_isDisposed");
     private readonly Dictionary<ComponentHumanModel, HeldItemState> m_states = new Dictionary<ComponentHumanModel, HeldItemState>();
+    private readonly HashSet<Part> m_liveParts = new HashSet<Part>();
     private readonly PrimitivesRenderer3D m_capture = new PrimitivesRenderer3D();
     private HeldItemDepthShader m_sunShader;
     private HeldItemDepthShader m_pointShader;
@@ -47,16 +118,16 @@ internal sealed class HeldItemShadowRenderer : IDisposable
     // Source: VertexBuffer.cs:HandleDeviceReset; restored GPU buffers are empty until their source data is uploaded.
     private void RestoreBuffers()
     {
-        foreach (HeldItemState state in m_states.Values)
+        // Source: HeldItemState.Freeze; retained old parts outlive replacement/removal in m_states.
+        foreach (Part part in m_liveParts)
         {
-            foreach (Part part in state.Parts)
-            {
-                part.Vertices.SetData(part.Source, 0, part.Source.Length);
-                part.Indices.SetData(part.IndexSource, 0, part.IndexSource.Length);
-            }
-            state.Revision++;
+            part.Vertices.SetData(part.Source, 0, part.Source.Length);
+            part.Indices.SetData(part.IndexSource, 0, part.IndexSource.Length);
         }
+        foreach (HeldItemState state in m_states.Values) state.Revision++;
     }
+
+    internal static bool ResourceValid(GraphicsResource resource) => resource != null && !s_disposedRef(resource);
 
     // Called only by the owning model Prepare batch (at most 12 Hz); no capture work occurs per light/face.
     public HeldItemState Capture(ComponentHumanModel human, Matrix[] worldBones, Camera camera)
@@ -172,8 +243,10 @@ internal sealed class HeldItemShadowRenderer : IDisposable
         parts.Add(part);
     }
 
-    private static void Upload(Part part)
+    private void Upload(Part part)
     {
+        part.Owner = this;
+        m_liveParts.Add(part);
         part.Vertices = new VertexBuffer(VertexPositionColorTexture.VertexDeclaration, part.Source.Length);
         part.Indices = new IndexBuffer(IndexFormat.SixteenBits, part.IndexSource.Length);
         part.Vertices.SetData(part.Source, 0, part.Source.Length);
@@ -215,6 +288,7 @@ internal sealed class HeldItemShadowRenderer : IDisposable
     public void Draw(HeldItemState state, Matrix shadowMatrix, Vector2 origin, Vector3? lightPosition, float radius, float opacity)
     {
         if (state == null || !(opacity > 0f)) return;
+        if (!state.ResourcesValid()) throw new InvalidOperationException("[SuAPI] Held-item shadow resources are no longer valid.");
         if (lightPosition.HasValue && !(radius > 0f)) throw new ArgumentOutOfRangeException(nameof(radius));
         if (m_sunShader == null) m_sunShader = new HeldItemDepthShader(false);
         if (m_pointShader == null) m_pointShader = new HeldItemDepthShader(true);
@@ -242,8 +316,7 @@ internal sealed class HeldItemShadowRenderer : IDisposable
     public void Remove(ComponentHumanModel human)
     {
         if (!m_states.TryGetValue(human, out HeldItemState state)) return;
-        foreach (Part part in state.Parts) part.Dispose();
-        state.Parts.Clear();
+        state.Dispose();
         m_states.Remove(human);
     }
 
@@ -255,7 +328,7 @@ internal sealed class HeldItemShadowRenderer : IDisposable
     public void Dispose()
     {
         Display.DeviceReset -= RestoreBuffers;
-        foreach (HeldItemState state in m_states.Values) foreach (Part part in state.Parts) part.Dispose();
+        foreach (HeldItemState state in m_states.Values) state.Dispose();
         m_states.Clear();
         m_capture.Clear();
         m_sunShader?.Dispose();

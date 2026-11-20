@@ -37,7 +37,7 @@ public sealed partial class SubsystemDynamicShadows
         }
     }
 
-    // Source: Dawnrift SubsystemShadowMap.ShouldRenderCascade; keep this Mod's existing 512px projection.
+    // Source: TerrainRenderer.PrepareForDrawing; uploaded buffers have no event, so poll independently of light motion.
     private void UpdateTerrainShadowMap(Camera camera)
     {
         if (!m_terrainShadowsAvailable || !m_terrainShadowStates.TryGetValue(camera, out TerrainShadowState state)) return;
@@ -49,19 +49,26 @@ public sealed partial class SubsystemDynamicShadows
             state.NearDynamicValid = false;
             return;
         }
-        bool controlChanged = state.VegetationSnapshot == null || state.VegetationSnapshot.Version != m_vegetationFrame.Version;
-        if (Time.RealTime < state.NextUpdateTime && state.IsValid && !controlChanged) return;
-        state.NextUpdateTime = Time.RealTime + GetTerrainShadowInterval();
+        double now = Time.RealTime;
         float coverage = m_qualityPenalty == 0 ? 80f : 64f;
         Vector3 previousCenter = state.AnchorCenter;
         Vector3 center = GetStableShadowAnchor(state, camera.ViewPosition);
-        CaptureSunGeometry(center, coverage, state.PendingGeometry);
-        bool moving = HasActiveVegetation(state.PendingGeometry.VegetationFlags, m_vegetationFrame) ||
-            HasActiveVegetation(state.PendingGeometry.VegetationFlags, state.VegetationSnapshot);
+        bool projectionChanged = center != previousCenter || coverage != state.Coverage;
+        bool controlChanged = state.VegetationSnapshot == null || state.VegetationSnapshot.Version != m_vegetationFrame.Version;
+        float directionChange = Vector3.DistanceSquared(direction, state.LastLightDirection);
+        // Normal celestial motion obeys the timer. Time jumps and sun/moon switches bypass it at about 3 degrees.
+        bool lightJumped = directionChange >= 0.0025f;
+        bool lightDue = now >= state.NextUpdateTime && directionChange >= 0.000004f;
+        if (now >= state.NextUpdateTime) state.NextUpdateTime = now + GetTerrainShadowInterval(direction);
+        bool moving = HasActiveVegetation(state.CachedGeometry.VegetationFlags, m_vegetationFrame) ||
+            HasActiveVegetation(state.CachedGeometry.VegetationFlags, state.VegetationSnapshot);
         bool vegetationDue = moving && m_vegetationFrame.SimulationTime >= state.NextVegetationUpdate;
-        if (!controlChanged && !vegetationDue && state.IsValid && center == previousCenter && coverage == state.Coverage &&
-            Vector3.DistanceSquared(direction, state.LastLightDirection) < 0.000004f &&
-            state.CachedGeometry.Matches(state.PendingGeometry)) return;
+        bool redraw = !state.IsValid || projectionChanged || controlChanged || lightJumped || lightDue || vegetationDue;
+        if (!redraw && now < state.NextGeometryCheck) return;
+
+        CaptureSunGeometry(center, coverage, state.PendingGeometry);
+        state.NextGeometryCheck = now + GetTerrainGeometryInterval();
+        if (!redraw && state.CachedGeometry.Matches(state.PendingGeometry)) return;
 
         Vector3 up = MathUtils.Abs(Vector3.Dot(direction, Vector3.UnitY)) > 0.92f ? Vector3.UnitZ : Vector3.UnitY;
         Vector3 origin = new Vector3(MathUtils.Floor(center.X), 0f, MathUtils.Floor(center.Z));
@@ -70,8 +77,10 @@ public sealed partial class SubsystemDynamicShadows
             Matrix.CreateOrthographic(coverage, coverage, 1f, 600f);
         VegetationMotionFrame vegetation = m_vegetationFrame.Clone();
         RenderTerrainShadowMap(state.Target, origin.XZ, matrix, center, coverage, vegetation);
+        // Publish projection and contents together; receivers keep using this completed pair between updates.
         state.VegetationSnapshot = vegetation;
-        state.NextVegetationUpdate = m_vegetationFrame.SimulationTime + 0.5;
+        state.NextVegetationUpdate = m_vegetationFrame.SimulationTime + 1.0;
+        state.NextUpdateTime = now + GetTerrainShadowInterval(direction);
         state.ShadowOrigin = origin.XZ;
         state.ShadowMatrix = matrix;
         state.LastLightDirection = direction;
@@ -83,7 +92,26 @@ public sealed partial class SubsystemDynamicShadows
         state.PendingGeometry = old;
     }
 
-    private double GetTerrainShadowInterval() => m_qualityPenalty switch { 0 => 0.18, 1 => 0.3, _ => 0.45 };
+    // Source: SubsystemDynamicShadows.UpdatePerformanceBudget; lower-budget devices poll uploaded geometry less often.
+    private double GetTerrainGeometryInterval() => m_qualityPenalty switch { 0 => 0.5, 1 => 0.75, _ => 1.0 };
+
+    private double GetTerrainShadowInterval(Vector3 direction) => direction.Y < 0.35f ? 0.5 :
+        m_qualityPenalty switch { 0 => 0.75, 1 => 1.0, _ => 1.5 };
+
+    // Source: SubsystemBlockBehavior.OnBlockAdded/Removed/Modified/OnChunkInitialized/OnChunkDiscarding.
+    // Only registered light/plant blocks notify edits; periodic GPU checks also cover ordinary blocks and later uploads.
+    private void RequestTerrainGeometryCheck(Vector2 position)
+    {
+        foreach (TerrainShadowState state in m_terrainShadowStates.Values)
+        {
+            if (Vector2.DistanceSquared(position, state.AnchorCenter.XZ) <= MathUtils.Sqr(0.8f * state.Coverage + 12f))
+                state.NextGeometryCheck = 0.0;
+            if (state.PointShadows == null) continue;
+            foreach (PointShadowSlot slot in state.PointShadows.Slots)
+                if (slot.Selected && Vector2.DistanceSquared(position, slot.Light.Position.XZ) <= MathUtils.Sqr(slot.Light.Radius + 24f))
+                    slot.NextGeometryCheck = 0.0;
+        }
+    }
 
     // Source: RenderTarget2D.cs:RenderTarget2D; retain the wide model map and add a small near field.
     private static void EnsureDynamicShadowTarget(TerrainShadowState state)
@@ -158,12 +186,12 @@ public sealed partial class SubsystemDynamicShadows
         {
             if (renderWide)
             {
-                DrawDynamicSunTarget(camera, state.DynamicTarget, state.ShadowMatrix, state.ShadowOrigin);
+                state.DynamicBounds = DrawDynamicSunTarget(camera, state.DynamicTarget, state.ShadowMatrix, state.ShadowOrigin);
                 state.DynamicValid = true;
             }
             if (renderNear)
             {
-                DrawDynamicSunTarget(camera, state.NearDynamicTarget, state.NearDynamicMatrix, state.NearDynamicOrigin);
+                state.NearDynamicBounds = DrawDynamicSunTarget(camera, state.NearDynamicTarget, state.NearDynamicMatrix, state.NearDynamicOrigin);
                 state.NearDynamicValid = true;
             }
             state.DynamicRevision = m_modelShadowRenderer.Revision;
@@ -177,13 +205,17 @@ public sealed partial class SubsystemDynamicShadows
         }
     }
 
-    private void DrawDynamicSunTarget(Camera camera, RenderTarget2D target, Matrix matrix, Vector2 origin)
+    private Vector4 DrawDynamicSunTarget(Camera camera, RenderTarget2D target, Matrix matrix, Vector2 origin)
     {
         Display.RenderTarget = target;
         Display.Viewport = new Viewport(0, 0, target.Width, target.Height);
         Display.ScissorRectangle = new Rectangle(0, 0, target.Width, target.Height);
         Display.Clear(Color.White, 1f, 0);
-        m_modelShadowRenderer.Draw(camera, matrix, origin, new BoundingFrustum(matrix), null, 0f);
+        Vector4 bounds = m_modelShadowRenderer.DrawSun(camera, matrix, origin, new BoundingFrustum(matrix));
+        if (bounds.X > bounds.Z || bounds.Y > bounds.W) return bounds;
+        // Source: TerrainShadowShaders.modelShadowPCF; two texels conservatively include raster/filter support.
+        float padding = 2f / target.Width;
+        return new Vector4(bounds.X - padding, bounds.Y - padding, bounds.Z + padding, bounds.W + padding);
     }
 
     // Source: RenderTarget2D.cs:HandleDeviceReset — GPU contents are undefined after device restoration.
@@ -195,12 +227,13 @@ public sealed partial class SubsystemDynamicShadows
             state.DynamicValid = false;
             state.NearDynamicValid = false;
             state.NextUpdateTime = 0.0;
+            state.NextGeometryCheck = 0.0;
             state.NextDynamicUpdate = 0.0;
         }
     }
 
     private static void SetTerrainShadowParameters(Shader shader, TerrainShadowState state,
-        bool enabled, float strength, float celestialLightFloor, float fogIntensity)
+        bool enabled, float strength, float celestialLightFloor, float fogIntensity, bool pointLights)
     {
         shader.GetParameter("u_shadowEnabled").SetValue(enabled ? 1f : 0f);
         shader.GetParameter("u_shadowStrength").SetValue(MathUtils.Clamp(strength, 0f, 0.55f));
@@ -208,7 +241,8 @@ public sealed partial class SubsystemDynamicShadows
         shader.GetParameter("u_shadowOrigin").SetValue(state.ShadowOrigin);
         shader.GetParameter("u_shadowMatrix").SetValue(state.ShadowMatrix);
         shader.GetParameter("u_shadowTexture").SetValue(state.Target);
-        shader.GetParameter("u_shadowSamplerState").SetValue(SamplerState.LinearClamp);
+        // Source: TerrainShadowShaders.TerrainPixel:terrainShadowPCF — filter comparisons, never packed caster depths.
+        shader.GetParameter("u_shadowSamplerState").SetValue(SamplerState.PointClamp);
         shader.GetParameter("u_shadowTexelSize").SetValue(new Vector2(1f / state.Resolution));
         shader.GetParameter("u_fogShadowFactor").SetValue(MathUtils.Saturate(fogIntensity));
         shader.GetParameter("u_dynamicShadowEnabled").SetValue(enabled && state.DynamicValid ? 1f : 0f);
@@ -221,6 +255,8 @@ public sealed partial class SubsystemDynamicShadows
         shader.GetParameter("u_nearDynamicShadowMatrix").SetValue(state.NearDynamicMatrix);
         shader.GetParameter("u_nearDynamicShadowOrigin").SetValue(state.NearDynamicOrigin);
         shader.GetParameter("u_nearDynamicShadowTexelSize").SetValue(new Vector2(1f / state.NearDynamicTarget.Width));
-        SetPointShadowParameters(shader, state);
+        shader.GetParameter("u_dynamicShadowBounds").SetValue(state.DynamicBounds);
+        shader.GetParameter("u_nearDynamicShadowBounds").SetValue(state.NearDynamicBounds);
+        if (pointLights) SetPointShadowParameters(shader, state);
     }
 }
