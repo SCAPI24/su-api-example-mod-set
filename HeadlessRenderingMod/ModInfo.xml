@@ -3,11 +3,16 @@
   <ModInfo>
     <Identifier>HeadlessRenderingMod</Identifier>
     <LocalizedName>
-      <Text lang="en_US">Headless Server</Text>
-      <Text lang="zh_CN">无画面服务器</Text>
+      <Text lang="en_US">Headless Server (Warning: disables graphics)</Text>
+      <Text lang="zh_CN">无画面服务器（警告：不再显示画面）</Text>
     </LocalizedName>
+    <InstallWarning>
+      <Text lang="en_US">This mod disables graphics and is intended for dedicated servers. Install only on a headless server.</Text>
+      <Text lang="zh_CN">此模组会关闭游戏画面，仅用于无图形界面的专用服务器。请勿在普通客户端安装。</Text>
+    </InstallWarning>
     <Version>1.4.2</Version>
     <APIVersion>0.2.1.0</APIVersion>
+    <ShortCode>Su-HRM</ShortCode>
     <Asset>
       <ContentRoot>Content</ContentRoot>
     </Asset>

@@ -4,10 +4,11 @@
         <Identifier>TranslationMod</Identifier>
         <LocalizedName>
             <Text lang="en_US">Chinese Translation</Text>
-            <Text lang="zh_CN">中文翻译</Text>
+            <Text lang="zh_CN" force="true">中文翻译</Text>
         </LocalizedName>
         <Version>1.6.49</Version>
         <APIVersion>0.2.1.0</APIVersion>
+        <ShortCode>su-zh</ShortCode>
         <Asset>
             <ContentRoot>Content</ContentRoot>
         </Asset>

@@ -8,6 +8,7 @@
         </LocalizedName>
         <Version>1.0.0</Version>
         <APIVersion>0.2.1.0</APIVersion>
+        <ShortCode>Su-RainWithoutDawn</ShortCode>
         <Asset><ContentRoot>Content</ContentRoot></Asset>
         <IsMergeLib>true</IsMergeLib>
     </ModInfo>

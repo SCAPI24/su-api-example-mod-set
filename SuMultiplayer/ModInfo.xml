@@ -13,6 +13,7 @@
     </LocalizedName>
     <Version>2.3.1</Version>
     <APIVersion>0.2.1.0</APIVersion>
+    <ShortCode>Su-MP</ShortCode>
     <IsMergeLib>true</IsMergeLib>
     <Asset>
       <ContentRoot>Content/</ContentRoot>
