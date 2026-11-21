@@ -10,8 +10,8 @@ using System.Collections.Generic;
 namespace SuMultiplayer.Engine
 {
     /// <summary>
-    /// Captures client circuit interactions and predicts only their local presentation.
-    /// Circuit element runtime state remains entirely host-authoritative.
+    /// Sends client circuit interactions to the host and tracks their request IDs.
+    /// Terrain presentation and circuit runtime state remain host-authoritative.
     /// </summary>
     public sealed class CircuitUseInputSink : IEntityUseInputSink,
         ICircuitPresentationPort
@@ -20,7 +20,6 @@ namespace SuMultiplayer.Engine
         {
             public long RequestId;
             public CircuitInteractionKind Kind;
-            public Point3 Point;
         }
 
         private struct CircuitCellKey : IEquatable<CircuitCellKey>
@@ -48,10 +47,8 @@ namespace SuMultiplayer.Engine
         private readonly NetworkAvatarSpawner m_spawner;
         private readonly Dictionary<CircuitCellKey, List<PendingOperation>> m_pending =
             new Dictionary<CircuitCellKey, List<PendingOperation>>();
-        private readonly Dictionary<CircuitCellKey, int> m_authoritativeValues =
-            new Dictionary<CircuitCellKey, int>();
         private Func<CircuitInteractionRequestData, bool> m_setCircuitRequest;
-        private Project m_project;
+        private Project m_pendingProject;
         private long m_nextRequestId;
 
         public CircuitUseInputSink(IModParentField parentField,
@@ -203,11 +200,10 @@ namespace SuMultiplayer.Engine
             if (input == null || player?.ComponentMiner == null) return false;
             Project project = GameManager.Project;
             if (project == null) return false;
-            if (!ReferenceEquals(project, m_project))
+            if (!ReferenceEquals(project, m_pendingProject))
             {
-                m_project = project;
+                m_pendingProject = project;
                 m_pending.Clear();
-                m_authoritativeValues.Clear();
             }
             ComponentMiner miner = player.ComponentMiner;
             Ray3? ray = input.PlayerInput.Interact;
@@ -275,7 +271,6 @@ namespace SuMultiplayer.Engine
             }
 
             CircuitCellKey key = new CircuitCellKey(face.Point, mountingFace);
-            int baseValue = GetPresentationBase(key, terrain, cellValue);
             long requestId = NextRequestId();
             Vector3 direction = ray.Value.Direction;
             var request = new CircuitInteractionRequestData(requestId, kind,
@@ -298,29 +293,24 @@ namespace SuMultiplayer.Engine
                 return true;
             }
 
-            if (!m_authoritativeValues.ContainsKey(key))
-                m_authoritativeValues[key] = baseValue;
             var operation = new PendingOperation
             {
                 RequestId = requestId,
-                Kind = kind,
-                Point = face.Point
+                Kind = kind
             };
             if (!m_pending.TryGetValue(key, out List<PendingOperation> operations))
             {
                 operations = new List<PendingOperation>();
                 m_pending.Add(key, operations);
             }
+            // Source: CircuitSyncModule.cs:CircuitSyncModule.SubmitOperation
             operations.Add(operation);
-            // A 路径（点击预测）：宿主就是这个类缓存下来的 m_project（世界在点击时必然有效）。
-            ApplyPresentation(m_project, key, m_authoritativeValues[key], operations);
-            PlayClick(electricity?.SubsystemAudio, face.Point);
             return true;
         }
 
         /// <summary>
-        /// Resolves one request using the host's current cell value. Remaining predictions for
-        /// that cell are replayed over the authoritative value in request order.
+        /// Resolves a powered input by request ID or applies the host cell value for
+        /// Rotate and FurnitureSwitch.
         /// </summary>
         public void ResolvePresentation(long requestId, int authoritativeCellValue)
         {
@@ -337,114 +327,49 @@ namespace SuMultiplayer.Engine
             if (!TryFindPending(requestId, out CircuitCellKey key,
                     out List<PendingOperation> operations, out int index))
                 return;
-            operations.RemoveAt(index);
-            if (authoritativeCellValue.HasValue)
-                m_authoritativeValues[key] = authoritativeCellValue.Value;
-            else if (!m_authoritativeValues.TryGetValue(key, out _))
+            PendingOperation operation = operations[index];
+            if (operation.Kind == CircuitInteractionKind.SwitchToggle ||
+                operation.Kind == CircuitInteractionKind.ButtonPress)
             {
-                LogProblem("rollback-baseline", "rejected operation has no authoritative cell " +
-                    "value or saved presentation baseline at " + key.Point.X + "," +
-                    key.Point.Y + "," + key.Point.Z);
-                m_pending.Remove(key);
+                // Source: Mod/SuMultiplayer/Modules/CircuitSyncModule.cs:CircuitSyncModule.ApplyClientEvent
+                // Powered inputs carry no terrain presentation in their circuit event.
+                operations.RemoveAt(index);
+                if (operations.Count == 0)
+                    m_pending.Remove(key);
                 return;
             }
-            // B 路径（主机裁决回来）：权威值永远属于当前世界。
-            ApplyOrForget(GameManager.Project, key, operations, m_authoritativeValues[key]);
+            operations.RemoveAt(index);
+            if (authoritativeCellValue.HasValue)
+            {
+                ApplyCellPresentation(GameManager.Project, key.Point,
+                    authoritativeCellValue.Value);
+            }
+            if (operations.Count == 0) m_pending.Remove(key);
         }
 
         /// <summary>
-        /// Applies an authoritative CellChange and clears predictions for its cell.
-        ///
-        /// **这是 B 路径（应用主机权威值）的入口，与"点击预测"（A 路径）无关。**
-        /// 它必须用 <see cref="GameManager.Project"/>（当前世界的唯一权威来源），
-        /// 不能用 <c>m_project</c> —— 后者是 A 路径"点击预测的宿主 Project"，只在
-        /// <see cref="TryAcceptInteract"/> 里赋值，玩家没点过开关时恒为 null。
-        /// 主机推送的电路事件（灯亮、门开…）不需要任何点击，因此以前会在这里
-        /// 拿到 null → terrain 不可用 → 启动期刷出数千条 "terrain is unavailable"。 
+        /// Applies a host-authoritative cell value to the local replica.
         /// </summary>
         public void ApplyAuthoritativeCell(int x, int y, int z, int mountingFace,
             int authoritativeCellValue)
         {
             Project project = GameManager.Project;
-            var key = new CircuitCellKey(new Point3(x, y, z), mountingFace);
-            m_authoritativeValues[key] = authoritativeCellValue;
-            if (m_pending.TryGetValue(key, out List<PendingOperation> operations))
-            {
-                ApplyPresentation(project, key, authoritativeCellValue, operations);
-            }
-            else
-            {
-                ApplyCellPresentation(project, key.Point, authoritativeCellValue);
-                m_authoritativeValues.Remove(key);
-            }
+            ApplyCellPresentation(project, new Point3(x, y, z), authoritativeCellValue);
+        }
+
+        // Source: CircuitWorldEngine.cs:CircuitWorldEngine.HandleReplicaCellApplied
+        public void ApplyAuthoritativeCell(int x, int y, int z,
+            int authoritativeCellValue)
+        {
+            Project project = GameManager.Project;
+            Point3 point = new Point3(x, y, z);
+            ApplyCellPresentation(project, point, authoritativeCellValue);
         }
 
         public void DetachPresentation()
         {
-            // 会话结束：把预测期间写过的格子回滚成权威值。
-            // 用当前世界的 Project（不是 m_project）：退出/换世界时 m_project 可能已经失效。
-            Project project = GameManager.Project;
-            foreach (KeyValuePair<CircuitCellKey, int> pair in m_authoritativeValues)
-                ApplyCellPresentation(project, pair.Key.Point, pair.Value);
             m_pending.Clear();
-            m_authoritativeValues.Clear();
-            m_project = null;
-        }
-
-        private int GetPresentationBase(CircuitCellKey key, Game.Terrain terrain, int currentValue)
-        {
-            return m_authoritativeValues.TryGetValue(key, out int value) ? value : currentValue;
-        }
-
-        private void ApplyOrForget(Project project, CircuitCellKey key,
-            List<PendingOperation> operations, int authoritativeValue)
-        {
-            SubsystemTerrain subsystem = project?.FindSubsystem<SubsystemTerrain>(false);
-            if (subsystem == null || operations.Count == 0)
-            {
-                ApplyCellPresentation(project, key.Point, authoritativeValue);
-                m_pending.Remove(key);
-                m_authoritativeValues.Remove(key);
-                return;
-            }
-            ApplyPresentation(project, key, authoritativeValue, operations);
-        }
-
-        // Source: Survivalcraft/Game/SwitchBlock.cs:SwitchBlock.SetLeverState
-        // Source: Survivalcraft/Game/RotateableMountedElectricElementBlock.cs:SetRotation
-        private void ApplyPresentation(Project project, CircuitCellKey key,
-            int authoritativeValue, List<PendingOperation> operations)
-        {
-            int value = authoritativeValue;
-            for (int i = 0; i < operations.Count; i++)
-            {
-                PendingOperation operation = operations[i];
-                int contents = Game.Terrain.ExtractContents(value);
-                int data = Game.Terrain.ExtractData(value);
-                if (operation.Kind == CircuitInteractionKind.SwitchToggle &&
-                    contents == SwitchBlock.Index)
-                {
-                    value = SwitchBlock.SetLeverState(value,
-                        !SwitchBlock.GetLeverState(value));
-                }
-                else if (operation.Kind == CircuitInteractionKind.FurnitureSwitch)
-                {
-                    // Furniture variants live in their block entity; the host result supplies
-                    // the authoritative design value when this click is accepted.
-                    continue;
-                }
-                else if (operation.Kind == CircuitInteractionKind.Rotate)
-                {
-                    value = Game.Terrain.ReplaceData(value, RotateableMountedElectricElementBlock
-                        .SetRotation(data, RotateableMountedElectricElementBlock
-                            .GetRotation(data) + 1));
-                }
-            }
-            Game.Terrain terrain = project?.FindSubsystem<SubsystemTerrain>(false)?.Terrain;
-            if (terrain == null || terrain.GetCellValue(key.Point.X, key.Point.Y,
-                    key.Point.Z) == value)
-                return;
-            ApplyCellPresentation(project, key.Point, value);
+            m_pendingProject = null;
         }
 
         private bool ApplyCellPresentation(Project project, Point3 point, int value)
@@ -452,16 +377,14 @@ namespace SuMultiplayer.Engine
             Game.Terrain terrain = project?.FindSubsystem<SubsystemTerrain>(false)?.Terrain;
             if (terrain == null)
             {
-                // 调用方传进来的 project 没有地形：说明世界确实还没装好。
-                // 这条日志曾经在启动期刷数千条（B 路径误用了 click-only 的 m_project），
-                // 现在 B 路径一律用 GameManager.Project，正常情况下不该再出现。
+                // The current world has no terrain subsystem yet.
                 LogProblem("presentation-world", "terrain is unavailable at " +
                     point.X + "," + point.Y + "," + point.Z);
                 return false;
             }
             if (terrain.GetChunkAtCell(point.X, point.Z) == null)
             {
-                LogProblem("presentation-chunk", "chunk is unavailable for predicted cell " +
+                LogProblem("presentation-chunk", "chunk is unavailable for authoritative cell " +
                     point.X + "," + point.Y + "," + point.Z);
                 return false;
             }
@@ -535,13 +458,6 @@ namespace SuMultiplayer.Engine
 
         private static bool IsFinite(float value) =>
             !float.IsNaN(value) && !float.IsInfinity(value);
-
-        // Source: Survivalcraft/Game/ButtonElectricElement.cs:ButtonElectricElement.Press
-        private static void PlayClick(SubsystemAudio audio, Point3 point)
-        {
-            audio?.PlaySound("Audio/Click", 1f, 0f,
-                new Vector3(point.X, point.Y, point.Z), 2f, autoDelay: true);
-        }
 
         private static void LogProblem(string code, string detail)
         {

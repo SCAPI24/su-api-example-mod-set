@@ -497,7 +497,20 @@ namespace SuMultiplayer.Engine
                 .FindSubsystem<SubsystemElectricity>(false);
             if (electricity == null)
                 return Fail("SubsystemElectricity is unavailable.", out error);
-            return m_codec.ApplyOperationEvent(electricity, circuitEvent, out error);
+            if (!m_codec.ApplyOperationEvent(electricity, circuitEvent, out error)) return false;
+            if (m_terrainBridge.ClientReplica && circuitEvent.Operation == CircuitOperation.Switch)
+            {
+                // Source: CircuitWorldEngine.cs:CircuitWorldEngine.ReapplyAuthoritativeStates
+                // A later topology rebuild must recover the last circuit voltage even if the
+                // separate terrain stream still shows the previous lever position.
+                CircuitElementState state = m_codec.CaptureSwitchOperationState(electricity, circuitEvent);
+                m_authoritativeStates[GetElementIdentity(state)] = new AuthoritativeState
+                {
+                    State = state,
+                    HostStep = circuitEvent.HostCircuitStep
+                };
+            }
+            return true;
         }
 
         public bool AlignClientCircuitStep(int hostStep, bool restoreAuthoritativeStates,
@@ -739,14 +752,7 @@ namespace SuMultiplayer.Engine
             if (!TryGetCellValue(x, y, z, out int value))
                 throw new InvalidOperationException("Applied replica cell is unavailable at (" +
                     x + "," + y + "," + z + ").");
-            TerrainResyncDiagnosticWindow diagnostics = m_terrainBridge.ResyncDiagnostics;
-            bool measureRollback = diagnostics != null && diagnostics.IsActive &&
-                !m_interactionPresentation.HasPendingOperationAt(x, y, z);
-            long rollbackStarted = measureRollback ? Stopwatch.GetTimestamp() : 0;
-            for (int face = 0; face < 6; face++)
-                m_interactionPresentation.ApplyAuthoritativeCell(x, y, z, face, value);
-            if (measureRollback)
-                diagnostics.RecordNoPendingSixFaceRollback(Stopwatch.GetTimestamp() - rollbackStarted);
+            m_interactionPresentation.ApplyAuthoritativeCell(x, y, z, value);
             m_replicaCellApplied?.Invoke(key, edit);
         }
 

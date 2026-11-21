@@ -683,13 +683,15 @@ namespace SuMultiplayer.Engine
                         changedCells++;
                         bool electricCellChanged = ClientReplica &&
                             IsElectricCell(oldValueWithoutLight, value);
-                        bool electricTopologyChanged = electricCellChanged &&
+                        bool electricElementChanged = electricCellChanged &&
+                            !IsSwitchLeverOnlyChange(oldValueWithoutLight, value);
+                        bool electricTopologyChanged = electricElementChanged &&
                             NotifyElectricTopologyChanged(oldValueWithoutLight, value, x, edit.Y, z);
                         if (ClientReplica && oldValueWithoutLight != value)
                             BlockBehaviorNotify.Notify(subsystem, oldValue, value, x, edit.Y, z);
                         // Source: Mod/SuMultiplayer/Engine/CircuitWorldEngine.cs:HandleReplicaCellApplied
                         // 普通地形格不需要进入电路六面显示回滚路径；电路格仍保留完整权威应用通知。
-                        if (electricCellChanged)
+                        if (electricElementChanged)
                             ReplicaCellApplied?.Invoke(key, edit);
                         if (electricTopologyChanged)
                             ReplicaElectricTopologyChanged?.Invoke(key, edit);
@@ -729,11 +731,13 @@ namespace SuMultiplayer.Engine
                         if (measureResyncCallbacks) ResyncDiagnostics.RecordResyncCell(true);
                         bool electricCellChanged = ClientReplica &&
                             IsElectricCell(oldValueWithoutLight, value);
+                        bool electricElementChanged = electricCellChanged &&
+                            !IsSwitchLeverOnlyChange(oldValueWithoutLight, value);
                         bool electricTopologyChanged = false;
                         if (ClientReplica)
                         {
                             long started = System.Diagnostics.Stopwatch.GetTimestamp();
-                            if (electricCellChanged)
+                            if (electricElementChanged)
                                 electricTopologyChanged = NotifyElectricTopologyChanged(
                                     oldValueWithoutLight, value, x, edit.Y, z);
                             long elapsedTicks = System.Diagnostics.Stopwatch.GetTimestamp() - started;
@@ -742,7 +746,7 @@ namespace SuMultiplayer.Engine
                         }
                         if (ClientReplica)
                             BlockBehaviorNotify.Notify(subsystem, oldValue, value, x, edit.Y, z);
-                        if (electricCellChanged)
+                        if (electricElementChanged)
                             circuitCallbackTicks += InvokeResyncCallback(
                                 () => ReplicaCellApplied?.Invoke(key, edit));
                         if (electricTopologyChanged)
@@ -808,6 +812,14 @@ namespace SuMultiplayer.Engine
         }
 
         // Source: Survivalcraft/Game/SubsystemElectricBlockBehavior.cs:OnBlockAdded/OnBlockRemoved/OnBlockModified
+        // Source: Survivalcraft/Game/SwitchBlock.cs:SwitchBlock.SetLeverState
+        // The terrain stream can redraw the lever before or after the circuit event.
+        // Rebuilding this element here would replace its live voltage with the lever's value.
+        private static bool IsSwitchLeverOnlyChange(int oldValue, int newValue) =>
+            Game.Terrain.ExtractContents(oldValue) == SwitchBlock.Index &&
+            Game.Terrain.ExtractContents(newValue) == SwitchBlock.Index &&
+            (Game.Terrain.ExtractData(oldValue) ^ Game.Terrain.ExtractData(newValue)) == 1;
+
         private bool NotifyElectricTopologyChanged(int oldValue, int newValue, int x, int y, int z)
         {
             Block[] blocks = BlocksManager.Blocks;

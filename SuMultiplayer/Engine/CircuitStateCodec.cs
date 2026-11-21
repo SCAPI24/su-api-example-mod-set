@@ -638,8 +638,36 @@ namespace SuMultiplayer.Engine
                     }
                     return true;
                 }
-                if (circuitEvent.Operation != CircuitOperation.Switch &&
-                    circuitEvent.Operation != CircuitOperation.Rotate &&
+                if (circuitEvent.Operation == CircuitOperation.Switch)
+                {
+                    if (!(element is SwitchElectricElement))
+                        throw new InvalidOperationException(
+                            "Authoritative switch operation does not match the live element.");
+                    if (circuitEvent.Value > 15)
+                        throw new InvalidOperationException(
+                            "Authoritative switch voltage is outside 0..15.");
+
+                    // Source: Survivalcraft/Game/SwitchElectricElement.cs:SwitchElectricElement.GetOutputVoltage
+                    float currentVoltage = GetField<float>(element, "m_voltage",
+                        typeof(SwitchElectricElement));
+                    if (float.IsNaN(currentVoltage) || float.IsInfinity(currentVoltage) ||
+                        currentVoltage < 0f || currentVoltage > 1f)
+                        throw new InvalidOperationException(
+                            "Live switch voltage is outside the normalized 0..1 range.");
+
+                    float authoritativeVoltage = circuitEvent.Value / 15f;
+                    if (currentVoltage != authoritativeVoltage)
+                    {
+                        int targetStep = checked(subsystem.CircuitStep + 1);
+                        SetField(element, "m_voltage", authoritativeVoltage,
+                            typeof(SwitchElectricElement));
+                        // Source: Survivalcraft/Game/SubsystemElectricity.cs:QueueElectricElementConnectionsForSimulation
+                        subsystem.QueueElectricElementConnectionsForSimulation(element,
+                            targetStep);
+                    }
+                    return true;
+                }
+                if (circuitEvent.Operation != CircuitOperation.Rotate &&
                     circuitEvent.Operation != CircuitOperation.FurnitureSwitch)
                     throw new InvalidOperationException("Unsupported circuit operation " +
                         circuitEvent.Operation + ".");
@@ -652,6 +680,18 @@ namespace SuMultiplayer.Engine
                 error = "Circuit operation input could not be applied: " + ex.Message;
                 return false;
             }
+        }
+
+        // Source: CircuitStateCodec.cs:CircuitStateCodec.ApplyOperationEvent
+        internal CircuitElementState CaptureSwitchOperationState(SubsystemElectricity subsystem,
+            CircuitEvent circuitEvent)
+        {
+            var face = new CellFace(circuitEvent.X, circuitEvent.Y, circuitEvent.Z,
+                (int)circuitEvent.MountingFace);
+            ElectricElement element = subsystem.GetElectricElement(face.X, face.Y, face.Z, face.Face);
+            if (!(element is SwitchElectricElement))
+                throw new InvalidOperationException("The applied circuit switch is no longer available.");
+            return CaptureElement(subsystem, element, face);
         }
 
         // Source: Survivalcraft/Game/SevenSegmentDisplayElectricElement.cs:Simulate

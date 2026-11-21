@@ -91,6 +91,7 @@ namespace SuMultiplayer.Modules
             public readonly HashSet<ChunkKey> PendingScopeTerrainChunks = new HashSet<ChunkKey>();
             public readonly HashSet<ChunkKey> CircuitScope = new HashSet<ChunkKey>();
             public readonly HashSet<ulong> PendingOperationIds = new HashSet<ulong>();
+            public readonly List<CircuitEvent> UnsentOperations = new List<CircuitEvent>();
             public int PauseBarrierStep;
             public int PauseBarrierTimelineGeneration;
             public readonly HashSet<ChunkKey> PauseBarrierChunks = new HashSet<ChunkKey>();
@@ -134,12 +135,9 @@ namespace SuMultiplayer.Modules
             public bool WaitingForTerrainPublication;
             public CircuitEventRequest Request;
             public BlockUseRequestData UseRequest;
-            public CircuitEvent Event;
         }
 
-        private const int MaximumCircuitRttMs = 200;
-        private const int OperationStepMarginMs = 20;
-        private const int CircuitStepDurationMs = 10;
+        private const int MaximumOperationsPerRound = 32;
 
         private enum SnapshotReason : byte
         {
@@ -262,10 +260,15 @@ namespace SuMultiplayer.Modules
             new List<CircuitElementState>(MaximumSnapshotElements);
         private readonly List<CircuitElementState> m_deltaAckStates =
             new List<CircuitElementState>(MaximumSnapshotElements);
-        private readonly SortedDictionary<int, List<PendingHostOperation>> m_hostOperationsByStep =
-            new SortedDictionary<int, List<PendingHostOperation>>();
-        private readonly List<PendingHostOperation> m_committedOperationsWaitingTerrain =
-            new List<PendingHostOperation>();
+        private readonly Queue<PendingHostOperation> m_hostOperations = new Queue<PendingHostOperation>();
+        private readonly List<CircuitEvent> m_hostRoundEvents = new List<CircuitEvent>();
+        private readonly HashSet<(int X, int Y, int Z)> m_hostStepInputCells =
+            new HashSet<(int X, int Y, int Z)>();
+        private bool m_hostRoundOpen;
+        private int m_hostRoundRemaining;
+        private int m_hostRoundLastStep;
+        private int m_hostInputCellsStep = -1;
+        private long m_hostRoundDeadlineMs;
         private readonly SortedDictionary<int, CircuitHashCheckpoint> m_clientHashCheckpoints =
             new SortedDictionary<int, CircuitHashCheckpoint>();
         private readonly List<ChunkKey> m_checkpointChunks = new List<ChunkKey>(64);
@@ -335,7 +338,6 @@ namespace SuMultiplayer.Modules
         private long m_clientStaleScopeReuseCount;
         private string m_sessionId;
         private int m_lastCircuitStep;
-        private int m_lastScheduledOperationStep;
         private int m_clientLastCommittedEventSequence;
         private int m_timelineGeneration;
         private bool m_hasConfiguredRandomSeed;
@@ -361,6 +363,7 @@ namespace SuMultiplayer.Modules
         private uint m_configuredRandomSeed;
         private CircuitClock m_pendingClock;
         private CircuitScopeSnapshot m_pendingScopeSnapshot;
+        private long m_pendingScopeSnapshotReceivedMs;
         private bool m_debugPauseRequested;
         private int m_debugPauseStep = int.MinValue;
         private readonly Dictionary<ChunkKey, List<CircuitElementState>> m_debugPauseStates =
@@ -771,8 +774,7 @@ namespace SuMultiplayer.Modules
             long nowMs = (long)(m_clock() * 1000.0);
             if (m_transport.IsHosting && m_world.IsReady && nowMs >= m_nextSyncMs)
             {
-                HostSync(nowMs);
-                m_nextSyncMs = nowMs + SyncIntervalMs;
+                AdvanceHostSyncRound(nowMs);
             }
             if (m_transport.IsClient && m_transport.IsClientCircuitAttached &&
                 m_world.IsReady && m_epoch != 0)
@@ -879,7 +881,7 @@ namespace SuMultiplayer.Modules
             CircuitSimulationPauseSignal.SetClientStepGate(null);
             CircuitSimulationPauseSignal.SetClientStepCompleted(null);
             CircuitSimulationPauseSignal.SetHostStepBoundary(null);
-            m_hostOperationsByStep.Clear();
+            ClearHostOperationRound();
             m_clientHashCheckpoints.Clear();
             m_clientChunkCommittedEventSequences.Clear();
             m_hostChunkCommittedEventSequences.Clear();
@@ -891,6 +893,64 @@ namespace SuMultiplayer.Modules
             m_hostWasAccelerated = false;
             CircuitSimulationPauseSignal.Set(false);
             CircuitSimulationPauseSignal.ClearClientClock();
+        }
+
+        // Source: Survivalcraft/Game/SubsystemElectricity.cs:SubsystemElectricity.Update
+        private void AdvanceHostSyncRound(long nowMs)
+        {
+            if (m_hostRoundOpen || m_hostOperations.Count > 0)
+            {
+                if (!m_world.TryGetClock(out int step, out _, out _, out bool paused,
+                        out string error))
+                {
+                    Warn("Host could not close the circuit operation round: " + error);
+                    return;
+                }
+                if (!m_hostRoundOpen && !paused && !m_debugPauseRequested &&
+                    !CircuitSimulationPauseSignal.IsPaused)
+                {
+                    // Seal this round. Requests received while it is solving belong to the next one.
+                    m_hostRoundOpen = true;
+                    m_hostRoundRemaining = Math.Min(m_hostOperations.Count, MaximumOperationsPerRound);
+                    m_hostRoundLastStep = step;
+                    m_hostRoundDeadlineMs = nowMs + SyncIntervalMs;
+                    return;
+                }
+                if (m_hostRoundOpen && step >= m_lastCircuitStep &&
+                    !paused && !m_debugPauseRequested && !CircuitSimulationPauseSignal.IsPaused)
+                {
+                    if (step < m_hostRoundLastStep) return;
+                    if (m_hostRoundRemaining != 0)
+                    {
+                        if (nowMs < m_hostRoundDeadlineMs || m_hostOperations.Peek().HostUseExecuted)
+                            return;
+                        // Leave the unprocessed suffix in FIFO order for the next round.
+                        m_hostRoundRemaining = 0;
+                    }
+                }
+            }
+            // During a pause keep the existing sealed inputs queued for resume, and publish
+            // only events whose step the native solver has already reached.
+            if (m_hostRoundRemaining == 0)
+                m_hostRoundOpen = false;
+            HostSync(nowMs);
+            m_nextSyncMs = nowMs + SyncIntervalMs;
+        }
+
+        private void ClearHostOperationRound()
+        {
+            m_hostOperations.Clear();
+            m_hostRoundEvents.Clear();
+            m_hostRoundRemaining = 0;
+            m_hostRoundLastStep = 0;
+            m_hostInputCellsStep = -1;
+            m_hostStepInputCells.Clear();
+            m_hostRoundOpen = false;
+            foreach (PeerState peer in m_peerStates.Values)
+            {
+                peer.PendingOperationIds.Clear();
+                peer.UnsentOperations.Clear();
+            }
         }
 
         private void HostSync(long nowMs)
@@ -952,11 +1012,9 @@ namespace SuMultiplayer.Modules
             {
                 m_timelineGeneration = m_timelineGeneration == int.MaxValue
                     ? 1 : m_timelineGeneration + 1;
-                m_hostOperationsByStep.Clear();
-                m_committedOperationsWaitingTerrain.Clear();
+                ClearHostOperationRound();
                 m_nextCommittedEventSequence = 0;
                 m_hostChunkCommittedEventSequences.Clear();
-                m_lastScheduledOperationStep = step;
                 m_lateCommittedOperations.Clear();
                 foreach (PeerState existingPeer in m_peerStates.Values)
                 {
@@ -990,6 +1048,7 @@ namespace SuMultiplayer.Modules
             m_transport.CopyAttachedPeerIds(m_peers);
             if (m_peers.Count == 0)
             {
+                m_hostRoundEvents.RemoveAll(circuitEvent => circuitEvent.HostCircuitStep <= step);
                 m_activePeerSyncScopeCount = 0;
                 ClearInactivePeerSyncScopes();
                 return;
@@ -1116,10 +1175,12 @@ namespace SuMultiplayer.Modules
                 }
             }
 
+            StageHostRoundEvents(step);
             for (int scopeIndex = 0; scopeIndex < m_activePeerSyncScopeCount; scopeIndex++)
             {
                 PeerSyncScope peerScope = m_peerSyncScopes[scopeIndex];
                 int clientId = peerScope.ClientId;
+                if (!m_transport.IsHostCircuitAttached(clientId)) continue;
                 PeerState peer = peerScope.Peer;
                 bool resumeSyncComplete = true;
                 int checkpointChunksToCount = 0;
@@ -1146,6 +1207,12 @@ namespace SuMultiplayer.Modules
                     Accelerated = accelerated || peer.AccelerationResumePending
                 };
                 AddPayload(batch, MessageType.CircuitClock, clockMessage);
+                if (!SendHostRoundEvents(clientId, peer, batch, step))
+                {
+                    m_hostSendFailures++;
+                    Warn("Circuit operation batch could not be queued for client " + clientId + ".");
+                    continue;
+                }
 
                 var changedStates = new Dictionary<ChunkKey, List<CircuitElementState>>();
                 var pendingSnapshotIds = new Dictionary<ChunkKey, ulong>();
@@ -1170,7 +1237,7 @@ namespace SuMultiplayer.Modules
                             continue;
                         MarkNeedsFullSnapshot(peer, chunk, SnapshotReason.PauseBarrier);
                     }
-                    long terrainBoundary = m_transport.TerrainSequenceForChunk(chunk);
+                    long terrainBoundary = CurrentHostTopologyTerrainSequence(chunk);
                     SnapshotReason snapshotReason;
                     bool needsSnapshot = TryTakeFullSnapshotReason(peer, chunk,
                         out snapshotReason);
@@ -1249,7 +1316,7 @@ namespace SuMultiplayer.Modules
                     try
                     {
                         payloads = BuildStatePayloads(pair.Key, step,
-                            m_transport.TerrainSequenceForChunk(pair.Key),
+                            CurrentHostTopologyTerrainSequence(pair.Key),
                             CurrentHostTopologyGeneration(pair.Key), pair.Value, full: false,
                             pendingSnapshotIds[pair.Key],
                             unchecked(m_nextCommittedEventSequence),
@@ -1295,7 +1362,7 @@ namespace SuMultiplayer.Modules
                     foreach (ChunkKey chunk in m_chunks)
                     {
                         if (!m_hostCheckpointHashes.TryGetValue(chunk, out uint hash)) continue;
-                        long terrainSequence = m_transport.TerrainSequenceForChunk(chunk);
+                        long terrainSequence = CurrentHostTopologyTerrainSequence(chunk);
                         long topologyGeneration = CurrentHostTopologyGeneration(chunk);
                         uint committedEventSequence = GetHostChunkCommittedEventSequence(chunk);
                         checkpoint.Chunks.Add(new CircuitChunkHash
@@ -1421,32 +1488,28 @@ namespace SuMultiplayer.Modules
             }
             bool wasKnown = cellValues.TryGetValue(cellKey, out int oldValue);
             bool isElectric = m_world.IsElectricTopologyElementAt(x, edit.Y, z);
-            bool changed = wasKnown
-                ? m_world.IsElectricTopologyChange(oldValue, value, x, edit.Y, z)
-                : isElectric;
             if (isElectric) cellValues[cellKey] = value;
             else cellValues.Remove(cellKey);
             foreach (ChunkKey affected in CollectCircuitNeighborhood(key, edit))
             {
-                if (changed)
-                {
-                    long terrainSequence = m_transport.TerrainSequenceForChunk(affected);
-                    long previousGeneration = CurrentGeneration(m_clientTopologyGenerations, affected);
-                    long generation = BumpTopologyGeneration(m_clientTopologyGenerations, affected);
-                    m_clientTopologyBumps++;
-                    if (!wasKnown) m_clientUnknownTopologyBumps++;
-                    m_lastClientTopologyBump = DescribeTopologyBump(affected, x, edit.Y, z,
-                        oldValue, value, wasKnown, terrainSequence, previousGeneration,
-                        generation);
-                    m_clientTopologyTerrainSequences[affected] = terrainSequence;
-                    m_clientTopologyDirtyChunks.Add(affected);
-                    m_clientTopologyAwaitingSnapshot.Add(affected);
-                }
+                long terrainSequence = m_transport.TerrainSequenceForChunk(affected);
+                long previousGeneration = CurrentGeneration(m_clientTopologyGenerations, affected);
+                long generation = BumpTopologyGeneration(m_clientTopologyGenerations, affected);
+                m_clientTopologyBumps++;
+                if (!wasKnown) m_clientUnknownTopologyBumps++;
+                m_lastClientTopologyBump = DescribeTopologyBump(affected, x, edit.Y, z,
+                    oldValue, value, wasKnown, terrainSequence, previousGeneration, generation);
+                m_clientTopologyTerrainSequences[affected] = terrainSequence;
+                m_clientTopologyDirtyChunks.Add(affected);
+                m_clientTopologyAwaitingSnapshot.Add(affected);
                 m_clientChunkBoundaries.Remove(affected);
             }
-            if (changed) m_clientScopeRequested = false;
+            m_clientScopeRequested = false;
+            m_nextClientScopeRefreshMs = 0;
         }
 
+        // Source: TerrainBridge.cs:TerrainBridge.ApplyCellsCore — topology changes have
+        // their own callback. A lever changes output, but does not invalidate the boundary.
         private void HandleReplicaElectricCellChanged(ChunkKey key, CellEdit edit)
         {
             if (m_transport?.IsClient != true) return;
@@ -1464,8 +1527,6 @@ namespace SuMultiplayer.Modules
                 cellValues[identity] = value;
             else
                 cellValues.Remove(identity);
-            foreach (ChunkKey affected in CollectCircuitNeighborhood(key, edit))
-                m_clientChunkBoundaries.Remove(affected);
         }
 
         private void ReconcileClientTopologyChunks()
@@ -2314,7 +2375,9 @@ namespace SuMultiplayer.Modules
                     m_transport.TerrainSequence < RequiredClientTerrainSequence(
                         candidate.RequiredTerrainSequence)) continue;
                 var chunk = new ChunkKey(candidate.ChunkX, candidate.ChunkZ);
-                if (!m_clientCircuitScope.Contains(chunk)) continue;
+                if (!m_clientCircuitScope.Contains(chunk) ||
+                    m_clientTopologyDirtyChunks.Contains(chunk) ||
+                    candidate.RequiredTopologyGeneration < CurrentClientTopologyGeneration(chunk)) continue;
                 if (!candidatesByStep.TryGetValue(candidate.HostStep,
                         out Dictionary<ChunkKey, SnapshotAssembly> candidates))
                 {
@@ -2443,7 +2506,7 @@ namespace SuMultiplayer.Modules
                 if (circuitEvent.Committed || circuitEvent.Cancelled)
                 {
                     barrierStep = Math.Min(barrierStep, Math.Max(currentStep,
-                        circuitEvent.HostCircuitStep));
+                        circuitEvent.HostCircuitStep - 1));
                     continue;
                 }
                 int targetBoundary = circuitEvent.HostCircuitStep - 2;
@@ -2457,9 +2520,13 @@ namespace SuMultiplayer.Modules
             int nextStep = currentStep == int.MaxValue ? int.MaxValue : currentStep + 1;
             if (!HasClientCircuitBoundaryWork(currentStep, nextStep)) return true;
             ProcessReadyClientCircuitBoundary(currentStep);
-            if (CircuitSimulationPauseSignal.ClientSimulationTargetStep <= currentStep)
+            if (nextStep > CircuitSimulationPauseSignal.ClientHostStep ||
+                !CircuitSimulationPauseSignal.ClientSimulationEnabled ||
+                CircuitSimulationPauseSignal.IsPaused || CircuitSimulationPauseSignal.ClientAccelerated)
                 return false;
-            return ProcessClientCircuitEventsForStep(nextStep);
+            if (!ProcessClientCircuitEventsForStep(nextStep)) return false;
+            RefreshClientStepBarrier();
+            return CircuitSimulationPauseSignal.ClientSimulationTargetStep > currentStep;
         }
 
         private bool ProcessClientCircuitEventsForStep(int targetStep)
@@ -2516,7 +2583,7 @@ namespace SuMultiplayer.Modules
         private bool IsClientEventReady(CircuitEvent circuitEvent, ChunkKey chunk)
         {
             if (circuitEvent.TimelineGeneration != m_timelineGeneration ||
-                m_transport.TerrainSequence < RequiredClientTerrainSequence(
+                m_transport.TerrainSequenceForChunk(chunk) < RequiredClientTerrainSequence(
                     circuitEvent.RequiredTerrainSequence)) return false;
             long localGeneration = CurrentClientTopologyGeneration(chunk);
             if (localGeneration < circuitEvent.RequiredTopologyGeneration)
@@ -2572,9 +2639,10 @@ namespace SuMultiplayer.Modules
             }
             if (!circuitEvent.Committed || circuitEvent.CommittedEventSequence == 0) return false;
             if (!IsClientEventReady(circuitEvent, chunk)) return false;
-            m_presentation.ApplyAuthoritativeCell(circuitEvent.X, circuitEvent.Y,
-                circuitEvent.Z, (int)circuitEvent.MountingFace,
-                unchecked((int)circuitEvent.Value));
+            if (!HasIndependentCircuitInput(circuitEvent.Operation))
+                m_presentation.ApplyAuthoritativeCell(circuitEvent.X, circuitEvent.Y,
+                    circuitEvent.Z, (int)circuitEvent.MountingFace,
+                    unchecked((int)circuitEvent.Value));
             if (!m_world.ApplyOperationEvent(circuitEvent, out string operationError))
             {
                 Warn("Circuit operation event failed at target step " +
@@ -2705,8 +2773,6 @@ namespace SuMultiplayer.Modules
                     m_clientCheckpointsProcessed++;
                 }
             }
-            if (step < int.MaxValue)
-                ProcessClientCircuitEventsForStep(nextStep);
             RefreshClientStepBarrier();
         }
 
@@ -2782,7 +2848,7 @@ namespace SuMultiplayer.Modules
             if (peer.OperationResults.TryGetValue(request.RequestId,
                     out CircuitOperationResult cachedResult))
             {
-                SendTo(clientId, MessageType.CircuitOperationResult, cachedResult.ToByteArray());
+                SendHostOperationResult(clientId, cachedResult);
                 return;
             }
             if (peer.PendingOperationIds.Contains(request.RequestId)) return;
@@ -2797,16 +2863,14 @@ namespace SuMultiplayer.Modules
                 return;
             }
             peer.OperationTimes.Enqueue(nowMs);
-            if (request.ClientCircuitStep < 0 || request.ClientCircuitStep >
-                (long)m_lastCircuitStep + MaximumCircuitRttMs / CircuitStepDurationMs)
+            if (request.ClientCircuitStep < 0)
             {
                 SendOperationResult(clientId, request.RequestId, false,
                     "circuit-client-step-out-of-range",
                     GetAuthoritativeCell(request.X, request.Y, request.Z), request);
                 return;
             }
-            int queuedHostOperations = m_hostOperationsByStep.Values.Sum(list => list.Count);
-            if (queuedHostOperations >= MaximumPendingOperations)
+            if (m_hostOperations.Count >= MaximumPendingOperations)
             {
                 SendOperationResult(clientId, request.RequestId, false,
                     "circuit-operation-rate-limit",
@@ -2847,281 +2911,187 @@ namespace SuMultiplayer.Modules
                     GetAuthoritativeCell(request.X, request.Y, request.Z), request);
                 return;
             }
-            int rttMs = request.RoundTripMs;
-            if ((rttMs < 0 && m_transport.LastRoundTripMs >= 0) ||
-                rttMs > MaximumCircuitRttMs)
+            m_hostOperations.Enqueue(new PendingHostOperation
             {
-                SendOperationResult(clientId, request.RequestId, false,
-                    "circuit-rtt-out-of-range",
-                    GetAuthoritativeCell(request.X, request.Y, request.Z), request);
-                return;
-            }
-            if (rttMs < 0) rttMs = 0;
-            long targetStepValue = (long)hostStep + Math.Max(2,
-                (rttMs + OperationStepMarginMs + CircuitStepDurationMs - 1) /
-                    CircuitStepDurationMs);
-            targetStepValue = Math.Max(targetStepValue, m_lastScheduledOperationStep);
-            if (targetStepValue > int.MaxValue)
+                ClientId = clientId,
+                Request = request,
+                UseRequest = useRequest
+            });
+            peer.PendingOperationIds.Add(request.RequestId);
+        }
+
+        private static int CompareOperationSequence(uint left, uint right) =>
+            unchecked((int)(left - right));
+
+        private static bool HasIndependentCircuitInput(CircuitOperation operation) =>
+            operation == CircuitOperation.Switch || operation == CircuitOperation.ButtonPress;
+
+        // Source: Mod/SuMultiplayer/Engine/ClientReplicaSubsystems.cs:SuSubsystemElectricity.Update
+        private bool ProcessHostOperationsBeforeStep(int nextStep)
+        {
+            if (m_transport?.IsHosting != true) return true;
+            if (CircuitSimulationPauseSignal.IsPaused || m_debugPauseRequested) return false;
+            if (!m_hostRoundOpen || nextStep <= m_hostRoundLastStep) return true;
+
+            if (m_hostInputCellsStep != nextStep)
             {
-                SendOperationResult(clientId, request.RequestId, false,
-                    "host-circuit-step-exhausted",
-                    GetAuthoritativeCell(request.X, request.Y, request.Z), request);
-                return;
+                m_hostStepInputCells.Clear();
+                m_hostInputCellsStep = nextStep;
             }
-            int targetStep = (int)targetStepValue;
-            request = request.Clone();
-            uint sequence = m_nextOperationSequence == uint.MaxValue
-                ? 1 : m_nextOperationSequence + 1;
-            var circuitEvent = new CircuitEvent
+            while (m_hostRoundRemaining > 0)
+            {
+                PendingHostOperation operation = m_hostOperations.Peek();
+                CircuitEventRequest request = operation.Request;
+                if (!operation.HostUseExecuted && !m_transport.IsHostCircuitAttached(operation.ClientId))
+                {
+                    RetireHostOperation(operation);
+                    continue;
+                }
+                // Preserve two edges on one cell by executing the second at a later native step.
+                var cell = (request.X, request.Y, request.Z);
+                if (m_hostStepInputCells.Contains(cell)) break;
+                var chunk = new ChunkKey(request.X >> 4, request.Z >> 4);
+                bool independentInput = HasIndependentCircuitInput(request.Operation);
+                if (!operation.HostUseExecuted)
+                {
+                    if (!m_world.TryGetCellValue(request.X, request.Y, request.Z, out int oldValue))
+                    {
+                        RejectHostOperation(operation, "authoritative-cell-unavailable-before-use", null);
+                        continue;
+                    }
+                    operation.HostStep = nextStep;
+                    operation.TerrainSequenceBeforeApply = m_transport.TerrainSequenceForChunk(chunk);
+                    if (!m_useAuthority.TryExecuteCircuitUse(operation.ClientId,
+                            in operation.UseRequest, out string reason))
+                    {
+                        RejectHostOperation(operation, reason,
+                            GetAuthoritativeCell(request.X, request.Y, request.Z));
+                        continue;
+                    }
+                    operation.HostUseExecuted = true;
+                    if (!m_world.TryGetCellValue(request.X, request.Y, request.Z, out int cellValue))
+                    {
+                        RejectHostOperation(operation, "authoritative-cell-unavailable-after-use", null);
+                        QueueChunkRecoveryForPeers(chunk.X, chunk.Z);
+                        continue;
+                    }
+                    operation.AuthoritativeCellValue = cellValue;
+                    operation.WaitingForTerrainPublication = !independentInput &&
+                        Game.Terrain.ReplaceLight(cellValue, 0) != Game.Terrain.ReplaceLight(oldValue, 0);
+                }
+                if (operation.WaitingForTerrainPublication &&
+                    m_transport.TerrainSequenceForChunk(chunk) <= operation.TerrainSequenceBeforeApply)
+                {
+                    return false;
+                }
+                m_hostStepInputCells.Add(cell);
+                CommitHostOperation(operation, chunk, independentInput);
+                RetireHostOperation(operation);
+            }
+            // Set the step only after all operations for this boundary can be solved.
+            if (m_hostRoundEvents.Count > 0)
+                m_hostRoundLastStep = m_hostRoundEvents[m_hostRoundEvents.Count - 1].HostCircuitStep;
+            return true;
+        }
+
+        private void RejectHostOperation(PendingHostOperation operation, string reason, int? cellValue)
+        {
+            SendOperationResult(operation.ClientId, operation.Request.RequestId, false,
+                reason, cellValue, operation.Request);
+            RetireHostOperation(operation);
+        }
+
+        private void RetireHostOperation(PendingHostOperation operation)
+        {
+            if (m_peerStates.TryGetValue(operation.ClientId, out PeerState peer))
+                peer.PendingOperationIds.Remove(operation.Request.RequestId);
+            m_hostOperations.Dequeue();
+            m_hostRoundRemaining--;
+        }
+
+        private void CommitHostOperation(PendingHostOperation operation, ChunkKey chunk, bool independentInput)
+        {
+            CircuitEventRequest request = operation.Request;
+            uint sequence = m_nextOperationSequence == uint.MaxValue ? 1u : m_nextOperationSequence + 1u;
+            uint committedSequence = m_nextCommittedEventSequence == uint.MaxValue
+                ? 1u : m_nextCommittedEventSequence + 1u;
+            int cellValue = operation.AuthoritativeCellValue;
+            uint output = request.Operation == CircuitOperation.Switch
+                ? (uint)(Game.SwitchBlock.GetLeverState(cellValue)
+                    ? Game.SwitchBlock.GetVoltageLevel(Game.Terrain.ExtractData(cellValue)) : 0)
+                : unchecked((uint)cellValue);
+            long topologyTerrainSequence = CurrentHostTopologyTerrainSequence(chunk);
+            m_hostRoundEvents.Add(new CircuitEvent
             {
                 OperationSequence = sequence,
-                HostCircuitStep = targetStep,
+                CommittedEventSequence = committedSequence,
+                HostCircuitStep = operation.HostStep,
                 X = request.X,
                 Y = request.Y,
                 Z = request.Z,
                 MountingFace = request.MountingFace,
                 Operation = request.Operation,
-                RequiredTerrainSequence = CurrentHostTopologyTerrainSequence(
-                    new ChunkKey(request.X >> 4, request.Z >> 4)),
-                RequiredTopologyGeneration = CurrentHostTopologyGeneration(
-                    new ChunkKey(request.X >> 4, request.Z >> 4)),
-                OriginClientId = unchecked((uint)clientId),
+                Value = output,
+                RequiredTerrainSequence = independentInput ? topologyTerrainSequence :
+                    Math.Max(topologyTerrainSequence, m_transport.TerrainSequenceForChunk(chunk)),
+                RequiredTopologyGeneration = CurrentHostTopologyGeneration(chunk),
+                OriginClientId = unchecked((uint)operation.ClientId),
                 RequestId = request.RequestId,
                 TimelineGeneration = m_timelineGeneration,
-                Committed = false,
-                CommittedEventSequence = 0
-            };
+                Committed = true
+            });
             m_nextOperationSequence = sequence;
-            var operation = new PendingHostOperation
-            {
-                ClientId = clientId,
-                HostStep = targetStep,
-                TerrainSequenceBeforeApply = m_transport.TerrainSequenceForChunk(
-                    new ChunkKey(request.X >> 4, request.Z >> 4)),
-                Request = request,
-                UseRequest = useRequest,
-                Event = circuitEvent
-            };
-            if (!m_hostOperationsByStep.TryGetValue(targetStep,
-                    out List<PendingHostOperation> operations))
-            {
-                operations = new List<PendingHostOperation>();
-                m_hostOperationsByStep.Add(targetStep, operations);
-            }
-            operations.Add(operation);
-            peer.PendingOperationIds.Add(request.RequestId);
-            if (!BroadcastScheduledOperation(operation))
-            {
-                operations.Remove(operation);
-                if (operations.Count == 0) m_hostOperationsByStep.Remove(targetStep);
-                peer.PendingOperationIds.Remove(request.RequestId);
-                operation.Event.Cancelled = true;
-                if (BroadcastCircuitEvent(operation.ClientId, operation.Event))
-                    GetPeerState(operation.ClientId).PendingOperationIds.Remove(
-                        operation.Request.RequestId);
-                SendOperationResult(clientId, request.RequestId, false,
-                    "circuit-operation-schedule-broadcast-failed",
-                    GetAuthoritativeCell(request.X, request.Y, request.Z), request);
-            }
-            else
-            {
-                m_lastScheduledOperationStep = targetStep;
-                SendOperationResult(clientId, request.RequestId, true,
-                    "circuit-operation-scheduled",
-                    GetAuthoritativeCell(request.X, request.Y, request.Z), request,
-                    sequence, targetStep);
-            }
+            m_nextCommittedEventSequence = committedSequence;
+            m_hostChunkCommittedEventSequences[chunk] = committedSequence;
+            SendOperationResult(operation.ClientId, request.RequestId, true, string.Empty,
+                independentInput ? null : cellValue, request, sequence, operation.HostStep);
         }
 
-        private bool BroadcastScheduledOperation(PendingHostOperation operation)
+        // Source: CircuitSyncModule.cs:CircuitSyncModule.HostSyncCore
+        private void StageHostRoundEvents(int step)
         {
-            return BroadcastCircuitEvent(operation.ClientId, operation.Event);
-        }
-
-        private bool BroadcastCommittedOperation(PendingHostOperation operation)
-        {
-            return BroadcastCircuitEvent(operation.ClientId, operation.Event);
-        }
-
-        // Source: Mod/SuMultiplayer/Engine/ClientReplicaSubsystems.cs:SuSubsystemElectricity.Update
-        // Source: Survivalcraft/Game/SubsystemElectricity.cs:SubsystemElectricity.Update
-        private static int CompareOperationSequence(uint left, uint right) =>
-            unchecked((int)(left - right));
-
-        // Source: Mod/SuMultiplayer/Engine/ClientReplicaSubsystems.cs:SuSubsystemElectricity.Update
-        private bool ProcessHostOperationsBeforeStep(int nextStep)
-        {
-            if (m_transport?.IsHosting != true || CircuitSimulationPauseSignal.IsPaused)
-                return m_transport?.IsHosting != true;
-            while (m_hostOperationsByStep.Count > 0)
+            int consumed = 0;
+            foreach (CircuitEvent circuitEvent in m_hostRoundEvents)
             {
-                KeyValuePair<int, List<PendingHostOperation>> pending =
-                    m_hostOperationsByStep.First();
-                if (pending.Key > nextStep) break;
-                if (pending.Key < nextStep)
+                if (circuitEvent.HostCircuitStep > step) break;
+                var chunk = new ChunkKey(circuitEvent.X >> 4, circuitEvent.Z >> 4);
+                for (int i = 0; i < m_activePeerSyncScopeCount; i++)
                 {
-                    m_hostOperationsByStep.Remove(pending.Key);
-                    foreach (PendingHostOperation missed in pending.Value)
+                    PeerSyncScope scope = m_peerSyncScopes[i];
+                    if (scope.ClientId != unchecked((int)circuitEvent.OriginClientId) &&
+                        !scope.Chunks.Contains(chunk)) continue;
+                    if (!m_transport.IsHostCircuitAttached(scope.ClientId)) continue;
+                    if (scope.Peer.UnsentOperations.Count >= MaximumPendingOperations)
                     {
-                        BroadcastCancelledOperation(missed);
-                        GetPeerState(missed.ClientId).PendingOperationIds.Remove(
-                            missed.Request.RequestId);
-                        SendOperationResult(missed.ClientId,
-                            missed.Request.RequestId, false,
-                            "host-circuit-step-missed",
-                            GetAuthoritativeCell(missed.Request.X,
-                                missed.Request.Y, missed.Request.Z), missed.Request);
-                    }
-                    continue;
-                }
-                pending.Value.Sort((left, right) =>
-                    CompareOperationSequence(left.Event.OperationSequence,
-                        right.Event.OperationSequence));
-                for (int i = 0; i < pending.Value.Count;)
-                {
-                    PendingHostOperation operation = pending.Value[i];
-                    if (!m_transport.IsHostCircuitAttached(operation.ClientId))
-                    {
-                        GetPeerState(operation.ClientId).PendingOperationIds.Remove(
-                            operation.Request.RequestId);
-                        pending.Value.RemoveAt(i);
+                        // The circuit channel reconnects and receives an authoritative baseline.
+                        // Never advance this peer's clock beyond an event that could not be queued.
+                        Warn("Circuit operation backlog exceeded the limit for client " + scope.ClientId + ".");
+                        m_transport.DisconnectHostCircuitPeer(scope.ClientId, "circuit-operation-backlog");
                         continue;
                     }
-                    if (!operation.HostUseExecuted)
-                    {
-                        operation.TerrainSequenceBeforeApply =
-                            m_transport.TerrainSequenceForChunk(new ChunkKey(
-                                operation.Request.X >> 4, operation.Request.Z >> 4));
-                        if (!m_useAuthority.TryExecuteCircuitUse(operation.ClientId,
-                                in operation.UseRequest, out string reason))
-                        {
-                            BroadcastCancelledOperation(operation);
-                            GetPeerState(operation.ClientId).PendingOperationIds.Remove(
-                                operation.Request.RequestId);
-                            SendOperationResult(operation.ClientId, operation.Request.RequestId,
-                                false, reason, GetAuthoritativeCell(operation.Request.X,
-                                    operation.Request.Y, operation.Request.Z), operation.Request);
-                            pending.Value.RemoveAt(i);
-                            continue;
-                        }
-                        operation.HostUseExecuted = true;
-                        if (!m_world.TryGetCellValue(operation.Request.X, operation.Request.Y,
-                                operation.Request.Z, out int cellValue))
-                        {
-                            Warn("Host accepted a circuit operation but could not read its authoritative cell.");
-                            BroadcastCancelledOperation(operation);
-                            SendOperationResult(operation.ClientId, operation.Request.RequestId,
-                                false, "authoritative-cell-unavailable-after-use", null,
-                                operation.Request);
-                            GetPeerState(operation.ClientId).PendingOperationIds.Remove(
-                                operation.Request.RequestId);
-                            QueueChunkRecoveryForPeers(operation.Request.X >> 4,
-                                operation.Request.Z >> 4);
-                            pending.Value.RemoveAt(i);
-                            continue;
-                        }
-                        operation.AuthoritativeCellValue = cellValue;
-                        operation.WaitingForTerrainPublication = cellValue !=
-                            unchecked((int)operation.Request.Value);
-                        if (operation.WaitingForTerrainPublication)
-                            m_committedOperationsWaitingTerrain.Add(operation);
-                    }
-                    if (operation.WaitingForTerrainPublication)
-                    {
-                        ChunkKey chunk = new ChunkKey(operation.Request.X >> 4,
-                            operation.Request.Z >> 4);
-                        if (m_transport.TerrainSequenceForChunk(chunk) <=
-                            operation.TerrainSequenceBeforeApply)
-                            return false;
-                    }
-                    if (!CommitHostOperation(operation)) return false;
-                    m_committedOperationsWaitingTerrain.Remove(operation);
-                    pending.Value.RemoveAt(i);
+                    scope.Peer.UnsentOperations.Add(circuitEvent);
                 }
-                m_hostOperationsByStep.Remove(pending.Key);
+                consumed++;
             }
-            return true;
+            if (consumed != 0) m_hostRoundEvents.RemoveRange(0, consumed);
         }
 
-        private bool CommitHostOperation(PendingHostOperation operation)
+        private bool SendHostRoundEvents(int clientId, PeerState peer,
+            CircuitSyncBatch batch, int step)
         {
-            ChunkKey chunk = new ChunkKey(operation.Request.X >> 4,
-                operation.Request.Z >> 4);
-            uint committedEventSequence = m_nextCommittedEventSequence == uint.MaxValue
-                ? 1u : m_nextCommittedEventSequence + 1u;
-            operation.Event.Value = unchecked((uint)operation.AuthoritativeCellValue);
-            operation.Event.Committed = true;
-            operation.Event.CommittedEventSequence = committedEventSequence;
-            operation.Event.HostCircuitStep = operation.HostStep;
-            operation.Event.RequiredTerrainSequence =
-                CurrentHostTopologyTerrainSequence(chunk);
-            operation.Event.RequiredTopologyGeneration =
-                CurrentHostTopologyGeneration(chunk);
-            if (!BroadcastCommittedOperation(operation))
-            {
-                QueueChunkRecoveryForPeers(chunk.X, chunk.Z);
-                return false;
-            }
-            m_nextCommittedEventSequence = committedEventSequence;
-            m_hostChunkCommittedEventSequences[chunk] = committedEventSequence;
-            SendOperationResult(operation.ClientId, operation.Request.RequestId,
-                true, string.Empty, operation.AuthoritativeCellValue,
-                operation.Request, operation.Event.OperationSequence, operation.HostStep);
-            GetPeerState(operation.ClientId).PendingOperationIds.Remove(
-                operation.Request.RequestId);
-            return true;
-        }
-
-        private bool BroadcastCircuitEvent(int originClientId, CircuitEvent circuitEvent)
-        {
-            CircuitEvent published = circuitEvent.Clone();
-            var eventBatch = new CircuitEventBatch
+            if (peer.UnsentOperations.Count == 0) return true;
+            var operations = new CircuitEventBatch
             {
                 Epoch = m_epoch,
-                HostCircuitStep = published.HostCircuitStep,
-                FirstOperationSequence = published.OperationSequence
+                HostCircuitStep = step,
+                FirstOperationSequence = peer.UnsentOperations[0].OperationSequence
             };
-            eventBatch.Events.Add(published);
-            var batch = new CircuitSyncBatch
-            {
-                Epoch = m_epoch,
-                HostCircuitStep = published.HostCircuitStep
-            };
-            AddPayload(batch, MessageType.CircuitEventBatch, eventBatch);
-            m_transport.CopyAttachedPeerIds(m_peers);
-            ChunkKey eventChunk = new ChunkKey(published.X >> 4,
-                published.Z >> 4);
-            bool originSent = false;
-            foreach (int peerId in m_peers)
-            {
-                if (peerId <= 0 || !m_transport.IsHostCircuitAttached(peerId)) continue;
-                m_chunks.Clear();
-                int scopeCount = m_transport.CopyClientChunkScope(peerId, m_chunks);
-                if (scopeCount < 0 || scopeCount > MaximumInterestChunks ||
-                    (peerId != originClientId && !m_chunks.Contains(eventChunk))) continue;
-                if (!SendBatch(peerId, batch))
-                {
-                    m_hostSendFailures++;
-                    if (m_peerStates.TryGetValue(peerId, out PeerState failedPeer) &&
-                        failedPeer.CircuitScope.Contains(eventChunk))
-                        MarkNeedsFullSnapshot(failedPeer, eventChunk,
-                            SnapshotReason.SendFailureRecovery);
-                    continue;
-                }
-                if (peerId == originClientId) originSent = true;
-            }
-            circuitEvent.OperationSequence = published.OperationSequence;
-            return originSent;
-        }
-
-        private void BroadcastCancelledOperation(PendingHostOperation operation)
-        {
-            operation.Event.Cancelled = true;
-            if (!BroadcastCircuitEvent(operation.ClientId, operation.Event))
-                QueueChunkRecoveryForPeers(operation.Request.X >> 4,
-                    operation.Request.Z >> 4);
-            GetPeerState(operation.ClientId).PendingOperationIds.Remove(
-                operation.Request.RequestId);
+            operations.Events.Add(peer.UnsentOperations);
+            AddPayload(batch, MessageType.CircuitEventBatch, operations);
+            if (!SendBatch(clientId, batch)) return false;
+            peer.UnsentOperations.Clear();
+            batch.Payloads.Clear();
+            return true;
         }
 
         private void QueueChunkRecoveryForPeers(int chunkX, int chunkZ)
@@ -3169,20 +3139,19 @@ namespace SuMultiplayer.Modules
                 while (peer.OperationResultOrder.Count > 256)
                     peer.OperationResults.Remove(peer.OperationResultOrder.Dequeue());
             }
-            if (m_transport?.IsHosting == true)
-            {
-                var batch = new CircuitSyncBatch
-                {
-                    Epoch = m_epoch,
-                    HostCircuitStep = result.HostCircuitStep
-                };
-                AddPayload(batch, MessageType.CircuitOperationResult, result);
-                if (!SendBatch(clientId, batch))
-                    Warn("Circuit operation result could not be queued for client " +
-                        clientId + " request " + requestId + ".");
-            }
-            else
-                SendTo(clientId, MessageType.CircuitOperationResult, result.ToByteArray());
+            if (!accepted && request != null)
+                Warn("Circuit operation " + requestId + " from client " + clientId + " at (" +
+                    request.X + "," + request.Y + "," + request.Z + ") rejected: " + result.Reason);
+            SendHostOperationResult(clientId, result);
+        }
+
+        private void SendHostOperationResult(int clientId, CircuitOperationResult result)
+        {
+            var batch = new CircuitSyncBatch { Epoch = m_epoch, HostCircuitStep = result.HostCircuitStep };
+            AddPayload(batch, MessageType.CircuitOperationResult, result);
+            if (!SendBatch(clientId, batch))
+                Warn("Circuit operation result could not be queued for client " +
+                    clientId + " request " + result.RequestId + ".");
         }
 
         private int? GetAuthoritativeCell(int x, int y, int z) =>
@@ -3456,27 +3425,18 @@ namespace SuMultiplayer.Modules
             {
                 bool hasCircuit = nextScope.Contains(key);
                 bool wasCircuit = m_hostCircuitChunks.Contains(key);
-                if (hasCircuit == wasCircuit)
-                {
-                    if (hasCircuit) m_hostCircuitChunks.Add(key);
-                    else m_hostCircuitChunks.Remove(key);
-                }
-                else
+                if (hasCircuit != wasCircuit)
                     m_hostTopologyChangedChunks.Add(key);
                 if (!m_hostTopologyGenerations.ContainsKey(key))
                     m_hostTopologyGenerations[key] = hasCircuit ? 1L : 0L;
-                if (hasCircuit)
-                    m_hostTopologyTerrainSequences[key] = Math.Max(
-                        m_hostTopologyTerrainSequences.TryGetValue(key, out long oldSequence)
-                            ? oldSequence : 0L,
-                        m_transport.TerrainSequenceForChunk(key));
-                else if (!m_hostTopologyTerrainSequences.ContainsKey(key))
-                    m_hostTopologyTerrainSequences[key] = 0L;
-                if (hasCircuit && m_captureStatesByChunk.TryGetValue(key,
-                        out List<CircuitElementState> baseline))
+                // Source: CircuitSyncModule.cs:ProcessHostTopologyCellChange — only the
+                // topology owner advances this shared watermark after initial discovery.
+                if (!m_hostTopologyTerrainSequences.ContainsKey(key))
+                    m_hostTopologyTerrainSequences[key] = hasCircuit
+                        ? m_transport.TerrainSequenceForChunk(key) : 0L;
+                if (hasCircuit && !m_hostCircuitCellValues.ContainsKey(key) &&
+                    m_captureStatesByChunk.TryGetValue(key, out List<CircuitElementState> baseline))
                     CaptureCircuitCellValues(key, baseline, m_hostCircuitCellValues);
-                if (hasCircuit != wasCircuit)
-                    m_hostTopologyChangedChunks.Add(key);
             }
             peer.PendingScopeTerrainChunks.Clear();
             peer.PendingScopeTerrainChunks.UnionWith(terrainScope);
@@ -3534,6 +3494,14 @@ namespace SuMultiplayer.Modules
             if (m_pendingScopeSnapshot == null) return;
             CircuitScopeSnapshot snapshot = m_pendingScopeSnapshot;
             m_pendingScopeSnapshot = null;
+            long nowMs = (long)(m_clock() * 1000.0);
+            if (nowMs - m_pendingScopeSnapshotReceivedMs >= SnapshotTimeoutMs)
+            {
+                m_clientScopeRequested = false;
+                m_nextClientScopeRefreshMs = 0;
+                Warn("Circuit scope response expired before the terrain or local elements were ready; requesting a current scope.");
+                return;
+            }
             if (!ClientScopeTerrainReady(snapshot, out string terrainWaitReason))
             {
                 m_pendingScopeSnapshot = snapshot;
@@ -3547,13 +3515,6 @@ namespace SuMultiplayer.Modules
                 if (topology.Key == null) continue;
                 var key = new ChunkKey(topology.Key.X, topology.Key.Z);
                 nextTerrainScope.Add(key);
-                long translatedTopologySequence = RequiredClientTerrainSequence(topology.TerrainSequence);
-                if (!m_clientTopologyDirtyChunks.Contains(key) ||
-                    CurrentClientTopologyTerrainSequence(key) <= translatedTopologySequence)
-                {
-                    m_clientTopologyGenerations[key] = topology.Generation;
-                    m_clientTopologyTerrainSequences[key] = translatedTopologySequence;
-                }
                 if (topology.HasCircuit) nextCircuitScope.Add(key);
             }
             m_chunks.Clear();
@@ -3572,29 +3533,28 @@ namespace SuMultiplayer.Modules
                 m_pendingScopeSnapshot = snapshot;
                 return;
             }
-            if (snapshot.RequestId != 0)
+            foreach (CircuitChunkTopology topology in snapshot.Topologies)
             {
-                // ---- 只在**电路范围真的变了**时才做全局同 step 重快照 ----
-                //
-                // 旧实现用 `nextCircuitScope.Count > 0`（"总共有电路块"），于是：
-                // 客户端移动 → 每加载一个地形块就触发一次全量 scope 请求 →
-                // 这个条件必然成立 → 整个电路范围重做同 step 快照 → 电路模拟暂停。
-                // 哪怕新加载的块**完全没有电路元件**也会暂停（用户实测现象）。
-                //
-                // 正确判据是"电路块集合本身变没变"：
-                //   · 没变 ⇒ 旧块的 m_clientInitializedScope / m_clientChunkBoundaries 全部有效，
-                //     UpdateClientSimulationClock 的逐块检查天然通过 → **立刻可以继续模拟**，
-                //     不需要等任何快照；
-                //   · 变了（新块有电路 / 有块失去电路）⇒ 仍走原来的全局屏障（导线可跨块，
-                //     各块 step 不一致会让客户端求解结果与主机不同，这个对齐不能省）。
-                bool circuitScopeChanged = !nextCircuitScope.SetEquals(m_clientCircuitScope);
+                if (topology.Key == null) continue;
+                var key = new ChunkKey(topology.Key.X, topology.Key.Z);
+                long terrainSequence = RequiredClientTerrainSequence(topology.TerrainSequence);
+                if (m_clientTopologyDirtyChunks.Contains(key) &&
+                    CurrentClientTopologyTerrainSequence(key) > terrainSequence) continue;
+                m_clientTopologyGenerations[key] = topology.Generation;
+                m_clientTopologyTerrainSequences[key] = terrainSequence;
+            }
+            // A change in the circuit chunk set requires a common host step. A repeat
+            // response for the same set must not cancel an ongoing recovery.
+            bool circuitScopeChanged = !nextCircuitScope.SetEquals(m_clientCircuitScope);
+            if (circuitScopeChanged)
+            {
                 m_clientFullScopeSnapshotApplied.Clear();
-                m_clientFullScopeSnapshotPending =
-                    circuitScopeChanged && nextCircuitScope.Count > 0;
+                m_clientPrevalidatedSnapshots.Clear();
+                m_clientFullScopeSnapshotPending = nextCircuitScope.Count > 0;
                 m_clientFullScopeSnapshotStep = int.MinValue;
                 m_clientFullScopeSnapshotMinimumStep = 0;
                 m_clientElementRecovery.Clear();
-                m_nextClientFullScopeCheckMs = (long)(m_clock() * 1000.0);
+                m_nextClientFullScopeCheckMs = nowMs;
             }
             foreach (ChunkKey key in nextTerrainScope)
                 if (m_captureStatesByChunk.TryGetValue(key,
@@ -3628,13 +3588,13 @@ namespace SuMultiplayer.Modules
             m_clientDesiredCircuitScope.Clear();
             m_clientDesiredCircuitScope.UnionWith(nextCircuitScope);
             m_clientInitializedScope.IntersectWith(nextCircuitScope);
+            m_clientTopologyAwaitingSnapshot.IntersectWith(nextCircuitScope);
             if (snapshot.RequestId != 0)
                 foreach (ChunkKey old in m_clientLatestFullSnapshots.Keys.Where(key =>
                              !nextCircuitScope.Contains(key)).ToArray())
                     m_clientLatestFullSnapshots.Remove(old);
-            if (snapshot.RequestId != 0 && nextCircuitScope.Count > 0)
+            if (circuitScopeChanged && m_clientFullScopeSnapshotPending)
             {
-                long nowMs = (long)(m_clock() * 1000.0);
                 if (TryGetClientFullScopeSnapshotSet(out _, out _, out _))
                     m_nextClientFullScopeSnapshotRequestMs = nowMs +
                         ClientFullScopeSnapshotRefreshMs;
@@ -3913,7 +3873,8 @@ namespace SuMultiplayer.Modules
             assembly.RequiredTopologyGeneration = part.RequiredTopologyGeneration;
             assembly.Parts[(int)part.PartIndex] = part;
             m_clientSnapshotPartsReceived++;
-            m_clientChunkBoundaries.Remove(new ChunkKey(part.ChunkX, part.ChunkZ));
+            // The step barrier already stops at this snapshot. Keep the last applied
+            // boundary until a new snapshot is verified or terrain topology changes.
             RefreshClientStepBarrier();
         }
 
@@ -4493,7 +4454,10 @@ namespace SuMultiplayer.Modules
                 (snapshot.RequestId != 0 && snapshot.RequestId != m_clientPendingScopeRequestId)) return;
             if (snapshot.RequestId != 0)
                 m_clientScopeResponseReceived = true;
+            else if (m_pendingScopeSnapshot?.RequestId > 0)
+                m_clientScopeResponseReceived = false; // A newer push superseded the reply; allow a fresh query.
             m_pendingScopeSnapshot = snapshot.Clone();
+            m_pendingScopeSnapshotReceivedMs = (long)(m_clock() * 1000.0);
             ProcessPendingScopeSnapshot();
         }
 
@@ -4832,12 +4796,12 @@ namespace SuMultiplayer.Modules
                     : "scope-not-ready:" +
                         (m_clientScopeAcknowledged || reuseActive ? m_chunks.Count.ToString() :
                             "unacknowledged");
-            if (scopeReady && m_clientTopologyAwaitingSnapshot.Any(
-                    key => m_clientCircuitScope.Contains(key) &&
-                        !HasPendingFullSnapshotForChunk(key)))
+            if (scopeReady && m_clientTopologyAwaitingSnapshot.Any(m_clientCircuitScope.Contains))
             {
+                // A topology repair may arrive at a future step while the local solver is
+                // stopped. Use the existing common-step scope recovery to restart it.
+                BeginClientFullScopeSnapshotRefresh(nowMs, "topology-changed");
                 scopeReady = false;
-                m_clientSimulationBlockReason = "topology-awaiting-full-snapshot";
             }
             if (scopeReady)
             {
@@ -4848,8 +4812,8 @@ namespace SuMultiplayer.Modules
                     bool hasPendingSnapshot = HasPendingSnapshotForChunk(chunk);
                     if (!initialized && !hasPendingFullSnapshot)
                     {
+                        BeginClientFullScopeSnapshotRefresh(nowMs, "missing-boundary:" + chunk);
                         scopeReady = false;
-                        m_clientSimulationBlockReason = "waiting-full-snapshot:" + chunk;
                         break;
                     }
                     if (initialized && !hasPendingSnapshot &&
@@ -4858,8 +4822,8 @@ namespace SuMultiplayer.Modules
                          boundary.TimelineGeneration != m_timelineGeneration ||
                          boundary.TopologyGeneration != CurrentClientTopologyGeneration(chunk)))
                     {
+                        BeginClientFullScopeSnapshotRefresh(nowMs, "invalid-applied-boundary:" + chunk);
                         scopeReady = false;
-                        m_clientSimulationBlockReason = "invalid-applied-boundary:" + chunk;
                         break;
                     }
                 }
@@ -5014,8 +4978,8 @@ namespace SuMultiplayer.Modules
             ResetClientSyncMetadata();
             CircuitSimulationPauseSignal.ClearClientClock();
             m_peerStates.Clear();
-            m_hostOperationsByStep.Clear();
-            m_committedOperationsWaitingTerrain.Clear();
+            ClearHostOperationRound();
+            m_nextSyncMs = 0;
             m_lateCommittedOperations.Clear();
             m_pendingOperations.Clear();
             m_snapshotAssemblies.Clear();

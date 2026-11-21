@@ -13,7 +13,8 @@ namespace SuMultiplayer.Net
     {
         // Source: SuMultiplayer/ModInfo.xml:ModInfo.Version
         public const string ModVersion = "2.3.0";
-        public const uint ProtocolVersion = 1;
+        // Source: CircuitSyncModule.cs:CommitHostOperation — Switch Value is an output level.
+        public const uint ProtocolVersion = 2;
 
         private static readonly FileDescriptor[] s_descriptors =
         {

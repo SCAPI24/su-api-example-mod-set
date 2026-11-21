@@ -1747,6 +1747,7 @@ namespace SuMultiplayer.Engine
         private readonly Action m_clientCircuitSimulation;
         private int m_clientCircuitTargetStep;
         private bool m_clientCircuitSimulationFaulted;
+        private global::SuAPI.ModFieldRef<SubsystemElectricity, float> m_remainingCircuitTime;
 
         public SuSubsystemElectricity()
         {
@@ -1773,7 +1774,7 @@ namespace SuMultiplayer.Engine
                     CircuitSimulationPauseSignal.IsPaused ||
                     CircuitSimulationPauseSignal.ClientAccelerated)
                     return;
-                int targetStep = CircuitSimulationPauseSignal.ClientSimulationTargetStep;
+                int targetStep = CircuitSimulationPauseSignal.ClientHostStep;
                 if (CircuitStep >= targetStep) return;
                 if (!(SubsystemTerrain is SuSubsystemTerrain terrain))
                     throw new InvalidOperationException(
@@ -1791,9 +1792,17 @@ namespace SuMultiplayer.Engine
                 }
                 return;
             }
-            if (CircuitSimulationPauseSignal.IsPaused) return;
-            if (!CircuitSimulationPauseSignal.BeforeHostCircuitStep(CircuitStep + 1)) return;
-            if (!ReplicaGates.Allow(SubsystemTerrain, ReplicaMutationSource.Electricity)) return;
+            if (CircuitSimulationPauseSignal.IsPaused ||
+                !ReplicaGates.Allow(SubsystemTerrain, ReplicaMutationSource.Electricity)) return;
+            if (CircuitSimulationPauseSignal.HostStepBoundaryEnabled)
+            {
+                // Source: SubsystemElectricity.cs:SubsystemElectricity.Update
+                // An input is assigned only to an actual first solver step, not a sub-step frame.
+                m_remainingCircuitTime ??= Game.Program.ModManager.ModParentField
+                    .BindFieldRef<SubsystemElectricity, float>("m_remainingSimulationTime");
+                if (m_remainingCircuitTime(this) + dt >= CircuitStepDuration &&
+                    !CircuitSimulationPauseSignal.BeforeHostCircuitStep(CircuitStep + 1)) return;
+            }
             base.Update(dt);
         }
 

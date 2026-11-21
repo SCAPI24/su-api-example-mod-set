@@ -359,6 +359,9 @@ namespace SuMultiplayer.Modules
                     return false;
                 }
             }
+            // Source: TerrainNet.cs:TcpTerrainServer.DisconnectCircuitClient
+            public void DisconnectHostCircuitPeer(int clientId, string reason) =>
+                m_owner.m_server?.DisconnectCircuitClient(clientId, reason);
             public bool IsHostCircuitAttached(int clientId) =>
                 m_owner.m_server != null && m_owner.m_server.IsCircuitAttached(clientId);
             public int CopyClientChunkScope(int clientId, List<ChunkKey> target) =>

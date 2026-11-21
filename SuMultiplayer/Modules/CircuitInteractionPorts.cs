@@ -72,6 +72,7 @@ namespace SuMultiplayer.Modules
         bool TrySendHost(MessageType type, byte[] payload);
         bool TryCreateHostTicket(int clientId, out byte[] ticket);
         bool IsHostCircuitAttached(int clientId);
+        void DisconnectHostCircuitPeer(int clientId, string reason);
         int CopyClientChunkScope(int clientId, List<ChunkKey> target);
         void CopyClientChunkScope(int clientId, HashSet<ChunkKey> target);
         void CopyAttachedPeerIds(List<int> target);
