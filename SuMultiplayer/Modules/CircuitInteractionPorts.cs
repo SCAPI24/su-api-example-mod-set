@@ -65,6 +65,11 @@ namespace SuMultiplayer.Modules
         string SessionId { get; }
         long TerrainSequence { get; }
         long TerrainSequenceForChunk(ChunkKey key);
+        // Source: TerrainSync.cs:TerrainSyncClient.AppliedCircuitTerrainSequenceForChunk
+        // -1 means this chunk has no verified complete terrain baseline.
+        long AppliedCircuitTerrainSequenceForChunk(ChunkKey key);
+        bool RequestCircuitTerrainDependency(ChunkKey key);
+        void SetCircuitTerrainDependencies(ISet<ChunkKey> keep);
         event Action<int, ReceivedFrame> FrameArrived;
         event Action<int> PeerAttached;
         event Action<int, string> PeerDetached;

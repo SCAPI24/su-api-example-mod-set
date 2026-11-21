@@ -181,6 +181,12 @@ namespace SuMultiplayer.Modules
         private string m_sessionId = string.Empty;
         /// <summary>客户端：本端上次应用到的改动序号（跨连接保存；重连 Hello 发回主机）。</summary>
         private long m_clientChangeSequence;
+        // Source: TerrainBridge.cs:TerrainBridge.TryRequestSingleChunkLoad
+        private readonly HashSet<ChunkKey> m_circuitTerrainDependencies = new HashSet<ChunkKey>();
+        private readonly HashSet<ChunkKey> m_circuitTerrainDependencyLoads = new HashSet<ChunkKey>();
+        private readonly Dictionary<ChunkKey, long> m_circuitTerrainDependencyRetryMs =
+            new Dictionary<ChunkKey, long>();
+        private readonly HashSet<ChunkKey> m_circuitTerrainDependencyAccepted = new HashSet<ChunkKey>();
         /// <summary>客户端：最近一次 HelloAck 收到的主机会话标识（重连判定的第二半）。</summary>
         private string m_lastHostSessionId = string.Empty;
         /// <summary>上一次应用给 ModLog 的"主机要求落盘"状态（只在变化时重新 Configure）。</summary>
@@ -322,6 +328,14 @@ namespace SuMultiplayer.Modules
                 m_owner.m_host != null
                     ? m_owner.m_host.CurrentChangeSequenceForChunk(key)
                     : m_owner.m_clientSync?.LastAppliedChangeSequenceForChunk(key) ?? 0L;
+            public long AppliedCircuitTerrainSequenceForChunk(ChunkKey key) =>
+                m_owner.m_host != null
+                    ? m_owner.m_host.CurrentChangeSequenceForChunk(key)
+                    : m_owner.m_clientSync?.AppliedCircuitTerrainSequenceForChunk(key) ?? -1L;
+            public bool RequestCircuitTerrainDependency(ChunkKey key) =>
+                m_owner.RequestCircuitTerrainDependency(key);
+            public void SetCircuitTerrainDependencies(ISet<ChunkKey> keep) =>
+                m_owner.SetCircuitTerrainDependencies(keep);
             public event Action<int, ReceivedFrame> FrameArrived
             {
                 add { m_owner.m_circuitFrameArrived += value; }
@@ -1448,6 +1462,7 @@ namespace SuMultiplayer.Modules
                     ? Math.Max(m_clientChangeSequence, storedBaseSequence)
                     : 0L;
                 m_clientSync.SetAppliedChangeSequence(lastApplied);
+                if (alreadyHasWorld) m_clientSync.SetCircuitWorldSnapshotBaseline(storedBaseSequence);
                 // 本机资料：**只有本机刚完成"角色创建"时才申报**（旧联机 mod 的
                 // m_activeJoinHasPlayerProfile 口径）。主机分配过/缓存的资料不进 Hello ——
                 // 否则新世界会被当成"已有角色"直接建记录，不弹创建界面。
@@ -1916,6 +1931,47 @@ namespace SuMultiplayer.Modules
         {
             if (m_clientSync == null) return false;
             return m_clientSync.RequestChunkReverification(new ChunkKey(chunkX, chunkZ));
+        }
+
+        // Source: TerrainSync.cs:TerrainSyncClient.RequestChunkReverification
+        // Loading acquires a temporary single-chunk engine position. Only an applied
+        // full authoritative resync establishes the dependency's new coverage proof.
+        private bool RequestCircuitTerrainDependency(ChunkKey key)
+        {
+            if (m_clientSync == null) return false;
+            m_circuitTerrainDependencies.Add(key);
+            long nowMs = Environment.TickCount64;
+            if (m_circuitTerrainDependencyRetryMs.TryGetValue(key, out long due) && nowMs < due)
+                return m_circuitTerrainDependencyAccepted.Contains(key);
+            m_circuitTerrainDependencyRetryMs[key] = nowMs + 2000L;
+            if (m_clientSync.RequestChunkReverification(key))
+            {
+                m_circuitTerrainDependencyAccepted.Add(key);
+                return true;
+            }
+            if (m_bridge.TryRequestSingleChunkLoad(key, out string reason))
+            {
+                m_circuitTerrainDependencyLoads.Add(key);
+                m_circuitTerrainDependencyAccepted.Add(key);
+                return true;
+            }
+            m_circuitTerrainDependencyAccepted.Remove(key);
+            LogRateLimited("circuit-terrain-dependency-load",
+                "Cannot load circuit terrain dependency " + key + ": " + reason, 10000);
+            return false;
+        }
+
+        // Source: CircuitInteractionPorts.cs:ICircuitTransportPort.SetCircuitTerrainDependencies
+        private void SetCircuitTerrainDependencies(ISet<ChunkKey> keep)
+        {
+            foreach (ChunkKey key in new List<ChunkKey>(m_circuitTerrainDependencies))
+            {
+                if (keep != null && keep.Contains(key)) continue;
+                if (m_circuitTerrainDependencyLoads.Remove(key)) m_bridge.ReleaseSingleChunkLoad(key);
+                m_circuitTerrainDependencyRetryMs.Remove(key);
+                m_circuitTerrainDependencyAccepted.Remove(key);
+                m_circuitTerrainDependencies.Remove(key);
+            }
         }
 
         public void Tick(in ModuleTickContext tick)
@@ -2683,7 +2739,10 @@ namespace SuMultiplayer.Modules
             // 放在 Pump 之前置位、由同一个 Tick 末尾的 TryRequeueResidentChunks 在新常驻集合上执行。
             m_footprintVerifiedResidency.Clear();
             if (m_clientSync != null)
+            {
+                SetCircuitTerrainDependencies(null);
                 m_clientSync.OnClientWorldReplaced("世界已激活 / Project 换新：旧世界的核对状态作废，重新排队常驻区块");
+            }
             try
             {
                 var subsystem = project.FindSubsystem<Game.SubsystemTerrain>(false);
@@ -3586,6 +3645,7 @@ namespace SuMultiplayer.Modules
 
         private void DisposeCircuitClient(string reason)
         {
+            SetCircuitTerrainDependencies(null);
             TcpTerrainClient client = m_circuitClient;
             m_circuitClient = null;
             if (client == null) return;
@@ -3650,6 +3710,7 @@ namespace SuMultiplayer.Modules
                     ? Math.Max(m_clientChangeSequence, storedBaseSequence)
                     : 0L;
                 m_clientSync.SetAppliedChangeSequence(lastApplied);
+                if (alreadyHasWorld) m_clientSync.SetCircuitWorldSnapshotBaseline(storedBaseSequence);
                 PlayerProfileSnapshot localProfile = null;
                 if (m_avatarLink == null || !m_avatarLink.TryGetHelloProfileClaim(out localProfile))
                     localProfile = null;
@@ -4044,6 +4105,7 @@ namespace SuMultiplayer.Modules
             if (!string.IsNullOrEmpty(sessionId)) m_lastHostSessionId = sessionId;
             m_clientWorldDirectory = worldDirectory;
             m_clientSync?.SetAppliedChangeSequence(m_clientChangeSequence);
+            m_clientSync?.SetCircuitWorldSnapshotBaseline(m_clientChangeSequence);
             Log("下载世界已导入：上次应用序号对齐到世界清单基线 " + m_clientChangeSequence +
                 " · 会话 " + SessionIdentity.Short(sessionId) +
                 "（之后的重连会带上它请求追帧；主机历史不覆盖时才整图重下）");

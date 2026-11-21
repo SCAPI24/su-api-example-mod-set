@@ -1,5 +1,6 @@
 using Engine;
 using Google.Protobuf;
+using Google.Protobuf.Collections;
 using SuMultiplayer.Engine;
 using SuMultiplayer.Net;
 using SuMultiplayer.Protocol;
@@ -66,6 +67,8 @@ namespace SuMultiplayer.Modules
             public bool HasContext;
             public long CreatedMs;
             public long RequiredTerrainSequence;
+            public readonly RepeatedField<CircuitTerrainDependency> TerrainDependencies =
+                new RepeatedField<CircuitTerrainDependency>();
             public long RequiredTopologyGeneration;
             public readonly SortedDictionary<int, CircuitSnapshotPart> Parts =
                 new SortedDictionary<int, CircuitSnapshotPart>();
@@ -292,6 +295,8 @@ namespace SuMultiplayer.Modules
         private readonly Dictionary<ChunkKey, long> m_hostTopologyGenerations = new Dictionary<ChunkKey, long>();
         private readonly Dictionary<ChunkKey, long> m_clientTopologyGenerations = new Dictionary<ChunkKey, long>();
         private readonly Dictionary<ChunkKey, long> m_hostTopologyTerrainSequences = new Dictionary<ChunkKey, long>();
+        private readonly Dictionary<ChunkKey, Dictionary<ChunkKey, long>> m_hostTopologyTerrainDependencies =
+            new Dictionary<ChunkKey, Dictionary<ChunkKey, long>>();
         private readonly Dictionary<ChunkKey, long> m_clientTopologyTerrainSequences =
             new Dictionary<ChunkKey, long>();
         private readonly Dictionary<ChunkKey, Dictionary<string, int>> m_hostCircuitCellValues =
@@ -860,6 +865,8 @@ namespace SuMultiplayer.Modules
             m_captureChunkUnion.Clear();
             m_captureChunkSet.Clear();
             m_states.Clear();
+            if (m_transport?.IsClient == true)
+                m_transport.SetCircuitTerrainDependencies(new HashSet<ChunkKey>());
             m_transport = null;
             m_context = null;
             m_attached = false;
@@ -881,6 +888,7 @@ namespace SuMultiplayer.Modules
             CircuitSimulationPauseSignal.SetClientStepGate(null);
             CircuitSimulationPauseSignal.SetClientStepCompleted(null);
             CircuitSimulationPauseSignal.SetHostStepBoundary(null);
+            ResetHostTopology();
             ClearHostOperationRound();
             m_clientHashCheckpoints.Clear();
             m_clientChunkCommittedEventSequences.Clear();
@@ -1365,7 +1373,7 @@ namespace SuMultiplayer.Modules
                         long terrainSequence = CurrentHostTopologyTerrainSequence(chunk);
                         long topologyGeneration = CurrentHostTopologyGeneration(chunk);
                         uint committedEventSequence = GetHostChunkCommittedEventSequence(chunk);
-                        checkpoint.Chunks.Add(new CircuitChunkHash
+                        var checkpointChunk = new CircuitChunkHash
                         {
                             ChunkX = chunk.X,
                             ChunkZ = chunk.Z,
@@ -1373,7 +1381,9 @@ namespace SuMultiplayer.Modules
                             TopologyGeneration = topologyGeneration,
                             TerrainSequence = terrainSequence,
                             ChunkCommittedEventSequence = committedEventSequence
-                        });
+                        };
+                        AddHostTopologyDependencies(chunk, checkpointChunk.TerrainDependencies);
+                        checkpoint.Chunks.Add(checkpointChunk);
                     }
                     if (checkpoint.Chunks.Count > 0 &&
                         !AppendPayload(clientId, ref batch, clockMessage,
@@ -1468,7 +1478,19 @@ namespace SuMultiplayer.Modules
                 m_lastHostTopologyBump = DescribeTopologyBump(affected, x, edit.Y, z,
                     oldValue, newValue, wasKnown, terrainSequence, previousGeneration,
                     generation);
-                m_hostTopologyTerrainSequences[affected] = terrainSequence;
+                if (affected.Equals(key))
+                    m_hostTopologyTerrainSequences[affected] = terrainSequence;
+                else if (terrainSequence > 0)
+                {
+                    if (!m_hostTopologyTerrainDependencies.TryGetValue(affected,
+                            out Dictionary<ChunkKey, long> dependencies))
+                    {
+                        dependencies = new Dictionary<ChunkKey, long>();
+                        m_hostTopologyTerrainDependencies.Add(affected, dependencies);
+                    }
+                    dependencies.TryGetValue(key, out long previousSequence);
+                    dependencies[key] = Math.Max(previousSequence, terrainSequence);
+                }
                 m_hostTopologyChangedChunks.Add(affected);
             }
         }
@@ -1669,13 +1691,7 @@ namespace SuMultiplayer.Modules
                 foreach (ChunkKey key in peer.PendingScopeTerrainChunks)
                 {
                     bool hasCircuit = peer.CircuitScope.Contains(key);
-                    update.Topologies.Add(new CircuitChunkTopology
-                    {
-                        Key = new CircuitChunkKey { X = key.X, Z = key.Z },
-                        Generation = CurrentHostTopologyGeneration(key),
-                        TerrainSequence = CurrentHostTopologyTerrainSequence(key),
-                        HasCircuit = hasCircuit
-                    });
+                    update.Topologies.Add(CreateHostTopologyBoundary(key, hasCircuit));
                     if (hasCircuit)
                         update.Chunks.Add(new CircuitChunkKey { X = key.X, Z = key.Z });
                 }
@@ -1720,15 +1736,72 @@ namespace SuMultiplayer.Modules
             }
         }
 
-        private CircuitChunkTopology CreateHostTopologyBoundary(ChunkKey key) =>
-            new CircuitChunkTopology
+        private CircuitChunkTopology CreateHostTopologyBoundary(ChunkKey key, bool hasCircuit)
+        {
+            var boundary = new CircuitChunkTopology
             {
                 Key = new CircuitChunkKey { X = key.X, Z = key.Z },
-                Generation = m_hostTopologyGenerations.TryGetValue(key, out long generation)
-                    ? generation : 0L,
-                TerrainSequence = m_hostTopologyTerrainSequences.TryGetValue(key,
-                    out long terrainSequence) ? terrainSequence : 0L
+                Generation = CurrentHostTopologyGeneration(key),
+                TerrainSequence = CurrentHostTopologyTerrainSequence(key),
+                HasCircuit = hasCircuit
             };
+            if (hasCircuit) AddHostTopologyDependencies(key, boundary.TerrainDependencies);
+            return boundary;
+        }
+
+        // Source: CircuitSyncModule.cs:CircuitSyncModule.ProcessHostTopologyCellChange
+        private void AddHostTopologyDependencies(ChunkKey chunk,
+            RepeatedField<CircuitTerrainDependency> target)
+        {
+            if (!m_hostTopologyTerrainDependencies.TryGetValue(chunk,
+                    out Dictionary<ChunkKey, long> dependencies)) return;
+            foreach (KeyValuePair<ChunkKey, long> pair in dependencies)
+                target.Add(new CircuitTerrainDependency
+                {
+                    Key = new CircuitChunkKey { X = pair.Key.X, Z = pair.Key.Z },
+                    Sequence = pair.Value
+                });
+        }
+
+        // Source: TerrainSync.cs:TerrainClientSync.LastAppliedChangeSequenceForChunk
+        private bool ClientTopologyTerrainReady(ChunkKey chunk, long ownSequence,
+            RepeatedField<CircuitTerrainDependency> dependencies, out string reason,
+            bool requestMissing = true)
+        {
+            if (dependencies.Count > 8)
+            {
+                reason = "too-many-terrain-dependencies:" + chunk;
+                return false;
+            }
+            if (!ClientTerrainDependencyReady(chunk, ownSequence, requestMissing, out reason))
+                return false;
+            foreach (CircuitTerrainDependency dependency in dependencies)
+            {
+                if (dependency.Key == null || dependency.Sequence <= 0 ||
+                    Math.Abs((long)dependency.Key.X - chunk.X) > 1 ||
+                    Math.Abs((long)dependency.Key.Z - chunk.Z) > 1)
+                {
+                    reason = "invalid-terrain-dependency:" + chunk;
+                    return false;
+                }
+                var source = new ChunkKey(dependency.Key.X, dependency.Key.Z);
+                if (!ClientTerrainDependencyReady(source, dependency.Sequence, requestMissing, out reason))
+                    return false;
+            }
+            return true;
+        }
+
+        private bool ClientTerrainDependencyReady(ChunkKey key, long required, bool requestMissing,
+            out string reason)
+        {
+            reason = string.Empty;
+            if (required == 0) return true;
+            long local = m_transport.AppliedCircuitTerrainSequenceForChunk(key);
+            if (required > 0 && m_world.IsChunkReady(key) && local >= required) return true;
+            if (required > 0 && requestMissing) m_transport.RequestCircuitTerrainDependency(key);
+            reason = key + " local=" + local + " required=" + required;
+            return false;
+        }
 
         private long CurrentHostTopologyGeneration(ChunkKey key) =>
             m_hostTopologyGenerations.TryGetValue(key, out long generation) ? generation : 0L;
@@ -2151,6 +2224,7 @@ namespace SuMultiplayer.Modules
                 TimelineGeneration = m_timelineGeneration,
                 ChunkCommittedEventSequence = chunkEventSequence
             };
+            AddHostTopologyDependencies(chunk, message.TerrainDependencies);
             message.Elements.Add(states);
             return message;
         }
@@ -2371,11 +2445,11 @@ namespace SuMultiplayer.Modules
             {
                 if (!candidate.Full || candidate.TimelineGeneration != m_timelineGeneration ||
                     candidate.HostStep < m_clientFullScopeSnapshotMinimumStep ||
-                    candidate.Parts.Count != candidate.PartCount ||
-                    m_transport.TerrainSequence < RequiredClientTerrainSequence(
-                        candidate.RequiredTerrainSequence)) continue;
+                    candidate.Parts.Count != candidate.PartCount) continue;
                 var chunk = new ChunkKey(candidate.ChunkX, candidate.ChunkZ);
                 if (!m_clientCircuitScope.Contains(chunk) ||
+                    !ClientTopologyTerrainReady(chunk, candidate.RequiredTerrainSequence,
+                        candidate.TerrainDependencies, out _) ||
                     m_clientTopologyDirtyChunks.Contains(chunk) ||
                     candidate.RequiredTopologyGeneration < CurrentClientTopologyGeneration(chunk)) continue;
                 if (!candidatesByStep.TryGetValue(candidate.HostStep,
@@ -2583,8 +2657,8 @@ namespace SuMultiplayer.Modules
         private bool IsClientEventReady(CircuitEvent circuitEvent, ChunkKey chunk)
         {
             if (circuitEvent.TimelineGeneration != m_timelineGeneration ||
-                m_transport.TerrainSequenceForChunk(chunk) < RequiredClientTerrainSequence(
-                    circuitEvent.RequiredTerrainSequence)) return false;
+                !ClientTopologyTerrainReady(chunk, circuitEvent.RequiredTerrainSequence,
+                    circuitEvent.TerrainDependencies, out _)) return false;
             long localGeneration = CurrentClientTopologyGeneration(chunk);
             if (localGeneration < circuitEvent.RequiredTopologyGeneration)
             {
@@ -2712,13 +2786,13 @@ namespace SuMultiplayer.Modules
                         continue;
                     }
                     long localGeneration = CurrentClientTopologyGeneration(chunk);
-                    long localTerrainSequence = m_transport.TerrainSequenceForChunk(chunk);
                     uint localCommittedEventSequence =
                         m_clientChunkCommittedEventSequences.TryGetValue(chunk,
                             out uint knownCommittedEventSequence)
                             ? knownCommittedEventSequence : 0;
                     if (localGeneration < expected.TopologyGeneration ||
-                        localTerrainSequence < expected.TerrainSequence ||
+                        !ClientTopologyTerrainReady(chunk, expected.TerrainSequence,
+                            expected.TerrainDependencies, out _) ||
                         (localCommittedEventSequence !=
                             expected.ChunkCommittedEventSequence &&
                             IsNewerEventSequence(expected.ChunkCommittedEventSequence,
@@ -2728,7 +2802,6 @@ namespace SuMultiplayer.Modules
                         continue;
                     }
                     if (localGeneration != expected.TopologyGeneration ||
-                        localTerrainSequence != expected.TerrainSequence ||
                         localCommittedEventSequence !=
                             expected.ChunkCommittedEventSequence)
                         continue;
@@ -3021,7 +3094,7 @@ namespace SuMultiplayer.Modules
                     ? Game.SwitchBlock.GetVoltageLevel(Game.Terrain.ExtractData(cellValue)) : 0)
                 : unchecked((uint)cellValue);
             long topologyTerrainSequence = CurrentHostTopologyTerrainSequence(chunk);
-            m_hostRoundEvents.Add(new CircuitEvent
+            var circuitEvent = new CircuitEvent
             {
                 OperationSequence = sequence,
                 CommittedEventSequence = committedSequence,
@@ -3039,7 +3112,9 @@ namespace SuMultiplayer.Modules
                 RequestId = request.RequestId,
                 TimelineGeneration = m_timelineGeneration,
                 Committed = true
-            });
+            };
+            AddHostTopologyDependencies(chunk, circuitEvent.TerrainDependencies);
+            m_hostRoundEvents.Add(circuitEvent);
             m_nextOperationSequence = sequence;
             m_nextCommittedEventSequence = committedSequence;
             m_hostChunkCommittedEventSequences[chunk] = committedSequence;
@@ -3127,6 +3202,7 @@ namespace SuMultiplayer.Modules
                 result.X = request.X;
                 result.Y = request.Y;
                 result.Z = request.Z;
+                AddHostTopologyDependencies(operationChunk, result.TerrainDependencies);
             }
             result.HasCellValue = cellValue.HasValue;
             if (cellValue.HasValue) result.CellValue = unchecked((uint)cellValue.Value);
@@ -3465,13 +3541,8 @@ namespace SuMultiplayer.Modules
             };
             foreach (ChunkKey key in terrainScope.OrderBy(key => key.X).ThenBy(key => key.Z))
             {
-                var topology = new CircuitChunkTopology
-                {
-                    Key = new CircuitChunkKey { X = key.X, Z = key.Z },
-                    Generation = m_hostTopologyGenerations[key],
-                    TerrainSequence = CurrentHostTopologyTerrainSequence(key),
-                    HasCircuit = nextScope.Contains(key)
-                };
+                CircuitChunkTopology topology = CreateHostTopologyBoundary(key,
+                    nextScope.Contains(key));
                 response.Topologies.Add(topology);
                 if (topology.HasCircuit)
                     response.Chunks.Add(topology.Key.Clone());
@@ -3502,6 +3573,21 @@ namespace SuMultiplayer.Modules
                 Warn("Circuit scope response expired before the terrain or local elements were ready; requesting a current scope.");
                 return;
             }
+            // Source: CircuitSyncModule.cs:CircuitSyncModule.CreateHostTopologyBoundary
+            // Keep source chunks available while the accepted scope references their content.
+            var dependencyChunks = new HashSet<ChunkKey>();
+            foreach (CircuitChunkTopology topology in snapshot.Topologies)
+            {
+                if (topology.Key == null || topology.TerrainDependencies.Count > 8) continue;
+                foreach (CircuitTerrainDependency dependency in topology.TerrainDependencies)
+                {
+                    if (dependency.Key != null && dependency.Sequence > 0 &&
+                        Math.Abs((long)dependency.Key.X - topology.Key.X) <= 1 &&
+                        Math.Abs((long)dependency.Key.Z - topology.Key.Z) <= 1)
+                        dependencyChunks.Add(new ChunkKey(dependency.Key.X, dependency.Key.Z));
+                }
+            }
+            m_transport.SetCircuitTerrainDependencies(dependencyChunks);
             if (!ClientScopeTerrainReady(snapshot, out string terrainWaitReason))
             {
                 m_pendingScopeSnapshot = snapshot;
@@ -3615,11 +3701,8 @@ namespace SuMultiplayer.Modules
             {
                 if (topology.Key == null) continue;
                 var key = new ChunkKey(topology.Key.X, topology.Key.Z);
-                long required = RequiredClientTerrainSequence(topology.TerrainSequence);
-                long local = m_transport.TerrainSequenceForChunk(key);
-                if (local >= required) continue;
-                waitReason = key + " local=" + local + " required=" + required;
-                return false;
+                if (!ClientTopologyTerrainReady(key, topology.TerrainSequence,
+                        topology.TerrainDependencies, out waitReason)) return false;
             }
             return true;
         }
@@ -3853,7 +3936,8 @@ namespace SuMultiplayer.Modules
                 (assembly.HasContext && assembly.ChunkCommittedEventSequence !=
                     part.ChunkCommittedEventSequence) ||
                 (assembly.HasContext && assembly.TimelineGeneration != part.TimelineGeneration) ||
-                (assembly.HasContext && assembly.RequiredTerrainSequence != part.RequiredTerrainSequence) ||
+                (assembly.HasContext && (assembly.RequiredTerrainSequence != part.RequiredTerrainSequence ||
+                    assembly.Parts.Count > 0 && !assembly.TerrainDependencies.Equals(part.TerrainDependencies))) ||
                 (assembly.HasContext && assembly.RequiredTopologyGeneration != part.RequiredTopologyGeneration) ||
                 part.RequiredTerrainSequence < 0)
             {
@@ -3871,6 +3955,8 @@ namespace SuMultiplayer.Modules
             assembly.HasContext = true;
             assembly.RequiredTerrainSequence = part.RequiredTerrainSequence;
             assembly.RequiredTopologyGeneration = part.RequiredTopologyGeneration;
+            if (assembly.Parts.Count == 0)
+                assembly.TerrainDependencies.Add(part.TerrainDependencies);
             assembly.Parts[(int)part.PartIndex] = part;
             m_clientSnapshotPartsReceived++;
             // The step barrier already stops at this snapshot. Keep the last applied
@@ -4004,9 +4090,8 @@ namespace SuMultiplayer.Modules
                     }
                     continue;
                 }
-                long requiredClientTerrainSequence = RequiredClientTerrainSequence(
-                    assembly.RequiredTerrainSequence);
-                if (m_transport.TerrainSequence < requiredClientTerrainSequence)
+                if (!ClientTopologyTerrainReady(key, assembly.RequiredTerrainSequence,
+                        assembly.TerrainDependencies, out _))
                 {
                     if (IsSnapshotExpired(assembly, nowMs))
                     {
@@ -4621,8 +4706,8 @@ namespace SuMultiplayer.Modules
                 return;
             }
             ChunkKey chunk = new ChunkKey(result.X >> 4, result.Z >> 4);
-            if (m_transport.TerrainSequence < RequiredClientTerrainSequence(
-                    result.RequiredTerrainSequence))
+            if (!ClientTopologyTerrainReady(chunk, result.RequiredTerrainSequence,
+                    result.TerrainDependencies, out _))
             {
                 if (!m_deferredOperationResults.Any(item => item.RequestId == result.RequestId) &&
                     m_deferredOperationResults.Count < MaximumPendingOperations)
@@ -4672,7 +4757,8 @@ namespace SuMultiplayer.Modules
                 CircuitOperationResult result = m_deferredOperationResults[i];
                 ChunkKey chunk = new ChunkKey(result.X >> 4, result.Z >> 4);
                 if (result.RequiredTopologyGeneration > CurrentClientTopologyGeneration(chunk) ||
-                    m_transport.TerrainSequence < RequiredClientTerrainSequence(result.RequiredTerrainSequence)) continue;
+                    !ClientTopologyTerrainReady(chunk, result.RequiredTerrainSequence,
+                        result.TerrainDependencies, out _)) continue;
                 m_deferredOperationResults.RemoveAt(i);
                 ApplyOperationResult(result);
             }
@@ -4888,8 +4974,8 @@ namespace SuMultiplayer.Modules
                     waitingForParts++;
                     continue;
                 }
-                if (m_transport.TerrainSequence < RequiredClientTerrainSequence(
-                        assembly.RequiredTerrainSequence))
+                if (!ClientTopologyTerrainReady(key, assembly.RequiredTerrainSequence,
+                        assembly.TerrainDependencies, out _, requestMissing: false))
                 {
                     waitingForTerrain++;
                     continue;
@@ -4978,6 +5064,7 @@ namespace SuMultiplayer.Modules
             ResetClientSyncMetadata();
             CircuitSimulationPauseSignal.ClearClientClock();
             m_peerStates.Clear();
+            ResetHostTopology();
             ClearHostOperationRound();
             m_nextSyncMs = 0;
             m_lateCommittedOperations.Clear();
@@ -5001,6 +5088,17 @@ namespace SuMultiplayer.Modules
             m_pendingClock = null;
             m_hasConfiguredRandomSeed = false;
             m_randomSeedAuthority = false;
+        }
+
+        private void ResetHostTopology()
+        {
+            m_hostTopologyGenerations.Clear();
+            m_hostTopologyTerrainSequences.Clear();
+            m_hostTopologyTerrainDependencies.Clear();
+            m_hostTopologyChangedChunks.Clear();
+            m_hostCircuitCellValues.Clear();
+            m_hostCircuitChunks.Clear();
+            m_hostCircuitIndexInitialized = false;
         }
 
         private void ResetClientSyncMetadata()

@@ -684,7 +684,8 @@ namespace SuMultiplayer.Engine
                         bool electricCellChanged = ClientReplica &&
                             IsElectricCell(oldValueWithoutLight, value);
                         bool electricElementChanged = electricCellChanged &&
-                            !IsSwitchLeverOnlyChange(oldValueWithoutLight, value);
+                            !IsSwitchLeverOnlyChange(oldValueWithoutLight, value) &&
+                            !IsPistonExtensionOnlyChange(oldValueWithoutLight, value);
                         bool electricTopologyChanged = electricElementChanged &&
                             NotifyElectricTopologyChanged(oldValueWithoutLight, value, x, edit.Y, z);
                         if (ClientReplica && oldValueWithoutLight != value)
@@ -732,7 +733,8 @@ namespace SuMultiplayer.Engine
                         bool electricCellChanged = ClientReplica &&
                             IsElectricCell(oldValueWithoutLight, value);
                         bool electricElementChanged = electricCellChanged &&
-                            !IsSwitchLeverOnlyChange(oldValueWithoutLight, value);
+                            !IsSwitchLeverOnlyChange(oldValueWithoutLight, value) &&
+                            !IsPistonExtensionOnlyChange(oldValueWithoutLight, value);
                         bool electricTopologyChanged = false;
                         if (ClientReplica)
                         {
@@ -820,6 +822,12 @@ namespace SuMultiplayer.Engine
             Game.Terrain.ExtractContents(newValue) == SwitchBlock.Index &&
             (Game.Terrain.ExtractData(oldValue) ^ Game.Terrain.ExtractData(newValue)) == 1;
 
+        // Source: Survivalcraft/Game/PistonBlock.cs:PistonBlock.SetIsExtended
+        private static bool IsPistonExtensionOnlyChange(int oldValue, int newValue) =>
+            Game.Terrain.ExtractContents(oldValue) == PistonBlock.Index &&
+            Game.Terrain.ExtractContents(newValue) == PistonBlock.Index &&
+            (Game.Terrain.ExtractData(oldValue) ^ Game.Terrain.ExtractData(newValue)) == 1;
+
         private bool NotifyElectricTopologyChanged(int oldValue, int newValue, int x, int y, int z)
         {
             Block[] blocks = BlocksManager.Blocks;
@@ -876,8 +884,10 @@ namespace SuMultiplayer.Engine
             if (oldContents == newContents && oldValue == newValue) return false;
             Block oldBlock = blocks[oldContents];
             Block newBlock = blocks[newContents];
-            bool oldIsElectric = oldBlock is IElectricElementBlock;
-            bool newIsElectric = newBlock is IElectricElementBlock;
+            // Source: CircuitStateCodec.cs:CircuitStateCodec.CaptureChunkTopology
+            // Pistons consume input on the host and have no replicated circuit element state.
+            bool oldIsElectric = oldContents != PistonBlock.Index && oldBlock is IElectricElementBlock;
+            bool newIsElectric = newContents != PistonBlock.Index && newBlock is IElectricElementBlock;
             if (!oldIsElectric && !newIsElectric) return false;
             if (!oldIsElectric || !newIsElectric) return true;
             var oldElement = (IElectricElementBlock)oldBlock;

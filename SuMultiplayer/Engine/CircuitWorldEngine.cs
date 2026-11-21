@@ -825,7 +825,8 @@ namespace SuMultiplayer.Engine
             Block[] blocks = BlocksManager.Blocks;
             if (blocks == null || contents < 0 || contents >= blocks.Length)
                 throw new InvalidOperationException("Block database is unavailable while reading circuit cell.");
-            return blocks[contents] is IElectricElementBlock;
+            // Source: CircuitStateCodec.cs:CircuitStateCodec.CaptureChunkTopology
+            return contents != PistonBlock.Index && blocks[contents] is IElectricElementBlock;
         }
 
         public bool TryCaptureChunkTopologyValues(ChunkKey key,

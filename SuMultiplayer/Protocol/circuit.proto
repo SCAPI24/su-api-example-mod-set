@@ -68,6 +68,7 @@ message CircuitEvent {
   bool committed = 14;
   bool cancelled = 15;
   uint32 committed_event_sequence = 16;
+  repeated CircuitTerrainDependency terrain_dependencies = 17;
 }
 
 message CircuitEventBatch {
@@ -129,6 +130,7 @@ message CircuitSnapshotPart {
   int32 timeline_generation = 12;
   int64 required_topology_generation = 13;
   uint32 chunk_committed_event_sequence = 14;
+  repeated CircuitTerrainDependency terrain_dependencies = 15;
   bytes ext = 100;
   google.protobuf.Any custom = 101;
 }
@@ -140,6 +142,7 @@ message CircuitChunkHash {
   int64 topology_generation = 4;
   int64 terrain_sequence = 5;
   uint32 chunk_committed_event_sequence = 6;
+  repeated CircuitTerrainDependency terrain_dependencies = 7;
 }
 
 message CircuitHashReport {
@@ -199,11 +202,17 @@ message CircuitOperationResult {
   int32 timeline_generation = 12;
   bool has_cell_value = 13;
   int64 required_topology_generation = 14;
+  repeated CircuitTerrainDependency terrain_dependencies = 15;
 }
 
 message CircuitChunkKey {
   sint32 x = 1;
   sint32 z = 2;
+}
+
+message CircuitTerrainDependency {
+  CircuitChunkKey key = 1;
+  int64 sequence = 2;
 }
 
 message CircuitScopeSnapshot {
@@ -219,6 +228,7 @@ message CircuitChunkTopology {
   int64 generation = 2;
   int64 terrain_sequence = 3;
   bool has_circuit = 4;
+  repeated CircuitTerrainDependency terrain_dependencies = 5;
 }
 
 message CircuitPayload {

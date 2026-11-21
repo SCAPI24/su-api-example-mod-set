@@ -4997,12 +4997,48 @@ namespace SuMultiplayer.Terrain
             PT.TopLayerDigestReport.Types.Entry entry)
         {
             var key = new ChunkKey(entry.Key.X, entry.Key.Z);
+            // Source: CaptureClientMemoryChunks; PlanCellChangeLocked
+            // A targeted authoritative resend is only meaningful for the attached
+            // player's declared memory. A newly allocated dependency retries after
+            // its existing ClientChunks notification has reached the host.
+            if (entry.Kind == PT.TopLayerDigestKind.Confirmation && entry.ConfirmationPurpose == 2u &&
+                (session.CurrentClientId != state.Id || !ReferenceEquals(CurrentStateOf(session), state) ||
+                 !session.MemoryChunks.Contains(key)))
+            {
+                SendTopLayerDigestVerdict(state, key, PT.TopLayerDigestStatus.NotReady,
+                    0u, 0u, 0L, 2u);
+                return;
+            }
             session.TopLayerSyncClients.Add(key);
             session.ReportedLoaded.Add(key);
             if (!session.Verdicts.TryGetValue(key, out byte currentVerdict) ||
                 currentVerdict == (byte)ChunkVerifyState.None)
                 session.Verdicts[key] = (byte)ChunkVerifyState.Requested;
             long hostSequence = m_chunkChangeSequence.TryGetValue(key, out long sequence) ? sequence : 0L;
+            // Source: TerrainSyncClient.RequestChunkReverification
+            // An explicit complete resync must not require the client to have already
+            // received the changes it is requesting, or depend on a top-layer hash.
+            if (entry.Kind == PT.TopLayerDigestKind.Confirmation && entry.ConfirmationPurpose == 2u)
+            {
+                if (!m_world.HasContents(key))
+                {
+                    RequestOnDemandLoad(session, key, Environment.TickCount64);
+                    SendTopLayerDigestVerdict(state, key, PT.TopLayerDigestStatus.NotReady,
+                        0u, 0u, hostSequence, 2u);
+                    return;
+                }
+                session.TopLayerSyncPending.Add(key);
+                if (!QueueWholeChunkResync(state, key, 3u, requireTopLayerConfirmation: true))
+                {
+                    SendTopLayerDigestVerdict(state, key, PT.TopLayerDigestStatus.NotReady,
+                        0u, 0u, hostSequence, 2u);
+                    return;
+                }
+                session.ResyncAwaitingConfirmation.Add(key);
+                SendTopLayerDigestVerdict(state, key, PT.TopLayerDigestStatus.Pending,
+                    0u, 0u, hostSequence, 2u);
+                return;
+            }
             if (!entry.TopReady || (entry.ClientChangeSequence > 0 &&
                 hostSequence > entry.ClientChangeSequence))
             {
@@ -5110,22 +5146,6 @@ namespace SuMultiplayer.Terrain
                     MarkTopLayerVerifiedLocked(session, key);
                     SendTopLayerDigestVerdict(state, key, PT.TopLayerDigestStatus.Confirmed,
                         hostHeight, hostBlock, hostSequence, 5u);
-                    return;
-                }
-                if (entry.ConfirmationPurpose == 2u)
-                {
-                    session.TopLayerSyncPending.Add(key);
-                    if (!HasQueuedResyncLocked(state, key) &&
-                        !QueueWholeChunkResync(state, key, 3u, requireTopLayerConfirmation: true))
-                    {
-                        SendTopLayerDigestVerdict(state, key, PT.TopLayerDigestStatus.NotReady,
-                            hostHeight, hostBlock, hostSequence, 2u);
-                        return;
-                    }
-                    if (HasQueuedResyncLocked(state, key))
-                        session.ResyncAwaitingConfirmation.Add(key);
-                    SendTopLayerDigestVerdict(state, key, PT.TopLayerDigestStatus.Pending,
-                        hostHeight, hostBlock, hostSequence, 2u);
                     return;
                 }
                 if (entry.ConfirmationPurpose == 3u &&
@@ -7508,6 +7528,21 @@ namespace SuMultiplayer.Terrain
         // ---- 回传快照的"编码水位"：比本块已应用改动更旧的快照会被丢弃（不能把新值盖回旧值）----
         /// <summary>每块**已应用**的最高改动序号（卸载时清掉；只增不减）。</summary>
         private readonly Dictionary<ChunkKey, long> m_chunkChangeSequence = new Dictionary<ChunkKey, long>();
+        // Source: ApplyOneChange; ApplyQueuedResyncParts; SetCircuitWorldSnapshotBaseline
+        // This proof is independent of ordinary watermarks, which also advance for partial fixes.
+        private readonly Dictionary<ChunkKey, long> m_appliedCircuitTerrainSequences =
+            new Dictionary<ChunkKey, long>();
+        private readonly Dictionary<ChunkKey, CircuitTerrainResyncCoverage> m_circuitTerrainResyncCoverage =
+            new Dictionary<ChunkKey, CircuitTerrainResyncCoverage>();
+        private long m_circuitWorldSnapshotBaseline = -1L;
+
+        private sealed class CircuitTerrainResyncCoverage
+        {
+            public int Generation;
+            public long Watermark;
+            public int PartCount;
+            public int NextPart;
+        }
         private long m_resyncDroppedSuperseded;
         private long m_lastResyncSupersededLogMs;
         // ---- 主机要求"重新核对内存区块"（VerifyChunks）----
@@ -8061,6 +8096,28 @@ namespace SuMultiplayer.Terrain
         public long LastAppliedChangeSequenceForChunk(ChunkKey key) =>
             m_chunkChangeSequence.TryGetValue(key, out long sequence) ? sequence : 0L;
 
+        // Source: TerrainSyncModule.cs:CircuitTransportPortImpl.AppliedCircuitTerrainSequenceForChunk
+        public long AppliedCircuitTerrainSequenceForChunk(ChunkKey key) =>
+            m_world.HasContents(key) && m_appliedCircuitTerrainSequences.TryGetValue(key, out long sequence)
+                ? sequence : -1L;
+
+        // Source: TerrainSyncModule.cs:TerrainSyncModule.OnClientWorldInstalled
+        // Only an actually imported world snapshot supplies this baseline. Reconnect's
+        // global last-applied sequence and subsequent chunk-load notifications do not.
+        public void SetCircuitWorldSnapshotBaseline(long sequence)
+        {
+            if (sequence < 0) throw new ArgumentOutOfRangeException(nameof(sequence));
+            if (m_circuitWorldSnapshotBaseline != sequence)
+            {
+                m_appliedCircuitTerrainSequences.Clear();
+                m_circuitTerrainResyncCoverage.Clear();
+            }
+            m_circuitWorldSnapshotBaseline = sequence;
+            foreach (ChunkKey key in m_world.LoadedChunks)
+                if (!m_appliedCircuitTerrainSequences.ContainsKey(key))
+                    m_appliedCircuitTerrainSequences[key] = sequence;
+        }
+
         public int CopyLoadedChunks(List<ChunkKey> target)
         {
             if (target == null) throw new ArgumentNullException(nameof(target));
@@ -8327,6 +8384,8 @@ namespace SuMultiplayer.Terrain
         public void OnChunkUnloaded(ChunkKey key)
         {
             m_resyncDiagnostics?.RecordChunkUnloaded();
+            m_appliedCircuitTerrainSequences.Remove(key);
+            m_circuitTerrainResyncCoverage.Remove(key);
             // 内存集合**不在这里**记账：只有引擎真的释放了块（OnMemoryChunkFreed）才移除 ——
             // 内容掉回未定稿（但还占着内存）时，实时地图的方框必须继续保留。
             // 摘要还没算块就没了：那条工作作废（重载会重新入队一条新的）
@@ -8438,6 +8497,10 @@ namespace SuMultiplayer.Terrain
             m_memoryVerifyDueMs.Clear();
             m_localHashes.Clear();
             m_chunkChangeSequence.Clear();
+            m_appliedCircuitTerrainSequences.Clear();
+            m_circuitTerrainResyncCoverage.Clear();
+            if (m_circuitWorldSnapshotBaseline >= 0)
+                SetCircuitWorldSnapshotBaseline(m_circuitWorldSnapshotBaseline);
             m_mismatchCounts.Clear();
             m_mismatchRetries.Clear();
             m_discardRefreshDueMs.Clear();
@@ -8614,6 +8677,8 @@ namespace SuMultiplayer.Terrain
             // 已经不在内存里：强制核对 / 已应用序号都不再需要（重载会重新上报、重新核对）。
             if (m_memoryVerifyQueued.Remove(key)) m_memoryVerifyDueMs.Remove(key);
             m_chunkChangeSequence.Remove(key);
+            m_appliedCircuitTerrainSequences.Remove(key);
+            m_circuitTerrainResyncCoverage.Remove(key);
             m_footprintVerified.Remove(key);
             m_fullInFlight.Remove(key);
             m_footprintAwaitingVerdict.Remove(key);
@@ -9048,6 +9113,7 @@ namespace SuMultiplayer.Terrain
                 ResyncJob job = m_resyncQueue.Peek();
                 if (m_chunkGeneration.TryGetValue(job.Key, out int generation) && generation != job.Generation)
                 {
+                    m_circuitTerrainResyncCoverage.Remove(job.Key);
                     m_resyncQueue.Dequeue();
                     ReleaseQueuedPart(job.Key);
                     budget--;
@@ -9064,6 +9130,7 @@ namespace SuMultiplayer.Terrain
                         m_resyncDeferredUntilMs = nowMs + Math.Max(1, m_options.ClientResyncNotReadyRetryMs);
                         break;
                     }
+                    m_circuitTerrainResyncCoverage.Remove(job.Key);
                     m_resyncQueue.Dequeue();
                     ReleaseQueuedPart(job.Key);
                     budget--;
@@ -9080,6 +9147,7 @@ namespace SuMultiplayer.Terrain
                     // 这一片是按**更早**的内容编码的，而本块之后已经应用了更新的改动 →
                     // 落地会把新值盖回旧值。丢弃 + 计数；**按退避**重新核对（不是每片当场重报）。
                     m_resyncDroppedSuperseded++;
+                    m_circuitTerrainResyncCoverage.Remove(job.Key);
                     NoteResyncSuperseded(job.Key, appliedSequence, job.Watermark);
                     m_verifier.ForceUnverified(job.Key);
                     ScheduleDiscardRefresh(job.Key, "回传快照过期（编码水位 " + job.Watermark +
@@ -9096,6 +9164,7 @@ namespace SuMultiplayer.Terrain
                 catch (Exception e)
                 {
                     m_resyncDecodeFailures++;
+                    m_circuitTerrainResyncCoverage.Remove(job.Key);
                     ReportDecodeFailure(job.Key, e);
                     continue;
                 }
@@ -9107,6 +9176,7 @@ namespace SuMultiplayer.Terrain
                     // 主机裁决时还有内容、编码时已经没了 → 零格快照。绝不当成"已覆盖"：
                     // 不落地、不计数 ResyncApplied、不重报；按退避重新核对，让主机内容可用后重发。
                     m_resyncEmptySnapshots++;
+                    m_circuitTerrainResyncCoverage.Remove(job.Key);
                     m_verifier.ForceUnverified(job.Key);
                     ScheduleDiscardRefresh(job.Key, "主机回传零格快照（编码时主机已无该块内容）");
                     NoteResyncEmptySnapshot(job.Key);
@@ -9141,6 +9211,7 @@ namespace SuMultiplayer.Terrain
                 m_resyncApplied++;
                 m_resyncAppliedThisTick++;
                 m_resyncAppliedInSecond++;
+                RecordAppliedCircuitTerrainResyncPart(job, part);
                 int remaining = part.Count - part.Index - 1;
                 if (remaining > 0)
                 {
@@ -9183,6 +9254,35 @@ namespace SuMultiplayer.Terrain
                 }
                 QueueTopLayerConfirmation(part.Key, job.DigestPurpose);
             }
+        }
+
+        // Source: ChunkPayloadCodec.Encode; TerrainSyncClient.ApplyQueuedResyncParts
+        // Seeing the final part is insufficient: certify only a complete, in-order
+        // application of the same full snapshot. Leaves-only coverage is unrelated.
+        private void RecordAppliedCircuitTerrainResyncPart(ResyncJob job, ChunkPayloadCodec.Part part)
+        {
+            if (job.LeavesOnly || job.Watermark < 0) return;
+            if (part.Index == 0)
+            {
+                m_circuitTerrainResyncCoverage[job.Key] = new CircuitTerrainResyncCoverage
+                {
+                    Generation = job.Generation,
+                    Watermark = job.Watermark,
+                    PartCount = part.Count
+                };
+            }
+            if (!m_circuitTerrainResyncCoverage.TryGetValue(job.Key, out CircuitTerrainResyncCoverage coverage) ||
+                coverage.Generation != job.Generation || coverage.Watermark != job.Watermark ||
+                coverage.PartCount != part.Count || coverage.NextPart != part.Index)
+            {
+                m_circuitTerrainResyncCoverage.Remove(job.Key);
+                return;
+            }
+            coverage.NextPart++;
+            if (coverage.NextPart != coverage.PartCount) return;
+            m_appliedCircuitTerrainSequences.TryGetValue(job.Key, out long current);
+            m_appliedCircuitTerrainSequences[job.Key] = Math.Max(current, job.Watermark);
+            m_circuitTerrainResyncCoverage.Remove(job.Key);
         }
 
         /// <summary>出队记账（"代"表只在还有排队分片时保留，不随会话无限增长）。</summary>
@@ -10540,6 +10640,9 @@ namespace SuMultiplayer.Terrain
         {
             if (!m_world.HasContents(key))
             {
+                // Source: RequestChunkReverification — a later cell cannot repair a skipped predecessor.
+                m_appliedCircuitTerrainSequences.Remove(key);
+                m_circuitTerrainResyncCoverage.Remove(key);
                 if (m_memoryChunks.Contains(key))
                 {
                     m_cellChangesDroppedNotReady++;
@@ -10554,6 +10657,13 @@ namespace SuMultiplayer.Terrain
                 return;
             }
             m_world.ApplyCells(key, new[] { edit });
+            if (sequence <= 0)
+            {
+                m_appliedCircuitTerrainSequences.Remove(key);
+                m_circuitTerrainResyncCoverage.Remove(key);
+            }
+            else if (m_appliedCircuitTerrainSequences.TryGetValue(key, out long circuitSequence))
+                m_appliedCircuitTerrainSequences[key] = Math.Max(circuitSequence, sequence);
             // 新的权威改动 = 新的证据：这块的连续重试预算与"停止自动重报"抑制一并清零
             // （每块每次改动仍只发起一次核对，由既有预算约束）。
             ResetMismatchRetry(key);
@@ -10591,6 +10701,9 @@ namespace SuMultiplayer.Terrain
 
         private void NoteDeliveryGap(long prev, long index, bool replay, string detail)
         {
+            // Source: CheckDeliveryIndex — no chunk can retain a coverage proof across an unknown missing frame.
+            m_appliedCircuitTerrainSequences.Clear();
+            m_circuitTerrainResyncCoverage.Clear();
             m_deliveryGaps++;
             long now = Environment.TickCount64;
             if (m_lastDeliveryGapLogMs == 0 ||
