@@ -377,15 +377,18 @@ namespace SuMultiplayer.Net
 
         private readonly struct SendFrame
         {
-            public SendFrame(byte[] buffer, int length, MessageType type)
+            public SendFrame(byte[] buffer, int length, MessageType type,
+                TaskCompletionSource<bool> written = null)
             {
                 Buffer = buffer;
                 Length = length;
                 Type = type;
+                Written = written;
             }
             public byte[] Buffer { get; }
             public int Length { get; }
             public MessageType Type { get; }
+            public TaskCompletionSource<bool> Written { get; }
         }
 
         private sealed class Peer
@@ -394,6 +397,9 @@ namespace SuMultiplayer.Net
             public TcpClient Tcp;
             public NetworkStream Stream;
             public readonly Queue<SendFrame> SendQueue = new Queue<SendFrame>();
+            // Protected by SendQueue's lock. The final frame follows any write already in progress.
+            public bool Closing;
+            public SendFrame? FinalFrame;
             public readonly SemaphoreSlim SendSignal = new SemaphoreSlim(0, int.MaxValue);
             public volatile bool Alive = true;
             public ChannelState State = ChannelState.Connected;
@@ -685,7 +691,14 @@ namespace SuMultiplayer.Net
                     bool hasFrame = false;
                     lock (peer.SendQueue)
                     {
-                        if (peer.SendQueue.Count > 0)
+                        if (peer.FinalFrame.HasValue)
+                        {
+                            frame = peer.FinalFrame.Value;
+                            peer.FinalFrame = null;
+                            hasFrame = true;
+                            peer.SendSignal.Wait(0);
+                        }
+                        else if (peer.SendQueue.Count > 0)
                         {
                             frame = peer.SendQueue.Dequeue();
                             hasFrame = true;
@@ -704,6 +717,11 @@ namespace SuMultiplayer.Net
                     {
                         await peer.Stream.WriteAsync(frame.Buffer, 0, frame.Length).ConfigureAwait(false);
                         peer.Stats.RecordSent(frame.Type, frame.Length);
+                        if (frame.Written != null)
+                        {
+                            frame.Written.TrySetResult(true);
+                            return;
+                        }
                         lock (peer.SendQueue)
                         {
                             if (peer.SendQueue.Count < m_queueCapacity && peer.State == ChannelState.Backpressured)
@@ -714,6 +732,7 @@ namespace SuMultiplayer.Net
                     {
                         // 无论写完 / 抛异常，池化帧都必须归还（唯一归还点）。
                         TransportDiagnostics.ReturnBuffer(frame.Buffer);
+                        frame.Written?.TrySetResult(false);
                     }
                 }
             }
@@ -724,49 +743,38 @@ namespace SuMultiplayer.Net
         /// 入队一帧。返回 false = 队列已满（**显式背压**，调用方必须处理；不丢包）。
         /// 帧缓冲来自池，所有权在入队成功时转交发送循环；失败 / 异常路径当场归还。
         /// </summary>
-        public virtual bool TrySend(int clientId, MessageType type, byte[] payload)
+        public virtual bool TrySend(int clientId, MessageType type, byte[] payload) =>
+            Enqueue(Find(clientId), type, payload);
+
+        // Source: TerrainNet.cs:TcpTerrainServer.SendLoopAsync
+        internal Task<bool> SendHostShutdown(int clientId, byte[] payload)
         {
+            const MessageType type = MessageType.HostShutdown;
             Peer peer = Find(clientId);
-            if (peer == null || !peer.Alive) return false;
-            payload = payload ?? Array.Empty<byte>();
-            long sequence = Interlocked.Increment(ref m_sendSequence);
-            TerrainFrame.Validate(type, payload);          // 先校验再借缓冲（非法负载不占池）
+            if (peer == null || !peer.Alive) return Task.FromResult(false);
+            TerrainFrame.Validate(type, payload);
             int length = TerrainFrame.HeaderBytes + payload.Length;
-            byte[] frame = TransportDiagnostics.RentBuffer(length);
-            bool enqueued = false;
-            try
+            lock (peer.SendQueue)
             {
-                TerrainFrame.EncodeTo(frame, sequence, type, payload);
-                bool dead, full;
-                lock (peer.SendQueue)
+                if (!peer.Alive || peer.Closing || peer.IsCircuit || peer.IsTerrain)
+                    return Task.FromResult(false);
+
+                var written = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+                long sequence = Interlocked.Increment(ref m_sendSequence);
+                byte[] buffer = TransportDiagnostics.RentBuffer(length);
+                try
                 {
-                    dead = !peer.Alive;
-                    full = !dead && peer.SendQueue.Count >= m_queueCapacity;
-                    if (!dead && !full)
-                    {
-                        peer.SendQueue.Enqueue(new SendFrame(frame, length, type));
-                        peer.Stats.ObserveSendQueue(peer.SendQueue.Count);
-                        peer.SendSignal.Release();
-                        enqueued = true;
-                    }
+                    TerrainFrame.EncodeTo(buffer, sequence, type, payload);
                 }
-                if (dead) return false;
-                if (full)
+                catch
                 {
-                    lock (peer.SendQueue)
-                    {
-                        peer.Stats.RecordBackpressure();
-                        peer.Stats.ObserveSendQueue(peer.SendQueue.Count);
-                    }
-                    SetPeerState(peer, ChannelState.Backpressured, "发送队列已满（显式背压）");
-                    return false;
+                    TransportDiagnostics.ReturnBuffer(buffer);
+                    throw;
                 }
-                return true;
-            }
-            finally
-            {
-                // 成功入队时所有权转交发送循环；其余路径（背压 / 断开 / 编码异常）当场归还。
-                if (!enqueued) TransportDiagnostics.ReturnBuffer(frame);
+                peer.Closing = true;
+                peer.FinalFrame = new SendFrame(buffer, length, type, written);
+                peer.SendSignal.Release();
+                return written.Task;
             }
         }
 
@@ -936,7 +944,7 @@ namespace SuMultiplayer.Net
                 bool dead, full;
                 lock (peer.SendQueue)
                 {
-                    dead = !peer.Alive;
+                    dead = !peer.Alive || peer.Closing;
                     full = !dead && peer.SendQueue.Count >= m_queueCapacity;
                     if (!dead && !full)
                     {
@@ -949,7 +957,11 @@ namespace SuMultiplayer.Net
                 if (dead) return false;
                 if (full)
                 {
-                    peer.Stats.RecordBackpressure();
+                    lock (peer.SendQueue)
+                    {
+                        peer.Stats.RecordBackpressure();
+                        peer.Stats.ObserveSendQueue(peer.SendQueue.Count);
+                    }
                     SetPeerState(peer, ChannelState.Backpressured, "发送队列已满（显式背压）");
                     return false;
                 }
@@ -1186,10 +1198,19 @@ namespace SuMultiplayer.Net
                 SendFrame frame;
                 lock (peer.SendQueue)
                 {
-                    if (peer.SendQueue.Count == 0) return;
-                    frame = peer.SendQueue.Dequeue();
+                    if (peer.FinalFrame.HasValue)
+                    {
+                        frame = peer.FinalFrame.Value;
+                        peer.FinalFrame = null;
+                    }
+                    else
+                    {
+                        if (peer.SendQueue.Count == 0) return;
+                        frame = peer.SendQueue.Dequeue();
+                    }
                 }
                 TransportDiagnostics.ReturnBuffer(frame.Buffer);
+                frame.Written?.TrySetResult(false);
             }
         }
 

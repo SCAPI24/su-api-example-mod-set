@@ -834,6 +834,35 @@ namespace SuMultiplayer.Engine
             }
         }
 
+        // Source: ComponentMiner.cs:ComponentMiner.AttackBody
+        internal bool IsHostCaptureEnabled => m_hostCaptureEnabled && !m_clientReplica;
+
+        internal bool TryGetCreatureImpactQueue(Project project, out IList queue)
+        {
+            queue = null;
+            return IsHostCaptureEnabled && project != null && ReferenceEquals(project, m_project) &&
+                m_audio != null && ResolveReflection(m_audio) && TryGetAudioQueue(m_audio, out queue);
+        }
+
+        internal void CaptureCreatureImpact(Project project, IList queue, int startIndex, Vector3 position)
+        {
+            if (!IsFinite(position) || !TryGetCreatureImpactQueue(project, out IList current) ||
+                !ReferenceEquals(current, queue)) return;
+
+            for (int i = startIndex; i < queue.Count; i++)
+            {
+                if (!TryReadEntry(queue, i, out RemoteSoundQueueEntry entry) ||
+                    !RemoteSoundPolicy.IsBodyImpact(entry.Name)) continue;
+
+                // Use the engine-selected clip and pitch from the actual hit. Its queued volume
+                // has already been attenuated for the host, so use the native pre-attenuation volume.
+                var clip = new RemoteSoundClipData(entry.Name, position, 1f, entry.Pitch,
+                    RemoteSoundPolicy.BodyImpactMinDistance, autoDelay: false);
+                m_capture.TryAdd(in clip);
+                m_slotSuppress.Add(in entry, i, -1);
+            }
+        }
+
         // ================================================================= 本机多角色槽位归属
 
         /// <summary>

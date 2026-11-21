@@ -24,6 +24,9 @@ namespace SuMultiplayer.Modules
         /// <summary>关闭本端持有的通道（退房 / 离开）。</summary>
         void StopChannel();
 
+        /// <summary>主机主动关房：先通知客户端结束房间，再关闭连接。</summary>
+        void StopHostChannel(string reason);
+
         /// <summary>
         /// 客户端**显式退房**时用：先向主机发 BYE（明确"我要走"，主机立即摘角色），
         /// 等发送队列排空（最多约 150ms）再关通道。普通断线/闪退主机按宽限处理；

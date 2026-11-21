@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Concurrent;
 using System.Collections.Generic;
 using SuMultiplayer.Engine;
 using SuMultiplayer.Net;
@@ -41,6 +42,7 @@ namespace SuMultiplayer.Modules
         private ITransportControlPort m_transportControl;
         private RoomBeaconHost m_beaconHost;
         private RoomBeaconClient m_beaconClient;
+        private ConcurrentQueue<(RoomBeaconInfo Info, string Address)> m_lanReplies;
         private long m_lastListLogMs;
         private int m_lastLoggedCount = -1;
         private bool m_joinAnnounced;
@@ -101,19 +103,30 @@ namespace SuMultiplayer.Modules
                 Log("暂不寻找房间（Play 屏不可见；进入地图列表时才开始探测）");
                 return;
             }
-            m_serverCatalog = new Net.ServerCatalog(m_config.PortRangeStart, m_config.PortRangeCount);
-            m_serverCatalog.Start();
-            m_beaconClient = new RoomBeaconClient(m_config.PortRangeStart, m_config.PortRangeCount);
-            m_beaconClient.RoomFound += HandleRoomFound;
-            if (m_beaconClient.Start())
+            if (m_serverCatalog == null)
             {
+                m_serverCatalog = new Net.ServerCatalog(m_config.PortRangeStart, m_config.PortRangeCount);
+                m_serverCatalog.Start();
+            }
+            var client = new RoomBeaconClient(m_config.PortRangeStart, m_config.PortRangeCount);
+            var replies = new ConcurrentQueue<(RoomBeaconInfo Info, string Address)>();
+            // Source: RoomBeacon.cs:RoomBeaconClient.ReadReplies — the directory belongs to the main thread.
+            client.RoomFound += (info, address) =>
+            {
+                if (replies.Count < 256) replies.Enqueue((info, address));
+            };
+            if (client.Start())
+            {
+                m_beaconClient = client;
+                m_lanReplies = replies;
                 Log("开始寻找房间（" + why + "）：端口段 " + DescribePortRange() + " · 每 " +
                     m_beaconClient.ProbeIntervalMs + " ms 广播一次（发现的房间会进入 Play 屏世界列表）");
                 m_join.Discover(Environment.TickCount64);
             }
             else
             {
-                Log("房间发现启动失败（可能被系统禁止广播）→ Play 屏不会出现局域网房间");
+                client.Dispose();
+                Log("房间发现启动失败，Play 屏无法接收局域网房间");
             }
         }
 
@@ -121,12 +134,9 @@ namespace SuMultiplayer.Modules
         {
             try { m_serverCatalog?.Dispose(); } catch (Exception) { }
             m_serverCatalog = null;
-            if (m_beaconClient != null)
-            {
-                m_beaconClient.RoomFound -= HandleRoomFound;
-                try { m_beaconClient.Dispose(); } catch (Exception) { }
-                m_beaconClient = null;
-            }
+            m_beaconClient?.Dispose();
+            m_beaconClient = null;
+            m_lanReplies = null;
             m_directory.Clear();
             m_lastLoggedCount = -1;
             Log("停止寻找房间（" + why + "）");
@@ -269,7 +279,7 @@ namespace SuMultiplayer.Modules
             m_roomWorldName = string.Empty;
             m_roomGameMode = string.Empty;
             m_hostPort = 0;
-            m_transportControl?.StopChannel();
+            m_transportControl?.StopHostChannel("The host closed the room.");
             Log("房间已关闭（发现应答与地图通道都已停）");
             if (m_listVisible) StartDiscovery("房间已关闭，重新寻找房间");
         }
@@ -509,6 +519,8 @@ namespace SuMultiplayer.Modules
             long nowMs = Environment.TickCount64;
             DrainServerCatalog(nowMs);
             if (m_beaconClient == null) return;
+            while (m_lanReplies.TryDequeue(out var reply))
+                HandleRoomFound(reply.Info, reply.Address);
             int removed = m_directory.RemoveStale(nowMs);
             if (removed > 0) Log("房间列表移除 " + removed + " 个超时条目（现在 " + m_directory.Count + " 个）");
             if (m_directory.Count != m_lastLoggedCount && nowMs - m_lastListLogMs > 3000)
@@ -516,7 +528,7 @@ namespace SuMultiplayer.Modules
                 m_lastLoggedCount = m_directory.Count;
                 m_lastListLogMs = nowMs;
                 Log("当前可加入房间 " + m_directory.Count + " 个" + (m_directory.Count == 0
-                    ? "（继续每 2 秒探测；若一直为 0，检查主机是否已在游戏内按了 CR、是否同一网段）"
+                    ? "（继续每秒探测；若一直为 0，检查主机是否已在游戏内按了 CR、是否同一网段）"
                     : "：" + DescribeAll()));
             }
         }

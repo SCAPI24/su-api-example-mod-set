@@ -744,7 +744,12 @@ namespace SuMultiplayer.Modules
             for (int i = 0; i < plan.Clips.Length; i++)
             {
                 RemoteSoundClipData clip = plan.Clips[i];
-                if (m_port.TryConsumeLocalEcho(clip.Sound))
+                // A host animal hit is separate from a player's own attack even when both
+                // select the same clip. Global inferred clips use DefaultMinDistance.
+                bool hostBodyImpact = data.SourceClientId == 0 &&
+                    clip.MinDistance == RemoteSoundPolicy.BodyImpactMinDistance &&
+                    RemoteSoundPolicy.IsBodyImpact(clip.Sound);
+                if (!hostBodyImpact && m_port.TryConsumeLocalEcho(clip.Sound))
                 {
                     localEcho++;
                     continue;

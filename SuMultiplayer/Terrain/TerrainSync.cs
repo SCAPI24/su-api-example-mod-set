@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Threading.Tasks;
 using Engine;
 using SuMultiplayer.Net;
 using SuMultiplayer.Players;
@@ -3626,58 +3627,41 @@ namespace SuMultiplayer.Terrain
         }
 
         /// <summary>
-        /// 主机：广播「我要正常退出游戏了」（G10）。客户端收到后**立即退出世界**，
-        /// 不进入 30 秒断线重连窗口 —— 主机进程都要没了，重连毫无意义。
-        ///
-        /// 为什么要这条消息：客户端在 TCP 层无法区分「主机正常关窗」和「我家 WiFi 抖了一下」，
-        /// 两者都表现为连接失效；没有这条消息时正常关主机也要让客户端白等 30 秒。
-        ///
-        /// 强杀进程发不出这条（进程被瞬间终止，没有任何代码能执行），那种情况由客户端的
-        /// `ECONNREFUSED ⇒ 主机真的不在` 判定来收尾（见 TerrainSyncModule 的重连窗口逻辑）。
-        ///
-        /// **同步发送并等待一小段时间**：这是进程退出前的最后一件事，异步排队会来不及。
-        /// 每条连接各自 TrySend（底层队列化），失败不影响其它连接。
+        /// 主机正常关房或退出游戏时，通知客户端立即结束当前联机世界。
+        /// 所有主连接使用同一个等待上限，报告成功写入的数量，而非入队数量。
         /// </summary>
         public void BroadcastHostShutdown(string reason)
         {
-            string text = string.IsNullOrEmpty(reason) ? "host shutting down" : reason;
-            var message = new HostShutdown { Reason = text };
-            byte[] payload;
-            try
-            {
-                payload = message.ToByteArray();
-            }
-            catch (Exception e)
-            {
-                ModLog.Warn("[SuMP][terrain] Failed to build the HostShutdown message: " +
-                    e.GetType().Name + " " + e.Message + " → 客户端只能等重连窗口耗尽（仍会退出）");
-                return;
-            }
+            const int writeTimeoutMs = 200;
+            string text = string.IsNullOrEmpty(reason) ? "The host closed the room." : reason;
+            byte[] payload = new HostShutdown { Reason = text }.ToByteArray();
             var targets = new List<int>();
             lock (m_gate)
             {
-                foreach (KeyValuePair<int, State> pair in m_clients)
+                foreach (State state in m_clients.Values)
                 {
-                    if (pair.Value != null && pair.Value.Id > 0) targets.Add(pair.Value.Id);
+                    if (state != null && state.Id > 0) targets.Add(state.Id);
                 }
             }
-            int sent = 0;
-            for (int i = 0; i < targets.Count; i++)
+            if (targets.Count == 0) return;
+
+            var writes = new List<Task<bool>>(targets.Count);
+            foreach (int clientId in targets)
+                writes.Add(m_server.SendHostShutdown(clientId, payload));
+
+            Task.WhenAll(writes).Wait(writeTimeoutMs);
+            int written = 0;
+            foreach (Task<bool> write in writes)
             {
-                try
-                {
-                    if (m_server.TrySend(targets[i], MessageType.HostShutdown, payload)) sent++;
-                }
-                catch (Exception e)
-                {
-                    ModLog.Warn("[SuMP][terrain] Failed to send HostShutdown (clientId=" +
-                        targets[i] + "）：" + e.GetType().Name + " " + e.Message);
-                }
+                if (write.IsCompletedSuccessfully && write.Result) written++;
             }
-            ModLog.Info("[SuMP][terrain] Host shutting down normally -> notified " + sent + "/" +
-                targets.Count + " 条连接广播 HostShutdown（" + text + "）；客户端会立即退出世界");
-            SessionTrace?.Invoke("主机正常退出：广播 HostShutdown 给 " + sent + "/" + targets.Count +
-                " 条连接（客户端不做重连）");
+            string summary = "主机结束房间：已将 HostShutdown 写入 " + written + "/" + writes.Count +
+                " 条主连接（" + text + "）";
+            if (written != writes.Count)
+                ModLog.Warn(summary + "，部分连接已断开或在 " + writeTimeoutMs + " ms 内未完成发送");
+            else
+                ModLog.Info(summary);
+            SessionTrace?.Invoke(summary);
         }
 
         /// <summary>

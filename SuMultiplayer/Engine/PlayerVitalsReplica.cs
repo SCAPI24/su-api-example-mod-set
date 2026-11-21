@@ -2209,7 +2209,8 @@ namespace SuMultiplayer.Engine
             }
             try
             {
-                var dialog = new Dialog();
+                // Source: DialogsManager.cs:DialogsManager.HasDialogs — checks the parent, regardless of hit testing.
+                var dialog = new Dialog { IsHitTestVisible = false };
                 // Dispatcher.Dispatch 在主线程立刻执行：对话框这一帧就挂上，
                 // 早于引擎下一次 PlayerDead.Update 的条件判定。
                 DialogsManager.ShowDialog(guiWidget, dialog);
@@ -2243,9 +2244,8 @@ namespace SuMultiplayer.Engine
         /// （<c>DialogsManager.cs:8-20</c> 的 <c>CoverWidget</c>，<c>Alpha=192</c>，
         /// <c>DialogsManager.cs:67</c> 加入 <c>parentWidget.Children</c>）。它不参与
         /// <c>HasDialogs</c> 判定，但会把引擎原生的死亡屏（"YOU HAVE DIED" 大字）压暗到 25%。
-        /// 这里只把它改成全透明，让死亡屏保持原生亮度；遮罩不参与点击判定，改它不影响任何逻辑。
-        ///
-        /// 找不到遮罩（引擎内部分层变了）时**不静默**：计数 + 限流日志，死亡屏会变暗但仍可用。
+        /// 把遮罩改成全透明并排除命中判定，保留死亡屏亮度，让已打开的菜单继续接收点击。
+        /// 找不到遮罩时记录错误，死亡屏可能变暗，菜单点击也可能被遮挡。
         /// </summary>
         private void NeutralizeDialogCover(int slot, ContainerWidget parent, Dialog dialog)
         {
@@ -2258,7 +2258,7 @@ namespace SuMultiplayer.Engine
                     m_gateCoverMisses++;
                     Problem("gate-cover-index:" + slot,
                         "挡门对话框在 GuiWidget.Children 里的位置是 " + index +
-                        " → 找不到它前面的遮罩，引擎死亡屏会被压暗（不假装成功）");
+                        " → 找不到它前面的遮罩，死亡屏可能变暗，菜单可能无法点击");
                     return;
                 }
                 Widget cover = children[index - 1];
@@ -2268,7 +2268,7 @@ namespace SuMultiplayer.Engine
                     Problem("gate-cover-type:" + slot,
                         "挡门对话框前面的控件不是 DialogsManager.CoverWidget（实际=" +
                         (cover == null ? "null" : cover.GetType().Name) +
-                        "）→ 引擎死亡屏会被压暗（不假装成功）");
+                        "）→ 死亡屏可能变暗，菜单可能无法点击");
                     return;
                 }
                 if (!(cover is RectangleWidget rectangle))
@@ -2278,13 +2278,15 @@ namespace SuMultiplayer.Engine
                         "DialogsManager.CoverWidget 不是 RectangleWidget → 无法改成透明");
                     return;
                 }
+                // Source: Widget.cs:Widget.HitTestGlobal — transparent widgets can still block clicks.
                 rectangle.FillColor = Color.Transparent;
+                rectangle.IsHitTestVisible = false;
                 m_gateCoverNeutralized++;
             }
             catch (Exception e)
             {
                 m_gateCoverMisses++;
-                Error("gate-cover:" + slot, "把挡门对话框的遮罩改成透明失败", e);
+                Error("gate-cover:" + slot, "关闭死亡挡门遮罩的显示和点击拦截失败", e);
             }
         }
 

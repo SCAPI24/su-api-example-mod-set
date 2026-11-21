@@ -1,9 +1,11 @@
 using System;
 using System.Collections.Generic;
 using System.Net;
+using System.Net.NetworkInformation;
 using System.Net.Sockets;
 using System.Text;
 using System.Threading;
+using SuMultiplayer.Engine;
 
 namespace SuMultiplayer.Net
 {
@@ -165,7 +167,8 @@ namespace SuMultiplayer.Net
                 // UDP 没有 TIME_WAIT，Dispose 后端口立刻可用，所以去掉它没有副作用。
                 m_socket.Client.Bind(new IPEndPoint(IPAddress.Any, m_port));
                 m_running = true;
-                m_thread = new Thread(Loop) { IsBackground = true, Name = "SuMP-Beacon" };
+                UdpClient socket = m_socket;
+                m_thread = new Thread(() => Loop(socket)) { IsBackground = true, Name = "SuMP-Beacon" };
                 m_thread.Start();
                 return true;
             }
@@ -177,21 +180,21 @@ namespace SuMultiplayer.Net
             }
         }
 
-        private void Loop()
+        private void Loop(UdpClient socket)
         {
             var remote = new IPEndPoint(IPAddress.Any, 0);
             while (m_running)
             {
                 try
                 {
-                    byte[] data = m_socket.Receive(ref remote);
+                    byte[] data = socket.Receive(ref remote);
                     if (!RoomBeaconCodec.IsProbe(data, data.Length)) continue;
                     RoomBeaconInfo info = m_infoProvider?.Invoke() ?? new RoomBeaconInfo();
                     info.HostName = remote.Address.ToString();
                     // 原样回显探测的 nonce：客户端用本地时间差算房间行上的 RTT（旧联机 mod 的 Ping 口径）。
                     byte[] reply = RoomBeaconCodec.EncodeReply(info,
                         RoomBeaconCodec.ParseProbeNonce(data, data.Length));
-                    m_socket.Send(reply, reply.Length, remote);
+                    socket.Send(reply, reply.Length, remote);
                     ProbesAnswered++;
                 }
                 catch (SocketException)
@@ -223,17 +226,19 @@ namespace SuMultiplayer.Net
         /// <summary>要探测的端口段（槽位从 start 起连续 count 个）。</summary>
         private readonly int[] m_ports;
         private UdpClient m_socket;
-        private Thread m_thread;
         private volatile bool m_running;
-        private long m_lastProbeMs;
-        /// <summary>已发出但还没收到应答的探测：nonce → 发送时刻（毫秒）。有界，防坏包堆积。</summary>
-        private readonly Dictionary<long, long> m_pendingProbes = new Dictionary<long, long>();
+        private long m_lastProblemMs;
+        private long m_probesSent;
+        private long m_repliesReceived;
+        private readonly HashSet<long> m_pendingProbes = new HashSet<long>();
         private const int MaxPendingProbes = 64;
+        private const int InterfaceRefreshMs = 3000;
+        private const int ReplyBudgetPerSocket = 16;
 
         /// <summary>探测间隔（旧联机 mod 的 Ping 探测是 1 s 一轮；房间行上的延迟靠它刷新）。</summary>
         public int ProbeIntervalMs { get; set; } = 1000;
-        public long ProbesSent { get; private set; }
-        public long RepliesReceived { get; private set; }
+        public long ProbesSent => Interlocked.Read(ref m_probesSent);
+        public long RepliesReceived => Interlocked.Read(ref m_repliesReceived);
         /// <summary>是否至少收到过一个应答（用于判断广播是否被挡）。</summary>
         public bool HasAnyReply => RepliesReceived > 0;
         /// <summary>发现房间（info, 来源地址）。</summary>
@@ -253,123 +258,224 @@ namespace SuMultiplayer.Net
 
         public bool Start()
         {
+            if (m_socket != null) return false;
             try
             {
-                m_socket = new UdpClient();
-                m_socket.EnableBroadcast = true;
-                m_socket.Client.Bind(new IPEndPoint(IPAddress.Any, 0));
+                UdpClient socket = BindProbeSocket(IPAddress.Any);
+                m_socket = socket;
                 m_running = true;
-                m_thread = new Thread(Loop) { IsBackground = true, Name = "SuMP-Probe" };
-                m_thread.Start();
+                var thread = new Thread(() => Loop(socket)) { IsBackground = true, Name = "SuMP-Probe" };
+                thread.Start();
                 return true;
             }
-            catch (Exception)
+            catch (Exception e)
             {
-                m_socket?.Close();
+                m_running = false;
+                m_socket?.Dispose();
                 m_socket = null;
+                LogProblem("启动", e);
                 return false;
             }
         }
 
-        private void Loop()
+        private static UdpClient BindProbeSocket(IPAddress localAddress)
         {
-            var remote = new IPEndPoint(IPAddress.Any, 0);
-            while (m_running)
+            var socket = new UdpClient(AddressFamily.InterNetwork);
+            try
             {
-                long now = Environment.TickCount64;
-                if (now - m_lastProbeMs >= ProbeIntervalMs)
-                {
-                    m_lastProbeMs = now;
-                    byte[] probe = RoomBeaconCodec.EncodeProbe(now);
-                    // 端口段的每个槽位各发一次广播：同一局域网里可能有多台主机、
-                    // 每台主机可能在不同槽位开房间（51459 / 51460 …），只发一个端口会漏掉。
-                    for (int i = 0; i < m_ports.Length; i++)
-                    {
-                        try
-                        {
-                            m_socket.Send(probe, probe.Length,
-                                new IPEndPoint(IPAddress.Broadcast, m_ports[i]));
-                            ProbesSent++;
-                        }
-                        catch (Exception)
-                        {
-                            // 广播被系统拒绝（某些网络禁广播）：不致命，等下一轮
-                        }
-                    }
-                    if (m_pendingProbes.Count >= MaxPendingProbes) m_pendingProbes.Clear();
-                    m_pendingProbes[now] = now;
-                }
-                try
-                {
-                    if (m_socket.Available > 0)
-                    {
-                        byte[] data = m_socket.Receive(ref remote);
-                        if (RoomBeaconCodec.TryDecodeReply(data, data.Length, out RoomBeaconInfo info, out _))
-                        {
-                            RepliesReceived++;
-                            long nonce = RoomBeaconCodec.ParseReplyNonce(data, data.Length);
-                            info.PingMs = ComputePingMs(nonce, Environment.TickCount64);
-                            RoomFound?.Invoke(info, remote.Address.ToString());
-                        }
-                        continue;
-                    }
-                }
-                catch (SocketException)
-                {
-                    if (!m_running) return;
-                }
-                catch (ObjectDisposedException)
-                {
-                    return;
-                }
-                Thread.Sleep(50);
+                socket.EnableBroadcast = true;
+                socket.Client.Bind(new IPEndPoint(localAddress, 0));
+                return socket;
+            }
+            catch
+            {
+                socket.Dispose();
+                throw;
             }
         }
 
-        /// <summary>
-        /// 用探测→应答的本地时间差算 RTT。
-        /// nonce 不在待答复表里（旧主机不回显 / 坏包 / 超时太久）→ -1（房间行显示 unknown），
-        /// **绝不猜**一个延迟。
-        /// </summary>
-        private int ComputePingMs(long nonce, long nowMs)
+        private void Loop(UdpClient socket)
         {
-            if (nonce <= 0L) return -1;
-            if (!m_pendingProbes.Remove(nonce)) return -1;
-            long rtt = nowMs - nonce;
-            if (rtt < 0L) return -1;
-            if (rtt > 5000L) return -1;
-            return (int)rtt;
+            bool useInterfaceBroadcasts = OperatingSystem.IsWindows();
+            var interfaceSockets = new Dictionary<(IPAddress Source, IPAddress Broadcast), UdpClient>();
+            long nextRefresh = 0;
+            long nextProbe = 0;
+            try
+            {
+                while (m_running)
+                {
+                    long now = Environment.TickCount64;
+                    if (useInterfaceBroadcasts && now >= nextRefresh)
+                    {
+                        RefreshInterfaceSockets(interfaceSockets);
+                        nextRefresh = now + InterfaceRefreshMs;
+                    }
+                    if (now >= nextProbe)
+                    {
+                        byte[] probe = CreateProbe(now);
+                        if (useInterfaceBroadcasts)
+                        {
+                            foreach (var entry in interfaceSockets)
+                                SendProbe(entry.Value, entry.Key.Broadcast, probe);
+                        }
+                        else
+                        {
+                            SendProbe(socket, IPAddress.Broadcast, probe);
+                        }
+                        nextProbe = now + Math.Max(1, ProbeIntervalMs);
+                    }
+
+                    ReadReplies(socket);
+                    foreach (UdpClient interfaceSocket in interfaceSockets.Values)
+                        ReadReplies(interfaceSocket);
+                    Thread.Sleep(20);
+                }
+            }
+            finally
+            {
+                foreach (UdpClient interfaceSocket in interfaceSockets.Values)
+                    interfaceSocket.Dispose();
+                socket.Dispose();
+            }
         }
 
-        /// <summary>单机自测：不需要广播也能用（-1 = 广播全地址）。</summary>
-        public int ProbeTargets(IEnumerable<string> addresses)
+        // Source: Comms/UdpTransmitter.cs:UdpTransmitter.CreateIPv4NetworkSnapshot
+        private void RefreshInterfaceSockets(Dictionary<(IPAddress Source, IPAddress Broadcast), UdpClient> sockets)
         {
-            int sent = 0;
-            if (addresses == null) return 0;
-            foreach (string address in addresses)
+            var available = new HashSet<(IPAddress Source, IPAddress Broadcast)>();
+            try
             {
-                if (!IPAddress.TryParse(address, out IPAddress target)) continue;
-                for (int i = 0; i < m_ports.Length; i++)
+                foreach (NetworkInterface adapter in NetworkInterface.GetAllNetworkInterfaces())
                 {
+                    if (adapter.OperationalStatus != OperationalStatus.Up ||
+                        adapter.NetworkInterfaceType == NetworkInterfaceType.Loopback) continue;
                     try
                     {
-                        byte[] probe = RoomBeaconCodec.EncodeProbe();
-                        m_socket.Send(probe, probe.Length, new IPEndPoint(target, m_ports[i]));
-                        sent++;
+                        foreach (UnicastIPAddressInformation unicast in adapter.GetIPProperties().UnicastAddresses)
+                        {
+                            IPAddress address = unicast.Address;
+                            if (address.AddressFamily != AddressFamily.InterNetwork || IPAddress.IsLoopback(address) ||
+                                address.Equals(IPAddress.Any) || unicast.PrefixLength < 1 || unicast.PrefixLength > 30)
+                                continue;
+                            byte[] broadcast = address.GetAddressBytes();
+                            for (int i = 0; i < broadcast.Length; i++)
+                            {
+                                int networkBits = Math.Clamp(unicast.PrefixLength - i * 8, 0, 8);
+                                broadcast[i] |= (byte)((1 << (8 - networkBits)) - 1);
+                            }
+                            available.Add((address, new IPAddress(broadcast)));
+                        }
                     }
-                    catch (Exception)
-                    {
-                    }
+                    catch (NetworkInformationException e) { LogProblem("读取网卡", e); }
                 }
             }
+            catch (NetworkInformationException e)
+            {
+                LogProblem("枚举网卡", e);
+                return;
+            }
+
+            foreach (var pair in new List<(IPAddress Source, IPAddress Broadcast)>(sockets.Keys))
+            {
+                if (available.Contains(pair)) continue;
+                sockets[pair].Dispose();
+                sockets.Remove(pair);
+            }
+            foreach (var pair in available)
+            {
+                if (!m_running || sockets.ContainsKey(pair)) continue;
+                try { sockets.Add(pair, BindProbeSocket(pair.Source)); }
+                catch (SocketException e) { LogProblem("绑定搜房网卡", e); }
+            }
+        }
+
+        private byte[] CreateProbe(long now)
+        {
+            lock (m_pendingProbes)
+            {
+                m_pendingProbes.RemoveWhere(nonce => now - nonce > 5000L);
+                if (m_pendingProbes.Count >= MaxPendingProbes) m_pendingProbes.Clear();
+                m_pendingProbes.Add(now);
+            }
+            return RoomBeaconCodec.EncodeProbe(now);
+        }
+
+        private int SendProbe(UdpClient socket, IPAddress target, byte[] probe)
+        {
+            int sent = 0;
+            foreach (int port in m_ports)
+            {
+                if (!m_running) break;
+                try
+                {
+                    socket.Send(probe, probe.Length, new IPEndPoint(target, port));
+                    Interlocked.Increment(ref m_probesSent);
+                    sent++;
+                }
+                catch (SocketException e) { if (m_running) LogProblem("发送搜房探测", e); }
+                catch (ObjectDisposedException) when (!m_running) { break; }
+            }
             return sent;
+        }
+
+        private void ReadReplies(UdpClient socket)
+        {
+            try
+            {
+                var remote = new IPEndPoint(IPAddress.Any, 0);
+                for (int i = 0; i < ReplyBudgetPerSocket && m_running && socket.Available > 0; i++)
+                {
+                    byte[] data = socket.Receive(ref remote);
+                    if (!RoomBeaconCodec.TryDecodeReply(data, data.Length, out RoomBeaconInfo info, out _))
+                        continue;
+                    Interlocked.Increment(ref m_repliesReceived);
+                    long nonce = RoomBeaconCodec.ParseReplyNonce(data, data.Length);
+                    info.PingMs = ComputePingMs(nonce, Environment.TickCount64);
+                    RoomFound?.Invoke(info, remote.Address.ToString());
+                }
+            }
+            catch (SocketException e) { if (m_running) LogProblem("接收搜房应答", e); }
+            catch (ObjectDisposedException) when (!m_running) { }
+        }
+
+        // One broadcast round can have many hosts respond. Keep its nonce valid for all of them.
+        private int ComputePingMs(long nonce, long nowMs)
+        {
+            if (nonce <= 0L || nowMs < nonce || nowMs - nonce > 5000L) return -1;
+            lock (m_pendingProbes)
+                return m_pendingProbes.Contains(nonce) ? (int)(nowMs - nonce) : -1;
+        }
+
+        /// <summary>向指定的 IPv4 地址发探测，按系统路由选择出口。</summary>
+        public int ProbeTargets(IEnumerable<string> addresses)
+        {
+            UdpClient socket = m_socket;
+            if (addresses == null || socket == null || !m_running) return 0;
+            byte[] probe = CreateProbe(Environment.TickCount64);
+            int sent = 0;
+            foreach (string address in addresses)
+            {
+                if (IPAddress.TryParse(address, out IPAddress target) &&
+                    target.AddressFamily == AddressFamily.InterNetwork)
+                    sent += SendProbe(socket, target, probe);
+            }
+            return sent;
+        }
+
+        private void LogProblem(string operation, Exception error)
+        {
+            long now = Environment.TickCount64;
+            long previous = Interlocked.Read(ref m_lastProblemMs);
+            if (previous != 0 && now - previous < 10000L) return;
+            if (Interlocked.CompareExchange(ref m_lastProblemMs, now, previous) == previous)
+                ModLog.Warn("[SuMP][LAN] " + operation + "失败：" + error.Message);
         }
 
         public void Dispose()
         {
             m_running = false;
-            try { m_socket?.Close(); } catch (Exception) { }
-            m_socket = null;
+            // The worker owns the bound interface sockets and closes them in finally.
+            m_socket?.Dispose();
         }
     }
 }

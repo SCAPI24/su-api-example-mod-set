@@ -83,6 +83,12 @@ namespace SuMultiplayer.Net
         /// <summary>引擎位置音频的默认最小距离（与内容里最常见的 2 一致）。</summary>
         public const float DefaultMinDistance = 2f;
 
+        // Source: ComponentMiner.cs:ComponentMiner.AttackBody
+        internal const float BodyImpactMinDistance = 4f;
+        internal static bool IsBodyImpact(string sound) =>
+            sound != null && sound.StartsWith("Audio/Impacts/Body/", StringComparison.Ordinal) &&
+            IsValidSoundName(sound);
+
         /// <summary>
         /// 复刻 <c>SubsystemAudio.CalculateVolume</c>（Source: Survivalcraft/Game/SubsystemAudio.cs:
         /// CalculateVolume）。position 重载用默认 rolloffFactor=2。

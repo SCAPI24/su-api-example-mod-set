@@ -398,6 +398,7 @@ namespace SuMultiplayer.Modules
             public bool StartHostServer(int port, out string reason) => m_owner.StartHostServer(port, out reason);
             public bool ConnectTo(string host, int port, out string reason) => m_owner.ConnectTo(host, port, out reason);
             public void StopChannel() => m_owner.StopChannel();
+            public void StopHostChannel(string reason) => m_owner.StopHostChannel(reason);
             public void StopChannelWithBye(string reason) => m_owner.StopChannelWithBye(reason);
             public bool IsChannelRunning => m_owner.m_server != null || m_owner.m_client != null;
             public bool IsHosting => m_owner.m_server != null;
@@ -1128,6 +1129,7 @@ namespace SuMultiplayer.Modules
                 string localProtocolHash = MultiplayerModCompatibility.ProtocolHash;
                 string localBuildFingerprint = MultiplayerModCompatibility.BuildFingerprint;
                 m_server = new TcpTerrainServer(port);
+                m_hostShutdownSent = false;
                 // 网络线程 → 主线程：只入队，不碰引擎（引擎读写都在 Pump 里）
                 m_server.FrameReceived += m_bridge.PostFrame;
                 m_server.CircuitFrameReceived += HandleCircuitFrame;
@@ -1528,6 +1530,13 @@ namespace SuMultiplayer.Modules
                         "）→ 直接关通道");
                 }
             }
+            StopChannel();
+        }
+
+        // Source: SessionModule.cs:SessionModule.CloseRoom
+        private void StopHostChannel(string reason)
+        {
+            NotifyHostShuttingDown(reason);
             StopChannel();
         }
 
@@ -3287,7 +3296,7 @@ namespace SuMultiplayer.Modules
         /// <summary>
         /// G10：主机正常退出游戏时（用户点关闭 / 菜单退出）广播 <c>HostShutdown</c>，
         /// 让客户端立即退出世界而不是白等 30 秒重连窗口。
-        /// 由组合根在 <c>Engine.Window.Closed</c> 里调用；**幂等**（重复调用只发一次）。
+        /// 由关房和 <c>Engine.Window.Closed</c> 共用，每个房间只发送一次。
         /// </summary>
         internal void NotifyHostShuttingDown(string reason)
         {
@@ -4149,8 +4158,7 @@ namespace SuMultiplayer.Modules
         private void HandleClientHostShutdown(string reason)
         {
             string detail = string.IsNullOrEmpty(reason) ? "host shutting down" : reason;
-            LogWarning("主机正常退出游戏（" + detail + "）→ 直接退出世界，" +
-                "**不进入重连窗口**（主机进程已结束，重连没有意义）");
+            LogWarning("主机主动结束房间（" + detail + "）→ 直接退出世界，不进入重连窗口");
             m_clientKicked = true;      // 同一语义：禁止"连接失效后自动重连"
             ExitWorldNow("host-shutdown：" + detail);
         }

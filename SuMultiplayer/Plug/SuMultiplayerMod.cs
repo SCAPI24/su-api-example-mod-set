@@ -194,6 +194,7 @@ namespace SuMultiplayer
         private CharacterNameRoller m_nameRoller;
         private IModEventBus m_eventBus;
         private UpdateExtensionToken m_terrainAimExtension;
+        private UpdateExtensionToken m_creatureImpactAudioExtension;
         private IModInjector m_injector;
         private SyncConfig m_config;
         /// <summary>
@@ -1162,6 +1163,11 @@ namespace SuMultiplayer
             m_terrainAimExtension = eventBus.RegisterUpdateExtension<ComponentPlayer>(
                 "SuMultiplayer.TerrainEditAim",
                 player => new TerrainEditAimExtension(player, m_terrainModule.Bridge, m_avatarSpawner),
+                EventPriority.LOWEST);
+            // Source: ComponentChaseBehavior.cs:ComponentChaseBehavior.Update
+            m_creatureImpactAudioExtension = eventBus.RegisterUpdateExtension<ComponentChaseBehavior>(
+                "SuMultiplayer.CreatureImpactAudio",
+                chase => new CreatureImpactAudioExtension(chase, m_remoteAudioEngine, m_avatarSpawner),
                 EventPriority.LOWEST);
             // 全局主机声音中继：替换 SubsystemAudio，在 base.Update 排空 m_queuedSounds
             // 之前捕获新增条目（非虚 PlaySound 无法用派生外壳截获，见 Engine/RemoteActionAudioReplica.cs）。
@@ -2412,6 +2418,8 @@ m_terrainModule?.Bridge.BlockBehaviorNotify.Describe());
         {
             m_terrainAimExtension?.Dispose();
             m_terrainAimExtension = null;
+            m_creatureImpactAudioExtension?.Dispose();
+            m_creatureImpactAudioExtension = null;
             m_terrainModule?.Bridge.ResetClientEditCapture(ClientCaptureDropReason.Detached);
             // Source: SuPlayScreenExtension.cs:Detached — detach before the session/transfer ports are disposed.
             m_playScreenExtension?.Dispose();
