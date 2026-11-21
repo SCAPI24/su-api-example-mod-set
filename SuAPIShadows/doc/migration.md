@@ -4,7 +4,7 @@
 
 - 保留独立子系统与阴影算法；已在数据库注册中补充 Terrain 加载依赖，确保地形渲染器先完成初始化。
 - 目标框架为 `net10.0`，ModInfo 的 `APIVersion` 对齐 `0.2.0.0`；Mod 版本保持 `1.0.1`，`IsMergeLib=true`。
-- Engine、EntitySystem、Survivalcraft 三个依赖统一使用 NuGet `PackageReference`，版本严格锁定 `[0.2.0.0]`，从已有 `cnb-nuget` 源 `https://nuget.cnb.cool/suceru.cb/SuAPICore/-/packages/v3/index.json` 还原。不使用本地 DLL、HintPath 或 ProjectReference，不构建引擎，不修改全局 NuGet 配置。
+- Engine、EntitySystem、Survivalcraft 三个依赖统一使用 NuGet `PackageReference`，版本严格锁定 `[0.2.0.0]`，从已有 `cnb-nuget` 源 `https://nuget.cnb.cool/suceru/SuAPICore/-/packages/v3/index.json` 还原。不使用本地 DLL、HintPath 或 ProjectReference，不构建引擎，不修改全局 NuGet 配置。
 - 启用 `CopyLocalLockFileAssemblies`，将 NuGet 运行时依赖复制到输出目录供 Obfuscar 解析。Release 构建执行 Obfuscar，输入 `bin/Release/net10.0`，输出其 `Obfuscated/` 子目录。只有 SuAPIShadows 为混淆 Module；依赖 DLL 仅用于解析。保留 Mod 与子系统反射入口名。
 - 构建流程：先结束所有 `Survivalcraft.exe` 并确认已退出，更新本 Mod 源文件时间戳，再依次执行 `dotnet restore Mod/SuAPIShadows/SuAPIShadows.csproj` 与 `dotnet build Mod/SuAPIShadows/SuAPIShadows.csproj -c Release --no-restore`。桌面与 Android 构建必须串行。
 - 打包仅使用本 Mod 的最终混淆 DLL、扁平 `Lib/` 与根目录 ModInfo.xml；不得打包复制到输出目录的引擎或其他依赖 DLL，ZIP 条目用 `/`，文件名前缀 `[SuAPI]`。

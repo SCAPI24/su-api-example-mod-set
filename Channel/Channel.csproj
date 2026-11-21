@@ -12,10 +12,10 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <PackageReference Include="Engine" Version="[0.2.1.0]" />
-    <PackageReference Include="EntitySystem" Version="[0.2.1.0]" />
-    <PackageReference Include="Survivalcraft" Version="[0.2.1.0]" />
-    <PackageReference Include="SuAPICore" Version="[0.2.1.0]" />
+    <PackageReference Include="Engine" Version="[0.2.1.2]" />
+    <PackageReference Include="EntitySystem" Version="[0.2.1.2]" />
+    <PackageReference Include="Survivalcraft" Version="[0.2.1.2]" />
+    <PackageReference Include="SuAPICore" Version="[0.2.1.2]" />
   </ItemGroup>
 
   <ItemGroup>

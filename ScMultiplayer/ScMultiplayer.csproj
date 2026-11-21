@@ -38,7 +38,7 @@
     <!-- SuEventBus：中间件（信道 Mod 与 ScMP 共用事件契约），随包放进 Lib/SuEventBus.dll。
          它的引擎引用不再传递（见 DisableTransitiveProjectReferences） -->
     <ProjectReference Include="..\SuEventBus\SuEventBus.csproj" />
-    <!-- SuAPICore 是游戏内置 Mod：从制品库源 cnb-nuget（nuget.cnb.cool/suceru.cb/SuAPICore）取包，
+    <!-- SuAPICore 是游戏内置 Mod：从制品库源 cnb-nuget（nuget.cnb.cool/suceru/SuAPICore）取包，
          构建时复制到 bin 以便 Obfuscar 解析其接口/基类成员；
          打 .scmod 时只取 ScMultiplayer.dll + Comms.dll，绝不把 SuAPICore.dll 放进 Lib/ -->
     <PackageReference Include="SuAPICore" Version="0.1.7.0" />

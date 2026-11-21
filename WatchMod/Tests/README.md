@@ -8,7 +8,7 @@
 
 ## 可选辅助执行
 
-使用已配置的 cnb-nuget 源（https://nuget.cnb.cool/suceru.cb/SuAPICore/-/packages/v3/index.json）。由主代理完成 WatchMod 的 Release 构建后，再执行：
+使用已配置的 cnb-nuget 源（https://nuget.cnb.cool/suceru/SuAPICore/-/packages/v3/index.json）。由主代理完成 WatchMod 的 Release 构建后，再执行：
 
 ```powershell
 dotnet run --project Mod/WatchMod/Tests/WatchMod.IntegrationTests.csproj -c Release

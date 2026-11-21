@@ -12,7 +12,7 @@
       <Text lang="zh_CN">联机模组</Text>
     </LocalizedName>
     <Version>2.3.1</Version>
-    <APIVersion>0.2.1.0</APIVersion>
+    <APIVersion>0.2.1.2</APIVersion>
     <ShortCode>Su-MP</ShortCode>
     <IsMergeLib>true</IsMergeLib>
     <Asset>

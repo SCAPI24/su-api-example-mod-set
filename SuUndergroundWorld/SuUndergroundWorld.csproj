@@ -9,8 +9,8 @@
   </PropertyGroup>
   <!-- Source: doc/mod-nuget-compile-guide.md:PackageReference; never build the host from a Mod build. -->
   <ItemGroup>
-    <PackageReference Include="Engine" Version="[0.2.1.0]" />
-    <PackageReference Include="EntitySystem" Version="[0.2.1.0]" />
-    <PackageReference Include="Survivalcraft" Version="[0.2.1.0]" />
+    <PackageReference Include="Engine" Version="[0.2.1.2]" />
+    <PackageReference Include="EntitySystem" Version="[0.2.1.2]" />
+    <PackageReference Include="Survivalcraft" Version="[0.2.1.2]" />
   </ItemGroup>
 </Project>

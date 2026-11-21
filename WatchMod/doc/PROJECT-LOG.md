@@ -14,7 +14,7 @@
 
 ## 版本与构建
 
-目标 net10.0，API 元数据 0.2.1.0，Mod 自身版本保持 1.0.1，IsMergeLib=true。生产与测试工程都通过 PackageReference 精确引用已发布的 Engine/EntitySystem/Survivalcraft `[0.2.1.0]`，使用已配置的 cnb-nuget 源 `https://nuget.cnb.cool/suceru.cb/SuAPICore/-/packages/v3/index.json`；不引用主仓库本地引擎 DLL，不递归构建或覆盖主仓库，不回退旧包。
+目标 net10.0，API 元数据 0.2.1.0，Mod 自身版本保持 1.0.1，IsMergeLib=true。生产与测试工程都通过 PackageReference 精确引用已发布的 Engine/EntitySystem/Survivalcraft `[0.2.1.0]`，使用已配置的 cnb-nuget 源 `https://nuget.cnb.cool/suceru/SuAPICore/-/packages/v3/index.json`；不引用主仓库本地引擎 DLL，不递归构建或覆盖主仓库，不回退旧包。
 
 ```powershell
 dotnet restore Mod/WatchMod/WatchMod.csproj

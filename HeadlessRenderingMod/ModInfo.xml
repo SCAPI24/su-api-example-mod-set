@@ -11,7 +11,7 @@
       <Text lang="zh_CN">此模组会关闭游戏画面，仅用于无图形界面的专用服务器。请勿在普通客户端安装。</Text>
     </InstallWarning>
     <Version>1.4.2</Version>
-    <APIVersion>0.2.1.0</APIVersion>
+    <APIVersion>0.2.1.2</APIVersion>
     <ShortCode>Su-HRM</ShortCode>
     <Asset>
       <ContentRoot>Content</ContentRoot>

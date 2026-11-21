@@ -16,7 +16,7 @@ OpenTK, Version=1.1.0.0, Culture=neutral, PublicKeyToken=bad199fe84eb3df4
 
 ## 发布来源与依赖证据
 
-- 使用已配置的 cnb-nuget：`https://nuget.cnb.cool/suceru.cb/SuAPICore/-/packages/v3/index.json`。
+- 使用已配置的 cnb-nuget：`https://nuget.cnb.cool/suceru/SuAPICore/-/packages/v3/index.json`。
 - 三包 `.nupkg.metadata` 的 source 均指向 CNB；repository commit 均为 `771afab7707b42156cda08593bba29cee6e84c69`。
 - Engine 0.2.0.0 的 nuspec 仅声明 System.Drawing.Common 8.0，`lib/net10.0/` 只有 Engine.dll，没有 OpenTK。
 - EntitySystem 和 Survivalcraft 0.2.0.0 也没有声明 OpenTK 依赖。

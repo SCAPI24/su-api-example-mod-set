@@ -7,7 +7,7 @@
             <Text lang="zh_CN" force="true">中文翻译</Text>
         </LocalizedName>
         <Version>1.6.49</Version>
-        <APIVersion>0.2.1.0</APIVersion>
+        <APIVersion>0.2.1.2</APIVersion>
         <ShortCode>su-zh</ShortCode>
         <Asset>
             <ContentRoot>Content</ContentRoot>

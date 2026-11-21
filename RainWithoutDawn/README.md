@@ -11,7 +11,7 @@
 使用 .NET SDK 10 和固定版本的 Engine、EntitySystem、Survivalcraft NuGet 包构建：
 
 ```powershell
-dotnet restore RainWithoutDawn.csproj --source https://nuget.cnb.cool/suceru.cb/SuAPICore/-/packages/v3/index.json --source https://api.nuget.org/v3/index.json
+dotnet restore RainWithoutDawn.csproj --source https://nuget.cnb.cool/suceru/SuAPICore/-/packages/v3/index.json --source https://api.nuget.org/v3/index.json
 dotnet build RainWithoutDawn.csproj -c Release --no-restore
 ```
 

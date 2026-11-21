@@ -7,8 +7,8 @@
       <Text lang="zh_CN">动态光影</Text>
     </LocalizedName>
     <Version>1.0.1</Version>
-    <APIVersion>0.2.1.0</APIVersion>
-    <ShortCode>Su-Shadows</ShortCode>
+    <APIVersion>0.2.1.2</APIVersion>
+    <ShortCode>Su-Shd</ShortCode>
     <Asset>
       <ContentRoot>Content</ContentRoot>
     </Asset>

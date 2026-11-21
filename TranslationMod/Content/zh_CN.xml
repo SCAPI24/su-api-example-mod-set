@@ -2759,6 +2759,19 @@
     <Entry Original="{0} vsync" Translation="{0} 垂直同步" />
     <Entry Original="{0}ms" Translation="{0} 毫秒" />
   </Screen>
+  <Screen Name="AppUpdateScreen">
+    <Entry Original="Downloading SuAPI {0}" Translation="正在下载 SuAPI {0}" />
+    <Entry Original="Game Update Failed" Translation="游戏更新失败" />
+    <Entry Original="Game Updates" Translation="游戏更新" />
+    <Entry Original="Install SuAPI {0}? Enabled mods will be disabled. Mod files and saves will be kept." Translation="更新到 SuAPI {0}？安装时会停用所有已启用的模组，保留模组文件和存档。" />
+    <Entry Original="Loading game updates…" Translation="正在读取更新目录……" />
+    <Entry Original="No newer version available" Translation="当前没有可安装的新版" />
+    <Entry Original="Select an update" Translation="选择要安装的版本" />
+    <Entry Original="SuAPI {0}   |   android" Translation="SuAPI {0}   |   安卓" />
+    <Entry Original="SuAPI {0}   |   linux" Translation="SuAPI {0}   |   Linux" />
+    <Entry Original="SuAPI {0}   |   windows" Translation="SuAPI {0}   |   Windows" />
+    <Entry Original="Unable to load update catalog" Translation="更新目录读取失败" />
+  </Screen>
   <Screen Name="SuCommunityContentScreen">
     <Entry Original="A task was canceled." Translation="任务已取消。" />
     <Entry Original="Access to the path is denied." Translation="访问该路径被拒绝。" />

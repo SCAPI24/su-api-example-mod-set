@@ -13,7 +13,7 @@
 
 ## 版本与构建来源
 
-工程保持 net10.0，通过 PackageReference 严格锁定 Engine、EntitySystem、Survivalcraft 的 `[0.2.1.0]` NuGet 包。使用已有 cnb-nuget 源：`https://nuget.cnb.cool/suceru.cb/SuAPICore/-/packages/v3/index.json`。不递归构建主框架，也不回退本地 DLL、源码引用或旧包。
+工程保持 net10.0，通过 PackageReference 严格锁定 Engine、EntitySystem、Survivalcraft 的 `[0.2.1.0]` NuGet 包。使用已有 cnb-nuget 源：`https://nuget.cnb.cool/suceru/SuAPICore/-/packages/v3/index.json`。不递归构建主框架，也不回退本地 DLL、源码引用或旧包。
 
 ModInfo 的 APIVersion 为 0.2.1.0；Mod 自身 Version 保持 1.1.0，IsMergeLib 保持 true。CopyLocalLockFileAssemblies=true 将依赖复制到构建输出以供混淆解析；Obfuscar 仅处理 MemoryBankDrawMod.dll，核心 DLL 仅通过 AssemblySearchPath 解析，不能混淆或打入 Mod 包。保留入口 SkipType 与构建时复制、修改中间配置的流程。
 

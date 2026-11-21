@@ -7,8 +7,8 @@
             <Text lang="zh_CN">冷雨夜</Text>
         </LocalizedName>
         <Version>1.0.0</Version>
-        <APIVersion>0.2.1.0</APIVersion>
-        <ShortCode>Su-RainWithoutDawn</ShortCode>
+        <APIVersion>0.2.1.2</APIVersion>
+        <ShortCode>Su-RWD</ShortCode>
         <Asset><ContentRoot>Content</ContentRoot></Asset>
         <IsMergeLib>true</IsMergeLib>
     </ModInfo>

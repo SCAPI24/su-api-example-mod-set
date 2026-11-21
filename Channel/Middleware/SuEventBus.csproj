@@ -13,8 +13,8 @@
   <ItemGroup>
     <Compile Include="..\..\SuEventBus\Func\SuEventHub.cs" Link="SuEventHub.cs" />
     <Compile Include="..\..\SuEventBus\Func\SuEvents.cs" Link="SuEvents.cs" />
-    <PackageReference Include="Engine" Version="[0.2.1.0]" />
-    <PackageReference Include="EntitySystem" Version="[0.2.1.0]" />
-    <PackageReference Include="Survivalcraft" Version="[0.2.1.0]" />
+    <PackageReference Include="Engine" Version="[0.2.1.2]" />
+    <PackageReference Include="EntitySystem" Version="[0.2.1.2]" />
+    <PackageReference Include="Survivalcraft" Version="[0.2.1.2]" />
   </ItemGroup>
 </Project>

@@ -14,10 +14,10 @@
       任何以它的类型声明的字段/参数都会让 Mod 在加载时失败（实测），因此这里不再
       引用该程序集，桌面端行为不变。
     -->
-    <PackageReference Include="Engine" Version="[0.2.1.0]" />
-    <PackageReference Include="EntitySystem" Version="[0.2.1.0]" />
-    <PackageReference Include="Survivalcraft" Version="[0.2.1.0]" />
-    <PackageReference Include="SuAPICore" Version="[0.2.1.0]" />
+    <PackageReference Include="Engine" Version="[0.2.1.2]" />
+    <PackageReference Include="EntitySystem" Version="[0.2.1.2]" />
+    <PackageReference Include="Survivalcraft" Version="[0.2.1.2]" />
+    <PackageReference Include="SuAPICore" Version="[0.2.1.2]" />
   </ItemGroup>
 
   <ItemGroup>
