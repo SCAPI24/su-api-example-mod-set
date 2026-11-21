@@ -7957,9 +7957,12 @@ namespace SuMultiplayer.Terrain
 
         private void OnPong(MessageContext context, Pong message)
         {
-            if (message == null || message.Nonce != m_pingNonce || m_lastPingSentMs <= 0) return;
-            long rtt = Environment.TickCount64 - m_lastPingSentMs;
-            if (rtt < 0 || rtt > 5000) return;
+            if (message == null || !m_pingPending || message.Nonce != m_pingNonce) return;
+            m_pingPending = false;
+            long now = Environment.TickCount64;
+            long rtt = now - m_lastPingSentMs;
+            if (rtt < 0 || rtt >= PingTimeoutMs) return;
+            m_lastPingSampleMs = now;
             RoundTripMs = (int)rtt;
         }
 
@@ -8984,19 +8987,31 @@ namespace SuMultiplayer.Terrain
         /// 返回本帧**真正发出去**的上报条数（旧实现返回的也是条数，调用方语义不变）。
         /// </summary>
         private const int PingIntervalMs = 500;
+        private const int PingTimeoutMs = 2500;
         private long m_lastPingSentMs;
+        private long m_lastPingSampleMs;
         private ulong m_pingNonce;
+        private bool m_pingPending;
         /// <summary>最近一次 Ping/Pong 的 RTT；-1 = 还没有有效样本（旧主机不会回 Pong）。</summary>
         public int RoundTripMs { get; private set; } = -1;
 
         private void UpdatePing(long nowMs)
         {
+            if (RoundTripMs >= 0 && nowMs - m_lastPingSampleMs >= PingTimeoutMs)
+                RoundTripMs = -1;
             if (m_channel == null || !m_channel.IsAlive) return;
-            if (m_lastPingSentMs > 0 && nowMs - m_lastPingSentMs < PingIntervalMs) return;
-            m_pingNonce++;
-            var ping = new Ping { Nonce = m_pingNonce };
-            if (!m_messages.TrySend(0, MessageType.Ping, ping.ToByteArray())) return;
+            // An outstanding probe keeps its nonce until it receives a reply or times out.
+            long sinceLastSend = nowMs - m_lastPingSentMs;
+            if (m_pingPending && sinceLastSend < PingTimeoutMs) return;
+            if (m_lastPingSentMs > 0 && sinceLastSend < PingIntervalMs) return;
+            m_pingPending = false;
+            ulong nonce = m_pingNonce + 1;
+            var ping = new Ping { Nonce = nonce };
+            // Rate limit retry attempts even if the send queue is temporarily full.
             m_lastPingSentMs = nowMs;
+            if (!m_messages.TrySend(0, MessageType.Ping, ping.ToByteArray())) return;
+            m_pingNonce = nonce;
+            m_pingPending = true;
         }
 
         public int Tick()

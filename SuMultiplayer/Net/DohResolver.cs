@@ -1,7 +1,10 @@
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using System.Net;
 using System.Net.Http;
+using System.Net.Http.Headers;
+using System.Net.Sockets;
 using System.Text.Json;
 using SuMultiplayer.Engine;
 
@@ -14,10 +17,10 @@ namespace SuMultiplayer.Net
     public static class DohResolver
     {
         private const int TimeoutMs = 3000;
-        private const long CacheTtlMs = 10 * 60 * 1000;
+        private const int MaxDohTtlSeconds = 30;
         private static readonly object Gate = new object();
-        private static readonly Dictionary<string, CacheEntry> s_cache =
-            new Dictionary<string, CacheEntry>(StringComparer.OrdinalIgnoreCase);
+        private static readonly Dictionary<string, Lazy<CacheEntry>> s_dohLookups =
+            new Dictionary<string, Lazy<CacheEntry>>(StringComparer.OrdinalIgnoreCase);
         private static readonly HttpClient s_client = CreateClient();
         private static readonly string[] s_endpoints =
         {
@@ -27,8 +30,14 @@ namespace SuMultiplayer.Net
 
         private sealed class CacheEntry
         {
-            public IPAddress[] Addresses;
-            public long ExpiresAtMs;
+            public CacheEntry(IPAddress[] addresses, int ttlSeconds)
+            {
+                Addresses = addresses;
+                ExpiresAtMs = Environment.TickCount64 + ttlSeconds * 1000L;
+            }
+
+            public IPAddress[] Addresses { get; }
+            public long ExpiresAtMs { get; }
         }
 
         public static bool IsFakeIp(IPAddress address)
@@ -44,48 +53,42 @@ namespace SuMultiplayer.Net
         {
             if (string.IsNullOrWhiteSpace(host)) return Array.Empty<IPAddress>();
             if (IPAddress.TryParse(host, out IPAddress literal)) return new[] { literal };
+
+            // Source: ServerCatalog.cs:ServerCatalog.TryDirectProbe
+            // The OS already honors DNS expiry. Its usable answers take priority over any DoH cache.
+            try
+            {
+                IPAddress[] addresses = Dns.GetHostAddresses(host).Where(address => !IsFakeIp(address))
+                    .OrderBy(address => address.AddressFamily != AddressFamily.InterNetwork).ToArray();
+                if (addresses.Length > 0) return addresses;
+            }
+            catch (SocketException error)
+            {
+                ModLog.Info("[SuMP][doh] System DNS could not resolve " + host + ": " + error.SocketErrorCode);
+            }
+
+            // Several ports for the same host may be probed concurrently. Share their DoH query.
+            Lazy<CacheEntry> lookup;
             lock (Gate)
             {
-                if (s_cache.TryGetValue(host, out CacheEntry cached) &&
-                    cached.ExpiresAtMs > Environment.TickCount64)
-                    return cached.Addresses;
-            }
-            List<IPAddress> addresses = Resolve(host);
-            if (addresses.Count == 0)
-            {
-                // DoH 不可用：回退系统 DNS（可能是 fake-ip；由调用方/代理决定是否直连）。
-                try
+                if (!s_dohLookups.TryGetValue(host, out lookup) ||
+                    (lookup.IsValueCreated && lookup.Value.ExpiresAtMs <= Environment.TickCount64))
                 {
-                    addresses.AddRange(Dns.GetHostAddresses(host));
-                }
-                catch (Exception)
-                {
+                    lookup = new Lazy<CacheEntry>(() => ResolveDoh(host));
+                    s_dohLookups[host] = lookup;
                 }
             }
-            IPAddress[] result = addresses.ToArray();
-            if (result.Length > 0)
-            {
-                lock (Gate)
-                {
-                    s_cache[host] = new CacheEntry
-                    {
-                        Addresses = result,
-                        ExpiresAtMs = Environment.TickCount64 + CacheTtlMs
-                    };
-                }
-            }
-            return result;
+            return lookup.Value.Addresses;
         }
 
-        private static List<IPAddress> Resolve(string host)
+        private static CacheEntry ResolveDoh(string host)
         {
-            var result = new List<IPAddress>();
-            Collect(host, 1, result);
-            if (result.Count == 0) Collect(host, 28, result);
+            var result = ResolveDohRecords(host, type: 1);
+            if (result.Addresses.Length == 0) result = ResolveDohRecords(host, type: 28);
             return result;
         }
 
-        private static void Collect(string host, int type, List<IPAddress> result)
+        private static CacheEntry ResolveDohRecords(string host, int type)
         {
             string encoded = Uri.EscapeDataString(host);
             foreach (string template in s_endpoints)
@@ -95,30 +98,55 @@ namespace SuMultiplayer.Net
                 try
                 {
                     string json = s_client.GetStringAsync(url).GetAwaiter().GetResult();
-                    using JsonDocument document = JsonDocument.Parse(json);
-                    if (!document.RootElement.TryGetProperty("Answer", out JsonElement answers) ||
-                        answers.ValueKind != JsonValueKind.Array) continue;
-                    foreach (JsonElement answer in answers.EnumerateArray())
-                    {
-                        if (!answer.TryGetProperty("type", out JsonElement answerType) ||
-                            answerType.GetInt32() != type) continue;
-                        if (!answer.TryGetProperty("data", out JsonElement data)) continue;
-                        if (IPAddress.TryParse(data.GetString(), out IPAddress address) &&
-                            !result.Contains(address)) result.Add(address);
-                    }
-                    if (result.Count > 0) return;
+                    CacheEntry result = ReadDohAnswer(json, type);
+                    if (result.Addresses.Length > 0) return result;
                 }
                 catch (Exception error)
                 {
-                    ModLog.Info("[SuMP][doh] " + url + " 失败：" +
-                        error.Message);
+                    ModLog.Info("[SuMP][doh] " + url + " 失败：" + error.Message);
                 }
             }
+            return new CacheEntry(Array.Empty<IPAddress>(), ttlSeconds: 0);
+        }
+
+        private static CacheEntry ReadDohAnswer(string json, int type)
+        {
+            using JsonDocument document = JsonDocument.Parse(json);
+            if (!document.RootElement.TryGetProperty("Status", out JsonElement status) ||
+                status.ValueKind != JsonValueKind.Number || !status.TryGetInt32(out int responseCode) ||
+                responseCode != 0 || !document.RootElement.TryGetProperty("Answer", out JsonElement answers) ||
+                answers.ValueKind != JsonValueKind.Array)
+                return new CacheEntry(Array.Empty<IPAddress>(), ttlSeconds: 0);
+
+            var addresses = new List<IPAddress>();
+            int ttlSeconds = MaxDohTtlSeconds;
+            AddressFamily family = type == 1 ? AddressFamily.InterNetwork : AddressFamily.InterNetworkV6;
+            foreach (JsonElement answer in answers.EnumerateArray())
+            {
+                if (!answer.TryGetProperty("type", out JsonElement answerType) ||
+                    answerType.ValueKind != JsonValueKind.Number || !answerType.TryGetInt32(out int recordType))
+                    continue;
+                if (recordType == type && answer.TryGetProperty("data", out JsonElement data) &&
+                    data.ValueKind == JsonValueKind.String &&
+                    IPAddress.TryParse(data.GetString(), out IPAddress address) &&
+                    address.AddressFamily == family && !IsFakeIp(address))
+                {
+                    if (!addresses.Contains(address)) addresses.Add(address);
+                }
+                else if (recordType != 5) continue; // An alias may expire before its address record.
+
+                int recordTtl = 0;
+                if (answer.TryGetProperty("TTL", out JsonElement ttl) && ttl.ValueKind == JsonValueKind.Number)
+                    ttl.TryGetInt32(out recordTtl);
+                ttlSeconds = Math.Min(ttlSeconds, Math.Max(0, recordTtl));
+            }
+            return new CacheEntry(addresses.ToArray(), addresses.Count == 0 ? 0 : ttlSeconds);
         }
 
         private static HttpClient CreateClient()
         {
             var client = new HttpClient { Timeout = TimeSpan.FromMilliseconds(TimeoutMs) };
+            client.DefaultRequestHeaders.CacheControl = new CacheControlHeaderValue { NoCache = true };
             try
             {
                 client.DefaultRequestHeaders.TryAddWithoutValidation("Accept",

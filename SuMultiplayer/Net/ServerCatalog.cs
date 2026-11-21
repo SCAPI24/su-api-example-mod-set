@@ -8,6 +8,7 @@ using System.Net.Http;
 using System.Net.Sockets;
 using System.Text;
 using System.Threading;
+using System.Threading.Tasks;
 using SuMultiplayer.Engine;
 using SuMultiplayer.Session;
 
@@ -38,6 +39,7 @@ namespace SuMultiplayer.Net
         public RoomBeaconInfo Info;
         public int PingMs = -1;
         public bool Online;
+        public bool Removed;
         public string TargetHost;
         /// <summary>本次探测的端口（同号方案下 = 该槽位的游戏端口）。</summary>
         public int Port;
@@ -54,6 +56,8 @@ namespace SuMultiplayer.Net
         private const int MaxDirectoryBytes = 64 * 1024;
         private const int MaxHosts = 256;
         private const int ProbeIntervalMs = 5000;
+        private const int MaxConcurrentProbes = 12;
+        private const int FailuresBeforeOffline = 3;
         private const int RefreshSuccessMs = 300000;
         private const int RefreshFailureMs = 60000;
 
@@ -66,13 +70,26 @@ namespace SuMultiplayer.Net
 
         private readonly int m_probePortStart;
         private readonly int m_probePortCount;
-        private readonly object m_gate = new object();
-        private readonly List<DirectoryEndpoint> m_endpoints = new List<DirectoryEndpoint>();
+        private readonly Dictionary<(string Endpoint, int Port), PortProbe> m_probes =
+            new Dictionary<(string Endpoint, int Port), PortProbe>();
+        private readonly List<PortProbe> m_inFlight = new List<PortProbe>();
         private readonly ConcurrentQueue<DirectoryProbeResult> m_results =
             new ConcurrentQueue<DirectoryProbeResult>();
-        private readonly Dictionary<string, long> m_nextProbe = new Dictionary<string, long>();
+        private Task<string> m_directoryRefresh;
+
+        private sealed class PortProbe
+        {
+            public DirectoryEndpoint Endpoint;
+            public int Port;
+            public long NextProbeMs;
+            public int ConsecutiveFailures;
+            public bool Online;
+            public Task<DirectoryProbeResult> InFlight;
+        }
+
         private Thread m_thread;
         private volatile bool m_running;
+        private volatile bool m_disposed;
         private int m_personalRevision = -1;
         private long m_nextRefreshMs;
 
@@ -94,17 +111,22 @@ namespace SuMultiplayer.Net
 
         public void Start()
         {
+            if (m_disposed) throw new ObjectDisposedException(nameof(ServerCatalog));
             if (m_running) return;
             m_running = true;
             m_thread = new Thread(Loop) { IsBackground = true, Name = "SuMP-Catalog" };
             m_thread.Start();
         }
 
-        public bool TryDequeue(out DirectoryProbeResult result) =>
-            m_results.TryDequeue(out result);
+        public bool TryDequeue(out DirectoryProbeResult result)
+        {
+            result = null;
+            return !m_disposed && m_results.TryDequeue(out result);
+        }
 
         public void Dispose()
         {
+            m_disposed = true;
             m_running = false;
             m_thread = null;
         }
@@ -116,48 +138,48 @@ namespace SuMultiplayer.Net
                 try
                 {
                     RefreshPersonal();
-                    if (Environment.TickCount64 >= m_nextRefreshMs) RefreshDirectory();
-                    long now = Environment.TickCount64;
-                    List<DirectoryEndpoint> snapshot;
-                    lock (m_gate) snapshot = new List<DirectoryEndpoint>(m_endpoints);
-                    foreach (DirectoryEndpoint endpoint in snapshot)
-                    {
-                        if (!m_running) break;
-                        lock (m_gate)
-                        {
-                            if (m_nextProbe.TryGetValue(endpoint.Key, out long due) && due > now)
-                                continue;
-                            m_nextProbe[endpoint.Key] = now + ProbeIntervalMs;
-                        }
-                        Probe(endpoint);
-                    }
+                    PumpDirectoryRefresh(Environment.TickCount64);
+                    PumpProbes(Environment.TickCount64);
                 }
                 catch (Exception error)
                 {
                     ModLog.Warn("[SuMP][catalog] Refresh threw: " + error.Message);
                 }
-                for (int i = 0; i < 10 && m_running; i++) Thread.Sleep(100);
+                Thread.Sleep(100);
             }
         }
 
-        // Source: ServerCatalog.cs:RefreshRaw — preserve the public directory refresh intervals and TXT format.
-        private void RefreshDirectory()
+        // Source: ServerCatalog.cs:RefreshRaw
+        // Directory HTTP refresh must not hold up probes for entries already in the list.
+        private void PumpDirectoryRefresh(long now)
         {
-            try
+            if (!m_running) return;
+            if (m_directoryRefresh != null)
             {
-                using var request = new HttpRequestMessage(HttpMethod.Get, DirectoryUrl);
-                request.Headers.CacheControl = new System.Net.Http.Headers.CacheControlHeaderValue { NoCache = true };
-                using HttpResponseMessage response = DirectoryClient.SendAsync(request).GetAwaiter().GetResult();
-                response.EnsureSuccessStatusCode();
-                byte[] data = response.Content.ReadAsByteArrayAsync().GetAwaiter().GetResult();
-                ApplyDirectoryHosts(ParseHosts(DirectoryEncoding.GetString(data)));
-                m_nextRefreshMs = Environment.TickCount64 + RefreshSuccessMs;
+                if (!m_directoryRefresh.IsCompleted) return;
+                try
+                {
+                    ApplyDirectoryHosts(ParseHosts(m_directoryRefresh.GetAwaiter().GetResult()));
+                    m_nextRefreshMs = now + RefreshSuccessMs;
+                }
+                catch (Exception error)
+                {
+                    m_nextRefreshMs = now + RefreshFailureMs;
+                    ModLog.Warn("[SuMP][catalog] Could not refresh R2 ServerDns: " + error.Message);
+                }
+                finally { m_directoryRefresh = null; }
             }
-            catch (Exception error)
-            {
-                m_nextRefreshMs = Environment.TickCount64 + RefreshFailureMs;
-                ModLog.Warn("[SuMP][catalog] Could not refresh R2 ServerDns: " + error.Message);
-            }
+            if (m_running && now >= m_nextRefreshMs) m_directoryRefresh = DownloadDirectory();
+        }
+
+        private static async Task<string> DownloadDirectory()
+        {
+            using var request = new HttpRequestMessage(HttpMethod.Get, DirectoryUrl);
+            request.Headers.CacheControl = new System.Net.Http.Headers.CacheControlHeaderValue { NoCache = true };
+            using HttpResponseMessage response = await DirectoryClient.SendAsync(request).ConfigureAwait(false);
+            response.EnsureSuccessStatusCode();
+            byte[] data = await response.Content.ReadAsByteArrayAsync().ConfigureAwait(false);
+            return DirectoryEncoding.GetString(data);
         }
 
         private void RefreshPersonal()
@@ -165,7 +187,7 @@ namespace SuMultiplayer.Net
             PersonalServers.Load();
             int revision = PersonalServers.Revision;
             if (revision == m_personalRevision) return;
-            m_personalRevision = revision;
+            var endpoints = new List<DirectoryEndpoint>();
             foreach (PersonalServerRecord record in PersonalServers.Records)
             {
                 if (!TrySplitAddress(record.Address, out string host, out int port, out _))
@@ -173,7 +195,7 @@ namespace SuMultiplayer.Net
                 // From Link（个人服务器）只支持 host / host:P，**不支持** host:P-N。
                 // 没写端口 → 按默认端口段扫描（UDP 在线才显示）；写了端口 → 只扫该端口。
                 int[] probePorts = port > 0 ? new[] { port } : DefaultProbePorts();
-                var endpoint = new DirectoryEndpoint
+                endpoints.Add(new DirectoryEndpoint
                 {
                     Key = "personal:" + record.Address,
                     Host = host,
@@ -184,30 +206,10 @@ namespace SuMultiplayer.Net
                     HasExplicitPort = port > 0,
                     // 写了端口 → TCP 兜底就连这个端口；没写 → 连端口段起点。
                     FallbackGamePort = port > 0 ? port : m_probePortStart
-                };
-                lock (m_gate) RemoveLocked(endpoint.Key);
-                lock (m_gate) m_endpoints.Add(endpoint);
-                // 先给主线程一条离线行：即使探测失败，个人服务器也能在 Play 屏看到/删除。
-                m_results.Enqueue(new DirectoryProbeResult
-                {
-                    Endpoint = endpoint,
-                    Online = false,
-                    TargetHost = host
                 });
             }
-            // 删除后的旧 personal 条目从列表移除
-            var stale = new List<DirectoryEndpoint>();
-            lock (m_gate)
-            {
-                foreach (DirectoryEndpoint endpoint in m_endpoints)
-                {
-                    if (endpoint.Source == RoomSource.Personal &&
-                        !PersonalServers.Records.Any(record => string.Equals(
-                            "personal:" + record.Address, endpoint.Key, StringComparison.Ordinal)))
-                        stale.Add(endpoint);
-                }
-                foreach (DirectoryEndpoint endpoint in stale) RemoveLocked(endpoint.Key);
-            }
+            ReplaceEndpoints(RoomSource.Personal, endpoints);
+            m_personalRevision = revision;
         }
 
         private void ApplyDirectoryHosts(IEnumerable<string> hosts)
@@ -219,7 +221,9 @@ namespace SuMultiplayer.Net
                 if (!TrySplitAddress(raw, out string host, out int port, out int count) ||
                     Uri.CheckHostName(host) == UriHostNameType.Unknown)
                     throw new InvalidDataException("ServerDns contains an invalid server address.");
-                if (!seen.Add(host)) continue;
+                string key = "dir:" + host.ToLowerInvariant();
+                string addressSpec = key + ":" + port + ":" + count;
+                if (!seen.Add(addressSpec)) continue;
                 if (valid.Count >= MaxHosts)
                     throw new InvalidDataException("ServerDns exceeds " + MaxHosts + " hosts.");
                 // ServerDns 支持三种写法：host（默认端口段）/ host:P / host:P-N（P 起 N 个）。
@@ -228,7 +232,7 @@ namespace SuMultiplayer.Net
                     : port > 0 ? new[] { port } : DefaultProbePorts();
                 valid.Add(new DirectoryEndpoint
                 {
-                    Key = "dir:" + host + ":" + (count > 0 ? port + "-" + count : port.ToString()),
+                    Key = key,
                     Host = host,
                     ProbePorts = probePorts,
                     DisplayAddress = host,
@@ -238,78 +242,127 @@ namespace SuMultiplayer.Net
                     FallbackGamePort = port > 0 ? port : m_probePortStart
                 });
             }
-            lock (m_gate)
-            {
-                var currentKeys = new HashSet<string>(valid.Select(endpoint => endpoint.Key), StringComparer.Ordinal);
-                foreach (DirectoryEndpoint endpoint in m_endpoints)
-                {
-                    if (endpoint.Source == RoomSource.Directory && !currentKeys.Contains(endpoint.Key))
-                        m_nextProbe.Remove(endpoint.Key);
-                }
-                m_endpoints.RemoveAll(endpoint => endpoint.Source == RoomSource.Directory);
-                m_endpoints.AddRange(valid);
-            }
-            ModLog.Info("[SuMP][catalog] Loaded " + valid.Count + " hosts from R2 ServerDns.");
+            ReplaceEndpoints(RoomSource.Directory, valid);
+            ModLog.Info("[SuMP][catalog] Loaded " + valid.Count + " endpoints from R2 ServerDns.");
         }
 
-        private void Probe(DirectoryEndpoint endpoint)
+        // Only the catalog loop owns the slot table. A refresh preserves live slots,
+        // and an old request cannot bring back a slot removed while it was in flight.
+        private void ReplaceEndpoints(RoomSource source, List<DirectoryEndpoint> endpoints)
+        {
+            var desired = new HashSet<(string Endpoint, int Port)>();
+            foreach (DirectoryEndpoint endpoint in endpoints)
+            {
+                foreach (int port in endpoint.ProbePorts)
+                {
+                    var key = (endpoint.Key, port);
+                    if (!desired.Add(key)) continue;
+                    if (m_probes.TryGetValue(key, out PortProbe probe))
+                    {
+                        bool renamed = probe.Endpoint.Name != endpoint.Name;
+                        probe.Endpoint = endpoint;
+                        if (renamed && !probe.Online && KeepOffline(endpoint))
+                            Publish(probe, removed: false);
+                        continue;
+                    }
+                    probe = new PortProbe { Endpoint = endpoint, Port = port };
+                    m_probes.Add(key, probe);
+                    if (KeepOffline(endpoint)) Publish(probe, removed: false);
+                }
+            }
+            var removed = m_probes.Where(pair => pair.Value.Endpoint.Source == source &&
+                !desired.Contains(pair.Key)).Select(pair => pair.Key).ToArray();
+            foreach (var key in removed)
+            {
+                PortProbe probe = m_probes[key];
+                m_probes.Remove(key);
+                if (probe.Online || KeepOffline(probe.Endpoint)) Publish(probe, removed: true);
+            }
+        }
+
+        // Each port has its own deadline and retry count. A stalled port only occupies
+        // one worker, and a room stays listed until its own consecutive probes fail.
+        private void PumpProbes(long now)
+        {
+            for (int i = m_inFlight.Count - 1; i >= 0; i--)
+            {
+                PortProbe probe = m_inFlight[i];
+                if (!probe.InFlight.IsCompleted) continue;
+                DirectoryProbeResult result = probe.InFlight.GetAwaiter().GetResult();
+                probe.InFlight = null;
+                probe.NextProbeMs = now + ProbeIntervalMs;
+                m_inFlight.RemoveAt(i);
+                if (!m_probes.TryGetValue((probe.Endpoint.Key, probe.Port), out PortProbe current) ||
+                    !ReferenceEquals(current, probe)) continue;
+
+                if (result.Online)
+                {
+                    probe.ConsecutiveFailures = 0;
+                    probe.Online = true;
+                    result.Endpoint = probe.Endpoint;
+                    m_results.Enqueue(result);
+                }
+                else if (probe.ConsecutiveFailures < FailuresBeforeOffline &&
+                    ++probe.ConsecutiveFailures == FailuresBeforeOffline && probe.Online)
+                {
+                    probe.Online = false;
+                    Publish(probe, removed: !KeepOffline(probe.Endpoint));
+                }
+            }
+
+            int capacity = MaxConcurrentProbes - m_inFlight.Count;
+            if (capacity == 0) return;
+            foreach (PortProbe probe in m_probes.Values
+                .Where(probe => probe.InFlight == null && probe.NextProbeMs <= now)
+                .OrderBy(probe => probe.NextProbeMs).Take(capacity))
+            {
+                if (!m_running) break;
+                DirectoryEndpoint endpoint = probe.Endpoint;
+                int port = probe.Port;
+                probe.InFlight = Task.Run(() => Probe(endpoint, port));
+                m_inFlight.Add(probe);
+            }
+        }
+
+        private static bool KeepOffline(DirectoryEndpoint endpoint) =>
+            endpoint.Source == RoomSource.Personal && endpoint.HasExplicitPort;
+
+        private void Publish(PortProbe probe, bool removed) => m_results.Enqueue(new DirectoryProbeResult
+        {
+            Endpoint = probe.Endpoint,
+            TargetHost = probe.Endpoint.Host,
+            Port = probe.Port,
+            Removed = removed
+        });
+
+        private static DirectoryProbeResult Probe(DirectoryEndpoint endpoint, int port)
         {
             string targetHost = endpoint.Host;
-            int[] probePorts = endpoint.ProbePorts ?? System.Array.Empty<int>();
+            var result = new DirectoryProbeResult { Endpoint = endpoint, TargetHost = targetHost, Port = port };
             try
             {
-                // 一个地址可能对应多个端口（端口段 / 区间）：**逐个探测，每个端口一条结果**。
-                // 不因为某个端口失败就跳过其余端口 —— 同一台机器可能在不同槽位开多个房间。
-                for (int i = 0; i < probePorts.Length; i++)
+                bool proxy = ProxyRouter.TryChooseUdp(targetHost, port, out bool useProxy, out _) && useProxy;
+                long nonce = Environment.TickCount64;
+                byte[] request = RoomBeaconCodec.EncodeProbe(nonce);
+                if (proxy)
                 {
-                    int discoveryPort = probePorts[i];
-                    long nonce = Environment.TickCount64;
-                    byte[] probe = RoomBeaconCodec.EncodeProbe(nonce);
-                    RoomBeaconInfo info = null;
-                    int ping = -1;
-                    bool proxy = ProxyRouter.TryChooseUdp(targetHost, discoveryPort,
-                        out bool useProxy, out _) && useProxy;
-                    if (proxy)
-                    {
-                        if (Socks5Proxy.TryUdpProbe(targetHost, discoveryPort, probe, 1500,
-                                out byte[] reply, out string proxyError) &&
-                            RoomBeaconCodec.TryDecodeReply(reply, reply.Length, out info, out _))
-                            ping = (int)(Environment.TickCount64 - nonce);
-                        else if (!string.IsNullOrEmpty(proxyError))
-                            ModLog.Info("[catalog] Proxy UDP probe failed: " +
-                                targetHost + ":" + discoveryPort + " · " + proxyError);
-                    }
-                    else if (!TryDirectProbe(targetHost, discoveryPort, probe, nonce, out info,
-                            out ping, out string directError))
-                    {
-                        // 离线是常态（端口段里只有少数槽位有房间），只记非空错误。
-                        if (!string.IsNullOrEmpty(directError))
-                            ModLog.Info("[catalog] Probe failed: " + targetHost + ":" +
-                                discoveryPort + " · " + directError);
-                    }
-                    m_results.Enqueue(new DirectoryProbeResult
-                    {
-                        Endpoint = endpoint,
-                        Info = info,
-                        PingMs = ping,
-                        Online = info != null,
-                        TargetHost = targetHost,
-                        // 探测端口 = 该槽位的游戏端口（同号方案）→ 房间条目直接用它。
-                        Port = discoveryPort
-                    });
+                    if (Socks5Proxy.TryUdpProbe(targetHost, port, request, 1500,
+                            out byte[] reply, out string proxyError) &&
+                        RoomBeaconCodec.TryDecodeReply(reply, reply.Length, out result.Info, out _))
+                        result.PingMs = (int)(Environment.TickCount64 - nonce);
+                    else if (!string.IsNullOrEmpty(proxyError))
+                        ModLog.Info("[catalog] Proxy UDP probe failed: " + targetHost + ":" + port + " · " + proxyError);
                 }
+                else if (!TryDirectProbe(targetHost, port, request, nonce, out result.Info,
+                    out result.PingMs, out string directError) && !string.IsNullOrEmpty(directError))
+                    ModLog.Info("[catalog] Probe failed: " + targetHost + ":" + port + " · " + directError);
             }
             catch (Exception error)
             {
-                ModLog.Info("[catalog] Probe threw: " + targetHost +
-                    " · " + error.Message);
-                m_results.Enqueue(new DirectoryProbeResult
-                {
-                    Endpoint = endpoint,
-                    Online = false,
-                    TargetHost = targetHost
-                });
+                ModLog.Info("[catalog] Probe threw: " + targetHost + ":" + port + " · " + error.Message);
             }
+            result.Online = result.Info != null;
+            return result;
         }
 
         private static bool TryDirectProbe(string host, int port, byte[] probe, long nonce,
@@ -321,7 +374,11 @@ namespace SuMultiplayer.Net
             try
             {
                 IPAddress[] addresses = DohResolver.ResolveHost(host);
-                if (addresses == null || addresses.Length == 0) return false;
+                if (addresses.Length == 0)
+                {
+                    error = "DNS did not return a usable address for " + host;
+                    return false;
+                }
                 using var udp = new UdpClient(addresses[0].AddressFamily);
                 udp.Client.ReceiveTimeout = 1200;
                 var target = new IPEndPoint(addresses[0], port);
@@ -341,10 +398,6 @@ namespace SuMultiplayer.Net
                 return false;
             }
         }
-
-        private void RemoveLocked(string key) =>
-            m_endpoints.RemoveAll(endpoint => string.Equals(endpoint.Key, key,
-                StringComparison.Ordinal));
 
         public static IEnumerable<string> ParseHosts(string text)
         {

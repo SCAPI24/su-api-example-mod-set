@@ -110,6 +110,9 @@ namespace SuMultiplayer.Net
         /// <summary>创造模式默认 reach（SettingsManager 默认 7.5f）。</summary>
         public const float DefaultCreativeReachMeters = 7.5f;
 
+        // Source: Pak/Screens/SettingsControlsScreen.xml:CreativeReachSlider
+        public const float MaxCreativeBlockEditReachMeters = 10f;
+
         /// <summary>主机上限默认值（m）；可被配置覆盖。</summary>
         public const float DefaultServerMaxMeters = 16f;
 
@@ -165,8 +168,20 @@ namespace SuMultiplayer.Net
             creative ? DefaultCreativeReachMeters : SurvivalReachMeters;
 
         /// <summary>对一次请求的声明做裁决；计数在调用时推进。</summary>
-        public InteractionReachDecision Evaluate(bool hasReach, float reach, bool hostCreative)
+        public InteractionReachDecision Evaluate(bool hasReach, float reach, bool hostCreative) =>
+            Evaluate(hasReach, reach, hostCreative, m_serverMaxMeters);
+
+        // Source: ComponentMiner.cs:ComponentMiner.Raycast; SettingsControlsScreen.xml:CreativeReachSlider
+        // Accept the client's allowed game setting under the host's cap. The extra
+        // half metre is the stock player's width and covers position drift once.
+        public InteractionReachDecision EvaluateBlockEdit(bool hasReach, float reach, bool hostCreative) =>
+            Evaluate(hasReach, reach, hostCreative,
+                hostCreative ? MaxCreativeBlockEditReachMeters : SurvivalReachMeters);
+
+        private InteractionReachDecision Evaluate(bool hasReach, float reach, bool hostCreative,
+            float settingMaxMeters)
         {
+            float effectiveMax = Math.Min(settingMaxMeters, m_serverMaxMeters);
             Counters.NoteCheck();
             if (!hasReach)
             {
@@ -182,9 +197,9 @@ namespace SuMultiplayer.Net
                     "reach-invalid: " + Format(reach) + " m（合法范围 " +
                     Format(MinClaimMeters) + ".." + Format(MaxClaimMeters) + " m）");
             }
-            bool clamped = reach > m_serverMaxMeters;
+            bool clamped = reach > effectiveMax;
             if (clamped) Counters.NoteClamped();
-            float effective = clamped ? m_serverMaxMeters : reach;
+            float effective = Math.Min(reach, effectiveMax);
             return new InteractionReachDecision(true, false, clamped, effective,
                 Math.Min(effective + ToleranceMeters, m_serverMaxMeters), null);
         }

@@ -8,9 +8,11 @@ using System.Text;
 using System.Threading;
 using Engine;
 using Game;
+using GameEntitySystem;
 using SuMultiplayer.Net;
 using SuMultiplayer.Protocol;
 using SuMultiplayer.Terrain;
+using PA = SuMultiplayer.Protocol.Authority;
 
 namespace SuMultiplayer.Engine
 {
@@ -222,13 +224,7 @@ namespace SuMultiplayer.Engine
             {
                 if (m_clientReplica == value) return;
                 m_clientReplica = value;
-                int dropped = m_clientCapture.Reset(ClientCaptureDropReason.RoleChanged);
-                if (dropped > 0)
-                {
-                    m_clientCaptureDroppedTotal += dropped;
-                    ModLog.Warn("[SuMP] clientCapture: character switch cleared " + dropped +
-                        " 格待捕获的本地写入（已计入 captureDropped[roleChanged]，不静默）");
-                }
+                ResetClientEditCapture(ClientCaptureDropReason.RoleChanged);
             }
         }
 
@@ -244,10 +240,33 @@ namespace SuMultiplayer.Engine
         private long m_lastClientCaptureLogMs;
         private long m_lastClientCaptureDropLogMs;
         private const long ClientCaptureLogIntervalMs = 5000;
+        // Source: ComponentMiner.cs:ComponentMiner.Dig/Place; ClientReplica.cs:ClientEditCaptureQueue
+        // Bind the miner's ray to the value observed after the player update,
+        // then retain it for the same bounded capture/retry lifetime as the edited cell.
+        private struct ClientCellAim
+        {
+            public PA.CellEditAim Aim;
+            public int Value;
+            public bool HasValue;
+            public long NativeFrame;
+            public bool Staged;
+            public bool Delivered;
+            public long DeliveredFrame;
+        }
+        private readonly Dictionary<Point3, ClientCellAim> m_clientCellAims =
+            new Dictionary<Point3, ClientCellAim>();
+        private readonly HashSet<Point3> m_clientAimPendingCells = new HashSet<Point3>();
+        private readonly List<Point3> m_clientCaptureStage = new List<Point3>(64);
+        private readonly List<Point3> m_clientAimPrune = new List<Point3>(8);
+        private Project m_clientCaptureProject;
+        private long m_clientAimFailures;
+        private bool m_clientAimTrackingFailed;
+        private long m_lastClientAimFailureMs;
 
         /// <summary>客户端捕获各级计数 + 每种丢弃原因（状态行 / 自检用）。</summary>
         public string ClientCaptureStats =>
-            m_clientCapture.Describe() + " captureApplyFailed=" + m_clientCaptureApplyFailures;
+            m_clientCapture.Describe() + " captureApplyFailed=" + m_clientCaptureApplyFailures +
+            " captureAimPending=" + m_clientCellAims.Count + " captureAimFailed=" + m_clientAimFailures;
         /// <summary>客户端捕获累计丢弃格数（含世界卸载 / 角色切换 / 超限 / 过期）。</summary>
         public long ClientCaptureDropped => m_clientCaptureDroppedTotal;
 
@@ -972,6 +991,113 @@ namespace SuMultiplayer.Engine
 
         // ---------------------------------------------------------------- 客户端副本 / 主机权威
 
+        // Source: ComponentMiner.cs:ComponentMiner.Dig/Place; SubsystemTerrain.cs:SubsystemTerrain.ChangeCell
+        // The core emits only actual native changes. The existing modified-cell capture
+        // still owns furniture filtering and delivery; the event supplies only its ray.
+        public void RecordClientCellEditAim(int x, int y, int z, PA.CellEditAim aim)
+        {
+            EnsureMainThread("RecordClientCellEditAim");
+            SynchronizeClientCaptureProject();
+            if (!ClientReplica || aim == null || y < 0 || y > 255) return;
+            Project project = GameManager.Project;
+            SubsystemTerrain subsystem = project?.FindSubsystem<SubsystemTerrain>(false);
+            Game.Terrain terrain = subsystem?.Terrain;
+            var cell = new Point3(x, y, z);
+            bool hasValue = terrain != null && terrain.IsCellValid(x, y, z);
+            int value = hasValue
+                ? Game.Terrain.ReplaceLight(terrain.GetCellValueFast(x, y, z), 0) : 0;
+            if (!hasValue)
+            {
+                aim = new PA.CellEditAim { Slot = -1 };
+                NoteClientAimFailure("native-edit-terrain-unavailable", cell);
+            }
+            bool existing = m_clientCellAims.TryGetValue(cell, out ClientCellAim previous);
+            // The player extension confirms this write before attaching the ray.
+            if (!existing && m_clientCellAims.Count >= ClientEditCaptureQueue.MaxPending)
+            {
+                Point3 oldest = default(Point3);
+                long oldestFrame = long.MaxValue;
+                foreach (KeyValuePair<Point3, ClientCellAim> pair in m_clientCellAims)
+                {
+                    if (pair.Value.NativeFrame >= oldestFrame) continue;
+                    oldest = pair.Key;
+                    oldestFrame = pair.Value.NativeFrame;
+                }
+                m_clientCellAims.Remove(oldest);
+                // A lost native identity must not be reclassified as an unaimed direct
+                // edit. Reject missing metadata until this capture batch finishes.
+                m_clientAimTrackingFailed = true;
+                NoteClientAimFailure("native-edit-aim-overflow", oldest);
+            }
+            m_clientCellAims[cell] = new ClientCellAim
+            {
+                Aim = aim.Clone(), Value = value, HasValue = hasValue, NativeFrame = Time.FrameIndex,
+                Staged = existing && previous.Staged
+            };
+        }
+
+        // Source: TerrainSyncModule.cs:TerrainSyncModule.WireShell; ClientReplica.cs:ClientEditCaptureQueue.Reset
+        public void ResetClientEditCapture(ClientCaptureDropReason reason)
+        {
+            EnsureMainThread("ResetClientEditCapture");
+            int dropped = m_clientCapture.Reset(reason);
+            m_clientCellAims.Clear();
+            m_clientAimTrackingFailed = false;
+            m_clientAimPendingCells.Clear();
+            m_clientCaptureStage.Clear();
+            m_clientAimPrune.Clear();
+            NoteClientCaptureDrop(ClientCaptureDropReasonNames.Of(reason), dropped);
+        }
+
+        // Source: TerrainSyncModule.cs:TerrainSyncModule.WireShell
+        private void SynchronizeClientCaptureProject()
+        {
+            Project project = GameManager.Project;
+            if (ReferenceEquals(project, m_clientCaptureProject)) return;
+            ResetClientEditCapture(ClientCaptureDropReason.WorldUnloaded);
+            m_clientCaptureProject = project;
+        }
+
+        // Source: ClientReplica.cs:ClientEditCaptureQueue.Complete/Expire/Stage
+        private void PruneClientCellAims(bool captureCompleted = false)
+        {
+            if (m_clientCellAims.Count == 0) return;
+            m_clientCapture.CopyPending(m_clientCaptureScan);
+            m_clientAimPendingCells.Clear();
+            foreach (Point3 cell in m_clientCaptureScan) m_clientAimPendingCells.Add(cell);
+            m_clientAimPrune.Clear();
+            foreach (KeyValuePair<Point3, ClientCellAim> pair in m_clientCellAims)
+            {
+                bool expired = pair.Value.Delivered
+                    ? Time.FrameIndex != pair.Value.DeliveredFrame
+                    : pair.Value.Staged
+                        ? !m_clientAimPendingCells.Contains(pair.Key)
+                        : captureCompleted || Time.FrameIndex - pair.Value.NativeFrame >=
+                            ClientEditCaptureQueue.MaxRetryFrames;
+                if (!expired) continue;
+                m_clientAimPrune.Add(pair.Key);
+                if (!captureCompleted && !pair.Value.Staged && !pair.Value.Delivered)
+                {
+                    m_clientAimTrackingFailed = true;
+                    NoteClientAimFailure("native-edit-not-captured-before-expiry", pair.Key);
+                }
+            }
+            foreach (Point3 cell in m_clientAimPrune) m_clientCellAims.Remove(cell);
+        }
+
+        // Source: TerrainBridge.cs:TerrainBridge.FlushClientCapture
+        private void NoteClientAimFailure(string reason, Point3 cell)
+        {
+            m_clientAimFailures++;
+            long now = Environment.TickCount64;
+            if (m_lastClientAimFailureMs != 0 &&
+                now - m_lastClientAimFailureMs < ClientCaptureLogIntervalMs) return;
+            m_lastClientAimFailureMs = now;
+            ModLog.Warn("[SuMP] clientCaptureAimFailed: " + reason + " @" + cell.X + "," +
+                cell.Y + "," + cell.Z + " -> native aim is invalid; host validation must reject it; total=" +
+                m_clientAimFailures);
+        }
+
         /// <summary>
         /// 客户端：把一帧里被本地写入的格子**捕获**成编辑请求（主线程，ProcessModifiedCells 之前）。
         /// 不在这里直接发网络包：模块在同一线程里把每一格变成 CellEditRequest 并通过 TCP 发出去。
@@ -984,10 +1110,39 @@ namespace SuMultiplayer.Engine
         public void CaptureClientEdits(ICollection<Point3> cells)
         {
             EnsureMainThread("CaptureClientEdits");
-            if (cells == null || cells.Count == 0) return;
+            SynchronizeClientCaptureProject();
+            if (cells == null) return;
+            if (cells.Count == 0)
+            {
+                PruneClientCellAims(captureCompleted: true);
+                if (m_clientCapture.PendingCount == 0) m_clientAimTrackingFailed = false;
+                return;
+            }
             m_captureFrame++;
-            m_clientCapture.Stage(cells, m_captureFrame);
+            m_clientCaptureStage.Clear();
+            Game.Terrain terrain = CurrentTerrain;
+            foreach (Point3 cell in cells)
+            {
+                if (m_clientCellAims.TryGetValue(cell, out ClientCellAim captured))
+                {
+                    // Retry runs before normal capture. If it already delivered this same
+                    // native value this frame, the still-queued modified cell is a duplicate.
+                    if (captured.Delivered && captured.HasValue &&
+                        captured.DeliveredFrame == Time.FrameIndex &&
+                        terrain != null && terrain.IsCellValid(cell.X, cell.Y, cell.Z) &&
+                        Game.Terrain.ReplaceLight(terrain.GetCellValueFast(cell.X, cell.Y, cell.Z), 0) ==
+                            captured.Value)
+                        continue;
+                    captured.Staged = true;
+                    captured.Delivered = false;
+                    m_clientCellAims[cell] = captured;
+                }
+                m_clientCaptureStage.Add(cell);
+            }
+            m_clientCapture.Stage(m_clientCaptureStage, m_captureFrame);
+            PruneClientCellAims(captureCompleted: true);
             FlushClientCapture();
+            if (m_clientCapture.PendingCount == 0) m_clientAimTrackingFailed = false;
         }
 
         /// <summary>
@@ -997,6 +1152,8 @@ namespace SuMultiplayer.Engine
         public void RetryDeferredClientEdits()
         {
             EnsureMainThread("RetryDeferredClientEdits");
+            SynchronizeClientCaptureProject();
+            PruneClientCellAims();
             if (m_clientCapture.PendingCount == 0) return;
             m_captureFrame++;
             FlushClientCapture();
@@ -1012,15 +1169,15 @@ namespace SuMultiplayer.Engine
                 // Project 还在 = 引用瞬时不可用 → 保留重试；世界已卸载 = 这些格子属于旧世界 → 明确丢弃。
                 if (GameManager.Project == null)
                 {
-                    int dropped = m_clientCapture.Reset(ClientCaptureDropReason.WorldUnloaded);
-                    NoteClientCaptureDrop("世界已卸载（Project == null）", dropped);
+                    ResetClientEditCapture(ClientCaptureDropReason.WorldUnloaded);
                 }
                 else
                 {
                     m_clientCapture.NoteDeferredFrame();
                     LogClientCaptureDeferred("读不到当前地形（Project 还在 → 下一帧重试）");
                 }
-                m_clientCapture.Expire(m_captureFrame);
+                NoteClientCaptureExpired(m_clientCapture.Expire(m_captureFrame));
+                PruneClientCellAims();
                 return;
             }
             Action<ClientCellEdit> handler = ClientCellEdited;
@@ -1029,6 +1186,7 @@ namespace SuMultiplayer.Engine
                 m_clientCapture.NoteDeferredFrame();
                 LogClientCaptureDeferred("没有本地编辑订阅者（模块未装配 / 正在下线 → 下一帧重试）");
                 NoteClientCaptureExpired(m_clientCapture.Expire(m_captureFrame));
+                PruneClientCellAims();
                 return;
             }
             m_clientCaptureScan.Clear();
@@ -1046,10 +1204,25 @@ namespace SuMultiplayer.Engine
                     continue;
                 }
                 int value = terrain.GetCellValueFast(cell.X, cell.Y, cell.Z);
+                PA.CellEditAim aim = m_clientAimTrackingFailed ? new PA.CellEditAim { Slot = -1 } : null;
+                if (m_clientCellAims.TryGetValue(cell, out ClientCellAim captured))
+                {
+                    if (captured.HasValue && captured.Value == Game.Terrain.ReplaceLight(value, 0))
+                        aim = captured.Aim;
+                    else
+                    {
+                        aim = new PA.CellEditAim { Slot = -1 };
+                        captured.Aim = aim;
+                        captured.Value = Game.Terrain.ReplaceLight(value, 0);
+                        captured.HasValue = true;
+                        m_clientCellAims[cell] = captured;
+                        NoteClientAimFailure("cell-changed-after-native-edit", cell);
+                    }
+                }
                 try
                 {
                     handler(new ClientCellEdit(cell.X, cell.Y, cell.Z,
-                        Game.Terrain.ExtractContents(value), Game.Terrain.ExtractData(value)));
+                        Game.Terrain.ExtractContents(value), Game.Terrain.ExtractData(value), aim));
                 }
                 catch (Exception e)
                 {
@@ -1068,6 +1241,12 @@ namespace SuMultiplayer.Engine
                     continue;
                 }
                 m_clientCapture.Complete(cell);
+                if (m_clientCellAims.TryGetValue(cell, out ClientCellAim delivered))
+                {
+                    delivered.Delivered = true;
+                    delivered.DeliveredFrame = Time.FrameIndex;
+                    m_clientCellAims[cell] = delivered;
+                }
             }
             if (deferred)
             {
@@ -1075,6 +1254,7 @@ namespace SuMultiplayer.Engine
                 LogClientCaptureDeferred("区块内容未定稿（保留重试，不猜 0=空气）");
             }
             NoteClientCaptureExpired(m_clientCapture.Expire(m_captureFrame));
+            PruneClientCellAims();
         }
 
         private void NoteClientCaptureExpired(int expired)
@@ -1464,6 +1644,8 @@ namespace SuMultiplayer.Engine
         public void Pump(SubsystemTerrain subsystem = null)
         {
             EnsureMainThread("Pump");
+            SynchronizeClientCaptureProject();
+            PruneClientCellAims();
             if (subsystem != null) m_subsystem = subsystem;
             Shot();
             int budget = 256;

@@ -21,9 +21,27 @@ message CellEditRequest {
   // depending on the host world's game mode.
   // Source: Survivalcraft/Game/ComponentMiner.cs:378
   optional float reach = 10;
+  CellEditAim aim = 11;
   // Third-party extension points: see doc/message-protocol.md.
   bytes ext = 100;
   google.protobuf.Any custom = 101;
+}
+
+// The native miner's terrain ray and hit. The host repeats the ray against
+// authoritative terrain and measures the hit from this player slot's eye.
+message CellEditAim {
+  int32 slot = 1;
+  float ray_x = 2;
+  float ray_y = 3;
+  float ray_z = 4;
+  float direction_x = 5;
+  float direction_y = 6;
+  float direction_z = 7;
+  sint32 hit_x = 8;
+  int32 hit_y = 9;
+  sint32 hit_z = 10;
+  bool is_placement = 11;
+  int32 hit_face = 12;
 }
 
 // Host -> client: verdict for one request. contents/data are the authoritative

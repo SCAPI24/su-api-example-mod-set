@@ -7,6 +7,7 @@ using GameEntitySystem;
 using SuMultiplayer.Modules;
 using SuMultiplayer.Net;
 using SuMultiplayer.Terrain;
+using PA = SuMultiplayer.Protocol.Authority;
 
 namespace SuMultiplayer.Engine
 {
@@ -71,6 +72,7 @@ namespace SuMultiplayer.Engine
             m_reachGate = reachGate ?? throw new ArgumentNullException(nameof(reachGate));
             m_authority = new ClientEditAuthority(new BridgeEditWorld(bridge));
             m_authority.ReachGate = m_reachGate;
+            m_authority.TerrainHits = TryResolveTerrainHit;
             int seed = unchecked((int)(DateTime.UtcNow.Ticks ^ Environment.TickCount * 2654435761L));
             if (seed == 0) seed = 1;
             m_sessionSeed = seed;
@@ -79,14 +81,94 @@ namespace SuMultiplayer.Engine
         /// <summary>客户端本机有效交互距离（引擎 reach），由编辑请求携带给主机。</summary>
         public float LocalReach => EngineReach.LocalReach();
 
-        /// <summary>
-        /// 组合根注入：clientId → 主机侧联机化身的**权威身体位置**。
-        /// 编辑请求的玩家相对距离校验用它（读不到 = 明确拒绝，不猜区块中心）。
-        /// </summary>
-        public void SetPlayerPositionResolver(ClientEditAuthority.ClientEditPositionResolver resolver)
+        public void SetPlayerEyeResolver(ClientEditAuthority.ClientEditEyeResolver resolver)
         {
-            if (resolver == null) throw new ArgumentNullException(nameof(resolver));
-            m_authority.PlayerPositions = resolver;
+            m_authority.PlayerEyes = resolver ?? throw new ArgumentNullException(nameof(resolver));
+        }
+
+        public void SetDirectEditPositionResolver(ClientEditAuthority.ClientEditPositionResolver resolver)
+        {
+            m_authority.DirectEditPositions = resolver ?? throw new ArgumentNullException(nameof(resolver));
+        }
+
+        // Source: ComponentMiner.cs:ComponentMiner.Raycast and TppCamera.cs:TppCamera.Update
+        private static bool TryResolveTerrainHit(PA.CellEditRequest request, Vector3 eye,
+            float allowedDistance, out Vector3 hit, out string reason)
+        {
+            hit = default;
+            PA.CellEditAim aim = request.Aim;
+            var start = new Vector3(aim.RayX, aim.RayY, aim.RayZ);
+            var direction = new Vector3(aim.DirectionX, aim.DirectionY, aim.DirectionZ);
+            float directionLengthSquared = direction.LengthSquared();
+            // The aim origin can be the third person camera or a VR hand. It only
+            // selects the ray. All reach measurements still use the host's eye.
+            const float maxAimOriginDistance = 8f;
+            if (!(Vector3.DistanceSquared(start, eye) <= maxAimOriginDistance * maxAimOriginDistance) ||
+                !(directionLengthSquared >= 0.99f && directionLengthSquared <= 1.01f) ||
+                (uint)aim.HitFace >= 6 || (uint)aim.HitY >= 256)
+            {
+                reason = "hit-invalid: invalid terrain ray or camera origin";
+                return false;
+            }
+            var hitCell = new Point3(aim.HitX, aim.HitY, aim.HitZ);
+            var target = new Point3(request.X, request.Y, request.Z);
+            // Dig writes the struck cell. Placement writes the adjacent cell, or
+            // the struck cell itself when the native block merges (e.g. slabs).
+            if (target != hitCell && (!aim.IsPlacement ||
+                target != hitCell + CellFace.FaceToPoint3(aim.HitFace)))
+            {
+                reason = "hit-target-mismatch: terrain hit cannot edit the requested cell";
+                return false;
+            }
+            SubsystemTerrain terrain = GameManager.Project?.FindSubsystem<SubsystemTerrain>(false);
+            if (terrain == null)
+            {
+                reason = "hit-unavailable: host terrain is not loaded";
+                return false;
+            }
+            direction = Vector3.Normalize(direction);
+            // The client's camera ray identifies the face it used. Replay it on the host's terrain.
+            Point3 startCell = Game.Terrain.ToCell(start);
+            TerrainRaycastResult? result = terrain.Raycast(start, start + direction * 15f,
+                useInteractionBoxes: true, skipAirBlocks: true,
+                (value, distance) => Selectable(value, distance, start, startCell, direction));
+            if (result is not TerrainRaycastResult cameraHit || cameraHit.CellFace.Point != hitCell ||
+                cameraHit.CellFace.Face != aim.HitFace)
+            {
+                reason = "hit-mismatch: host did not find the requested block face along the camera ray";
+                return false;
+            }
+
+            // The camera can be offset for touch, third person or VR. Verify the
+            // same block from the host avatar's eye, using the actual host hit for reach.
+            // A different face of that block is valid when the eye is slightly offset.
+            Vector3 targetDirection = cameraHit.HitPoint() - eye;
+            float distanceToCameraHit = targetDirection.Length();
+            Vector3 eyeDirection = distanceToCameraHit > 0.001f ? targetDirection / distanceToCameraHit : direction;
+            Point3 eyeCell = Game.Terrain.ToCell(eye);
+            // Extend slightly into the surface so a hit exactly at the ray end is included.
+            // ClientEditAuthority checks the actual host hit against the unextended limit.
+            Vector3 eyeRayEnd = eye + eyeDirection * (Math.Min(distanceToCameraHit, allowedDistance) + 0.01f);
+            TerrainRaycastResult? eyeRay = terrain.Raycast(eye, eyeRayEnd, useInteractionBoxes: true,
+                skipAirBlocks: true, (value, distance) => Selectable(value, distance, eye, eyeCell, eyeDirection));
+            if (eyeRay is not TerrainRaycastResult hostHit || hostHit.CellFace.Point != hitCell)
+            {
+                reason = "hit-obstructed: the host eye ray did not reach the requested block within the allowed distance";
+                return false;
+            }
+            hit = hostHit.HitPoint();
+            reason = null;
+            return true;
+
+            bool Selectable(int value, float distance, Vector3 origin, Point3 originCell, Vector3 rayDirection)
+            {
+                Block block = BlocksManager.Blocks[Game.Terrain.ExtractContents(value)];
+                if (distance == 0f && block is CrossBlock &&
+                    Vector3.Dot(rayDirection, new Vector3(originCell) + new Vector3(0.5f) - origin) < 0f)
+                    return false;
+                return aim.IsPlacement ? !block.IsPlacementTransparent || block.IsInteractive(terrain, value)
+                    : !block.IsDiggingTransparent;
+            }
         }
 
         /// <summary>模块注入：clientId → 该客户端当前兴趣窗口（区块中心 + 半径）。</summary>

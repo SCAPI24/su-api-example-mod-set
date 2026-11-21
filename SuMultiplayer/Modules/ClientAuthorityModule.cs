@@ -346,7 +346,7 @@ namespace SuMultiplayer.Modules
             // 每次本地编辑都带上**本端此刻**的有效交互距离（创造模式 SettingsManager.CreativeReach
             // 可调，只在加入时上报会过期）。主机按 min(reach+容差, 主机上限) 校验。
             ClientEditRequest request = m_tracker.Begin(edit.X, edit.Y, edit.Z,
-                edit.Contents, edit.Data, nowMs, hasReach: true, reach: m_edit.LocalReach);
+                edit.Contents, edit.Data, nowMs, hasReach: true, reach: m_edit.LocalReach, aim: edit.Aim);
             if (request == null)
             {
                 m_editDroppedOverflow++;

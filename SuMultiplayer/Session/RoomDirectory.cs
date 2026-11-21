@@ -123,7 +123,8 @@ namespace SuMultiplayer.Session
             var stale = new List<string>();
             foreach (KeyValuePair<string, RoomEntry> pair in m_entries)
             {
-                if (pair.Value.Persistent) continue;
+                // ServerCatalog removes its own rows after completed per-port failures.
+                if (pair.Value.Source != RoomSource.Lan || pair.Value.Persistent) continue;
                 if (nowMs - pair.Value.LastSeenMs > StaleMs) stale.Add(pair.Key);
             }
             if (stale.Count == 0) return 0;

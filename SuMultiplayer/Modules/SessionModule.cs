@@ -307,11 +307,8 @@ namespace SuMultiplayer.Modules
 
         // ------------------------------------------------------------ 加入
 
-        private int m_joinPingMs = -1;
-
         public bool TryBeginJoin(RoomEntry entry, out string reason)
         {
-            m_joinPingMs = entry?.PingMs ?? -1;
             reason = null;
             if (entry == null)
             {
@@ -423,7 +420,13 @@ namespace SuMultiplayer.Modules
             while (m_serverCatalog.TryDequeue(out DirectoryProbeResult result))
             {
                 DirectoryEndpoint endpoint = result.Endpoint;
-                if (endpoint == null) continue;
+                if (endpoint == null || result.Port <= 0) continue;
+                string key = endpoint.Key + ":" + result.Port;
+                if (result.Removed)
+                {
+                    m_directory.Remove(key);
+                    continue;
+                }
                 RoomBeaconInfo info = result.Info;
                 bool personal = endpoint.Source == RoomSource.Personal;
                 // 显示规则（用户口径）：
@@ -437,9 +440,8 @@ namespace SuMultiplayer.Modules
                 if (gamePort <= 0) gamePort = endpoint.FallbackGamePort;
                 var entry = new RoomEntry
                 {
-                    // 一个地址可能展开成多个端口（端口段/区间）：Key 必须带端口，
-                    // 否则同一主机的多个房间会互相覆盖。
-                    Key = endpoint.Key + ":" + gamePort,
+                    // Use the probe slot for both the online row and its removal.
+                    Key = key,
                     Name = info == null || string.IsNullOrEmpty(info.RoomName)
                         ? (personal ? endpoint.Name + ":" + gamePort : endpoint.Host + ":" + gamePort)
                         : info.RoomName,
@@ -448,7 +450,7 @@ namespace SuMultiplayer.Modules
                     Source = endpoint.Source,
                     DisplayAddress = endpoint.DisplayAddress,
                     Online = info != null,
-                    Persistent = personal,
+                    Persistent = keepOffline,
                     PlayerCount = info?.Players ?? 0,
                     MaxPlayers = info?.MaxPlayers ?? 0,
                     WorldName = info?.WorldName ?? string.Empty,
@@ -593,7 +595,7 @@ namespace SuMultiplayer.Modules
         ///   · 已连上（Requesting / AwaitingApproval）→ "Waiting for the host to approve your join
         ///     request. (Ping: N ms)"，窗口保持存在；主机点 Later 后仍是这一态（主机未回应就是它）；
         ///   · Downloading 起 → 沿用各阶段原文。
-        /// Ping 取发起加入时那条房间行的 RTT（-1 = unknown）。
+        /// 延迟取本次加入的实时 TCP 样本。
         /// </summary>
         public string JoinStatusText
         {
@@ -604,7 +606,7 @@ namespace SuMultiplayer.Modules
                     case JoinStage.Discovering:
                         return "Searching for rooms…";
                     case JoinStage.Connecting:
-                        return "Connecting to the host…";
+                        return "Connecting to the host…" + JoinPingSuffix();
                     case JoinStage.Requesting:
                     case JoinStage.AwaitingApproval:
                         return "Waiting for the host to approve your join request." +
@@ -622,14 +624,13 @@ namespace SuMultiplayer.Modules
         }
 
         /// <summary>
-        /// 加入窗口的实时 Ping：连接建立后每 500ms 一次 Ping/Pong；没有实时样本时回退到
-        /// 点房间时发现包的 RTT（旧行为），再没有就留空。
+        /// Source: TerrainSync.cs:TerrainSyncClient.UpdatePing
+        /// The join dialog only displays fresh measurements for this connection.
         /// </summary>
         private string JoinPingSuffix()
         {
-            int live = m_transportControl?.LastRoundTripMs ?? -1;
-            int ping = live >= 0 ? live : m_joinPingMs;
-            return ping >= 0 ? " (Ping: " + ping + " ms)" : string.Empty;
+            int ping = m_transportControl?.LastRoundTripMs ?? -1;
+            return ping >= 0 ? " (Ping: " + ping + " ms)" : " (Measuring ping…)";
         }
 
         /// <summary>加入窗口的 Cancel（用户口径 2026-10-26）：中止加入 —— 关通道、加入流程回

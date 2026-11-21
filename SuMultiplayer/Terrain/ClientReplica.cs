@@ -6,6 +6,7 @@ using System.Text;
 using System.Threading;
 using Engine;
 using SuMultiplayer.Net;
+using SuMultiplayer.Players;
 
 using Google.Protobuf;
 using PA = SuMultiplayer.Protocol.Authority;
@@ -264,9 +265,9 @@ namespace SuMultiplayer.Terrain
     /// <summary>客户端捕获到的一次本地地形写入（contents + data，光照不算）。</summary>
     public readonly struct ClientCellEdit
     {
-        public ClientCellEdit(int x, int y, int z, int contents, int data)
+        public ClientCellEdit(int x, int y, int z, int contents, int data, PA.CellEditAim aim = null)
         {
-            X = x; Y = y; Z = z; Contents = contents; Data = data;
+            X = x; Y = y; Z = z; Contents = contents; Data = data; Aim = aim;
         }
 
         public int X { get; }
@@ -274,6 +275,7 @@ namespace SuMultiplayer.Terrain
         public int Z { get; }
         public int Contents { get; }
         public int Data { get; }
+        public PA.CellEditAim Aim { get; }
         public ChunkKey Key => new ChunkKey(X >> 4, Z >> 4);
     }
 
@@ -490,6 +492,7 @@ namespace SuMultiplayer.Terrain
         public bool HasReach;
         /// <summary>请求者的有效交互距离（米）；<see cref="HasReach"/> = false 时无意义。</summary>
         public float Reach;
+        public PA.CellEditAim Aim;
         /// <summary>第一次发送的时刻（毫秒，调用方时钟口径）。</summary>
         public long FirstSentMs;
         /// <summary>最近一次发送的时刻（毫秒）。</summary>
@@ -542,7 +545,7 @@ namespace SuMultiplayer.Terrain
 
         /// <summary>登记一次本地编辑；返回 null = 超过上限（<see cref="Overflow"/> 已计数）。</summary>
         public ClientEditRequest Begin(int x, int y, int z, int contents, int data, long nowMs,
-            bool hasReach = false, float reach = 0f)
+            bool hasReach = false, float reach = 0f, PA.CellEditAim aim = null)
         {
             if (m_pending.Count >= MaxPending)
             {
@@ -561,6 +564,7 @@ namespace SuMultiplayer.Terrain
                 Data = data,
                 HasReach = hasReach,
                 Reach = reach,
+                Aim = aim,
                 FirstSentMs = nowMs,
                 LastSentMs = nowMs,
                 Attempts = 1
@@ -664,7 +668,7 @@ namespace SuMultiplayer.Terrain
     public static class CellEditRequestCodec
     {
         public static byte[] Encode(long sequence, int x, int y, int z, int contents, int data,
-            bool hasReach = false, float reach = 0f)
+            bool hasReach = false, float reach = 0f, PA.CellEditAim aim = null)
         {
             var message = new PA.CellEditRequest
             {
@@ -673,18 +677,19 @@ namespace SuMultiplayer.Terrain
                 Y = y,
                 Z = z,
                 Contents = contents,
-                Data = data
+                Data = data,
+                Aim = aim
             };
             if (hasReach) message.Reach = reach;
             return message.ToByteArray();
         }
 
         public static byte[] Encode(ClientCellEdit edit, long sequence) =>
-            Encode(sequence, edit.X, edit.Y, edit.Z, edit.Contents, edit.Data);
+            Encode(sequence, edit.X, edit.Y, edit.Z, edit.Contents, edit.Data, aim: edit.Aim);
 
         public static byte[] Encode(ClientEditRequest request) =>
             Encode(request.Sequence, request.X, request.Y, request.Z, request.Contents,
-                request.Data, request.HasReach, request.Reach);
+                request.Data, request.HasReach, request.Reach, request.Aim);
 
         public static bool TryDecode(byte[] payload, out long sequence, out int x, out int y, out int z,
             out int contents, out int data)
@@ -698,21 +703,28 @@ namespace SuMultiplayer.Terrain
         {
             sequence = 0; x = 0; y = 0; z = 0; contents = 0; data = 0;
             hasReach = false; reach = 0f;
+            if (!TryDecode(payload, out PA.CellEditRequest message)) return false;
+            sequence = message.Sequence;
+            x = message.X;
+            y = message.Y;
+            z = message.Z;
+            contents = message.Contents;
+            data = message.Data;
+            hasReach = message.HasReach;
+            reach = message.Reach;
+            return true;
+        }
+
+        internal static bool TryDecode(byte[] payload, out PA.CellEditRequest message)
+        {
+            message = null;
             if (payload == null || payload.Length == 0) return false;
             try
             {
-                PA.CellEditRequest message = PA.CellEditRequest.Parser.ParseFrom(payload);
-                sequence = message.Sequence;
-                x = message.X;
-                y = message.Y;
-                z = message.Z;
-                contents = message.Contents;
-                data = message.Data;
-                hasReach = message.HasReach;
-                reach = message.Reach;
-                return sequence > 0;
+                message = PA.CellEditRequest.Parser.ParseFrom(payload);
+                return message.Sequence > 0;
             }
-            catch (Exception)
+            catch (InvalidProtocolBufferException)
             {
                 return false;
             }
@@ -863,10 +875,16 @@ namespace SuMultiplayer.Terrain
         /// </summary>
         public InteractionReachGate ReachGate { get; set; }
 
-        /// <summary>主机侧读请求者权威化身位置（身体位置）；null = 没有位置来源。</summary>
+        /// <summary>Resolves the requesting player slot's authoritative eye position.</summary>
+        public delegate bool ClientEditEyeResolver(int clientId, int slot, out Vector3 eye);
+        public delegate bool ClientEditHitResolver(PA.CellEditRequest request, Vector3 eye,
+            float allowedDistance, out Vector3 hit, out string reason);
+
         public delegate bool ClientEditPositionResolver(int clientId, out Vector3 position);
 
-        public ClientEditPositionResolver PlayerPositions { get; set; }
+        public ClientEditEyeResolver PlayerEyes { get; set; }
+        public ClientEditPositionResolver DirectEditPositions { get; set; }
+        public ClientEditHitResolver TerrainHits { get; set; }
 
         /// <summary>主机世界当前是否创造模式（旧客户端缺 reach 字段时的默认值依据）。</summary>
         public bool HostWorldCreative { get; set; }
@@ -917,8 +935,7 @@ namespace SuMultiplayer.Terrain
         public ClientEditDecision Handle(int clientId, byte[] payload, bool isPlayerPeer,
             bool hasRange, int centerCellX, int centerCellZ, int radiusChunks)
         {
-            if (!CellEditRequestCodec.TryDecode(payload, out long sequence, out int x, out int y,
-                out int z, out int contents, out int data, out bool hasReach, out float reach))
+            if (!CellEditRequestCodec.TryDecode(payload, out PA.CellEditRequest decoded))
             {
                 Requests++;
                 Malformed++;
@@ -929,11 +946,6 @@ namespace SuMultiplayer.Terrain
                 Rejected++;
                 return malformed;
             }
-            var decoded = new PA.CellEditRequest
-            {
-                Sequence = sequence, X = x, Y = y, Z = z, Contents = contents, Data = data
-            };
-            if (hasReach) decoded.Reach = reach;
             return Handle(clientId, decoded, isPlayerPeer, hasRange, centerCellX, centerCellZ,
                 radiusChunks);
         }
@@ -1039,10 +1051,6 @@ namespace SuMultiplayer.Terrain
                     centerCellZ.ToString(CultureInfo.InvariantCulture) + " 半径 " +
                     radiusChunks.ToString(CultureInfo.InvariantCulture) + " 内）";
             }
-            else if (!TryValidateReach(clientId, x, y, z, request, decision))
-            {
-                // TryValidateReach 已写明确原因（requester-missing / reach-invalid / too-far）。
-            }
             else
             {
                 var key = new ChunkKey(x >> 4, z >> 4);
@@ -1069,7 +1077,7 @@ namespace SuMultiplayer.Terrain
                     decision.Data = currentData;
                     decision.Reason = "already";
                 }
-                else
+                else if (TryValidateReach(clientId, request, decision))
                 {
                     // 这次请求要销毁 / 替换一个非空气方块吗？（只有此时才需要 ToolLevel 算掉落）
                     bool destroying = currentContents != 0 && currentContents != contents;
@@ -1115,17 +1123,25 @@ namespace SuMultiplayer.Terrain
             return decision;
         }
 
-        /// <summary>
-        /// 主机侧玩家相对距离校验（place / dig 编辑请求）：
-        ///   实测 = 请求者权威化身身体位置 → 目标格中心；
-        ///   允许 = min(请求 reach + 容差, 主机上限)。
-        /// 没有注入 ReachGate / PlayerPositions（纯策略自检）时不做这一层，只保留兴趣窗口检查。
-        /// </summary>
-        private bool TryValidateReach(int clientId, int x, int y, int z,
-            PA.CellEditRequest request, ClientEditDecision decision)
+        // Source: ComponentMiner.cs:ComponentMiner.Raycast
+        // Native miner edits use the requesting slot's authoritative eye and the
+        // host terrain hit. Direct block behavior edits use the existing cell rule.
+        private bool TryValidateReach(int clientId, PA.CellEditRequest request,
+            ClientEditDecision decision)
         {
-            if (ReachGate == null || PlayerPositions == null) return true;
-            if (!PlayerPositions(clientId, out Vector3 position))
+            if (ReachGate == null) return true;
+            InteractionReachDecision limit = ReachGate.EvaluateBlockEdit(request.HasReach,
+                request.Reach, HostWorldCreative);
+            if (!limit.Valid) return RejectReach(decision, limit.InvalidReason);
+
+            PA.CellEditAim aim = request.Aim;
+            // Source: SubsystemBucketBlockBehavior.cs:OnUse; SubsystemRakeBlockBehavior.cs:OnUse
+            // Direct block behavior writes have no miner hit. Keep their own validation
+            // contract. A miner action with an aim always uses the authoritative raycast.
+            if (aim == null) return TryValidateDirectEditReach(clientId, request, decision, in limit);
+            if ((uint)aim.Slot >= PlayerKey.SlotCount)
+                return RejectReach(decision, "slot-invalid: invalid local player slot");
+            if (PlayerEyes == null || !PlayerEyes(clientId, aim.Slot, out Vector3 eye))
             {
                 Rejected++;
                 PositionMissing++;
@@ -1133,19 +1149,35 @@ namespace SuMultiplayer.Terrain
                     " 的化身位置 → 无法做交互距离校验";
                 return false;
             }
-            var center = new Vector3(x + 0.5f, y + 0.5f, z + 0.5f);
-            float measured = Vector3.Distance(position, center);
-            bool hasReach = request != null && request.HasReach;
-            float reach = request?.Reach ?? 0f;
-            if (!ReachGate.TryCheckDistance(hasReach, reach, HostWorldCreative, measured,
-                    out string reachReason))
+            if (TerrainHits == null)
+                return RejectReach(decision, "hit-unavailable: host terrain raycast is not installed");
+            if (!TerrainHits(request, eye, limit.AllowedDistanceMeters, out Vector3 hit, out string hitReason))
+                return RejectReach(decision, hitReason);
+            float measured = Vector3.Distance(eye, hit);
+            return measured <= limit.AllowedDistanceMeters ||
+                RejectReach(decision, ReachGate.TooFarReason(measured, in limit));
+        }
+
+        private bool TryValidateDirectEditReach(int clientId, PA.CellEditRequest request,
+            ClientEditDecision decision, in InteractionReachDecision limit)
+        {
+            if (DirectEditPositions == null || !DirectEditPositions(clientId, out Vector3 position))
             {
-                Rejected++;
-                ReachRejected++;
-                decision.Reason = reachReason;
-                return false;
+                PositionMissing++;
+                return RejectReach(decision, "requester-missing: host cannot read the direct edit actor's position");
             }
-            return true;
+            var target = new Vector3(request.X + 0.5f, request.Y + 0.5f, request.Z + 0.5f);
+            float measured = Vector3.Distance(position, target);
+            return measured <= limit.AllowedDistanceMeters ||
+                RejectReach(decision, ReachGate.TooFarReason(measured, in limit));
+        }
+
+        private bool RejectReach(ClientEditDecision decision, string reason)
+        {
+            Rejected++;
+            ReachRejected++;
+            decision.Reason = reason;
+            return false;
         }
 
         private bool InRange(int x, int z, int centerCellX, int centerCellZ, int radiusChunks)

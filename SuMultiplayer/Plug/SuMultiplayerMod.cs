@@ -193,6 +193,7 @@ namespace SuMultiplayer
         /// 组合根建一个、随本次会话存活 —— 模块与屏都不持有静态状态。</summary>
         private CharacterNameRoller m_nameRoller;
         private IModEventBus m_eventBus;
+        private UpdateExtensionToken m_terrainAimExtension;
         private IModInjector m_injector;
         private SyncConfig m_config;
         /// <summary>
@@ -646,8 +647,21 @@ namespace SuMultiplayer
             // 客户端副本 / 主机权威：引擎侧服务（编辑捕获、主机权威落地、世界信息、RNG 状态）
             // 只在这里构造一次，模块通过端口访问 —— 模块层不引用 Game。
             m_clientAuthority = new ClientReplicaEngine(m_terrainModule.Bridge, m_reachGate);
-            // place / dig 编辑的玩家相对距离校验：请求者权威化身位置来自联机角色表。
-            m_clientAuthority.SetPlayerPositionResolver(
+            // Source: ComponentMiner.cs:ComponentMiner.Raycast; NetworkAvatarSpawner.cs:TryGet
+            // Native terrain reach is measured from this exact player's eye, per local slot.
+            m_clientAuthority.SetPlayerEyeResolver(
+                delegate (int clientId, int slot, out Vector3 position)
+                {
+                    position = default(Vector3);
+                    if (!avatarSpawner.TryGet(new PlayerKey(clientId, slot), out PlayerData player))
+                        return false;
+                    ComponentCreatureModel model = player?.ComponentPlayer?.ComponentCreatureModel;
+                    if (model == null) return false;
+                    position = model.EyePosition;
+                    return true;
+                });
+            // Source: NetworkAvatarSpawner.cs:NetworkAvatarSpawner.TryGetAvatarCell
+            m_clientAuthority.SetDirectEditPositionResolver(
                 delegate (int clientId, out Vector3 position)
                 {
                     return avatarSpawner.TryGetAvatarCell(clientId, out position, out _);
@@ -1144,6 +1158,11 @@ namespace SuMultiplayer
             // Input captures only after the real Host produced this step's input. GUI consumes current
             // button edges before the same real Host runs. Neither registration replaces a Component.
             m_componentExtensions.Register(eventBus);
+            // Source: TerrainEditAimExtension.cs:TerrainEditAimExtension
+            m_terrainAimExtension = eventBus.RegisterUpdateExtension<ComponentPlayer>(
+                "SuMultiplayer.TerrainEditAim",
+                player => new TerrainEditAimExtension(player, m_terrainModule.Bridge, m_avatarSpawner),
+                EventPriority.LOWEST);
             // 全局主机声音中继：替换 SubsystemAudio，在 base.Update 排空 m_queuedSounds
             // 之前捕获新增条目（非虚 PlaySound 无法用派生外壳截获，见 Engine/RemoteActionAudioReplica.cs）。
             modInjector.Register("Game.SubsystemAudio",
@@ -2391,6 +2410,9 @@ m_terrainModule?.Bridge.BlockBehaviorNotify.Describe());
 
         public void OnUnload()
         {
+            m_terrainAimExtension?.Dispose();
+            m_terrainAimExtension = null;
+            m_terrainModule?.Bridge.ResetClientEditCapture(ClientCaptureDropReason.Detached);
             // Source: SuPlayScreenExtension.cs:Detached — detach before the session/transfer ports are disposed.
             m_playScreenExtension?.Dispose();
             m_playScreenExtension = null;

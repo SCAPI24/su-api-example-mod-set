@@ -999,12 +999,8 @@ namespace SuMultiplayer.Modules
                 m_counters.NoteMutedDropped();
                 return;
             }
-            if (sender != 0 && !m_roster.Contains(sender))
-            {
-                // 名册还没到 / 主机刚转发：用占位名继续播（音频本身是合法的），
-                // 名册到达后会被主机权威信息覆盖。
-                m_roster.Upsert(sender, "Player " + sender, supported: true, micEnabled: true);
-            }
+            // Source: VoiceChatModule.cs:OnVoiceRoster
+            // A relayed packet may arrive before the roster. Play it without creating a roster entry.
             if (!TryDecode(message, packetQuality, out short[] pcm, out reason))
             {
                 m_counters.NoteDecodeFail();
@@ -1197,7 +1193,8 @@ namespace SuMultiplayer.Modules
 
         private void SendVoiceState(bool force)
         {
-            if (m_hosting || m_transport == null) return;
+            // Source: TerrainSync.cs:TerrainSyncClient.HandleHelloAck
+            if (m_hosting || m_transport == null || m_transport.LocalClientId <= 0) return;
             bool mic = m_options.Enabled && m_sessionVoiceEnabled && m_voiceOn &&
                 m_captureActive;
             string reason;
@@ -1244,7 +1241,15 @@ namespace SuMultiplayer.Modules
                 m_counters.NoteDirectionError();
                 return;
             }
-            m_roster.TryGet(clientId, out VoicePeerState previous);
+            // Source: VoiceChatModule.cs:OnClientJoined
+            // A VoiceState can be queued before approval or even after a rejected Hello.
+            if (!m_roster.TryGet(clientId, out VoicePeerState previous))
+            {
+                m_counters.NoteDirectionError();
+                LogProblem("state-before-join", "Ignored voice state from a connection that has not joined (clientId=" +
+                    clientId + ").");
+                return;
+            }
             string name = previous.Name;
             if (!VoiceProfiles.TryFromWireId(message.Format, out VoiceQuality announcedQuality))
             {
