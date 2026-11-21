@@ -51,10 +51,6 @@
     <Message Importance="high" Text="Protocol: 已同步 @(_ProtocolGenerated->Count()) 个生成文件到 Protocol/Generated/" />
   </Target>
 
-  <ItemGroup>
-    <EmbeddedResource Include="ServerDns.txt" LogicalName="SuMultiplayer.ServerDns.txt" />
-  </ItemGroup>
-
   <!-- Source: SuPlayScreenExtension.cs:Attached — the published SDK supplies the generic screen/list APIs. -->
   <ItemGroup>
     <PackageReference Include="Engine" Version="[0.2.1.2]" />

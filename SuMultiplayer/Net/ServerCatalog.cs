@@ -6,7 +6,6 @@ using System.Linq;
 using System.Net;
 using System.Net.Http;
 using System.Net.Sockets;
-using System.Reflection;
 using System.Text;
 using System.Threading;
 using SuMultiplayer.Engine;
@@ -45,25 +44,25 @@ namespace SuMultiplayer.Net
     }
 
     /// <summary>
-    /// ServerDns（三端 raw 合并 + 内嵌兜底）+ 个人服务器目录。
+    /// R2 公开服务器名单与本地个人服务器目录。
     /// 后台线程负责 HTTP 刷新和 UDP Beacon 单播探测；主线程通过 TryDequeue 取结果，
     /// 不把网络等待放到游戏帧里。
     /// </summary>
     public sealed class ServerCatalog : IDisposable
     {
-        private const string ContentResourceName = "SuMultiplayer.ServerDns.txt";
+        private const string DirectoryUrl = "https://store.suceru.site/Host/ServerDns.txt";
         private const int MaxDirectoryBytes = 64 * 1024;
         private const int MaxHosts = 256;
         private const int ProbeIntervalMs = 5000;
         private const int RefreshSuccessMs = 300000;
         private const int RefreshFailureMs = 60000;
 
-        private static readonly string[] RawUrls =
+        private static readonly HttpClient DirectoryClient = new HttpClient
         {
-            "https://gitee.com/SC-SPM/su-api-example-mod-set/raw/master/ScMultiplayer/ServerDns.txt",
-            "https://cnb.cool/suceru.cb/SC-SPM/SuAPIMod/-/git/raw/master/ScMultiplayer/ServerDns.txt",
-            "https://raw.githubusercontent.com/SCAPI24/su-api-example-mod-set/master/ScMultiplayer/ServerDns.txt"
+            Timeout = TimeSpan.FromSeconds(10),
+            MaxResponseContentBufferSize = MaxDirectoryBytes
         };
+        private static readonly Encoding DirectoryEncoding = new UTF8Encoding(false, true);
 
         private readonly int m_probePortStart;
         private readonly int m_probePortCount;
@@ -76,7 +75,6 @@ namespace SuMultiplayer.Net
         private volatile bool m_running;
         private int m_personalRevision = -1;
         private long m_nextRefreshMs;
-        private int m_refreshFailures;
 
         /// <param name="probePortStart">地址没写端口时，默认从哪个端口开始扫。</param>
         /// <param name="probePortCount">地址没写端口时，默认扫多少个端口。</param>
@@ -113,13 +111,12 @@ namespace SuMultiplayer.Net
 
         private void Loop()
         {
-            LoadEmbeddedAndPersonal();
             while (m_running)
             {
                 try
                 {
-                    if (Environment.TickCount64 >= m_nextRefreshMs) RefreshRaw();
                     RefreshPersonal();
+                    if (Environment.TickCount64 >= m_nextRefreshMs) RefreshDirectory();
                     long now = Environment.TickCount64;
                     List<DirectoryEndpoint> snapshot;
                     lock (m_gate) snapshot = new List<DirectoryEndpoint>(m_endpoints);
@@ -143,53 +140,24 @@ namespace SuMultiplayer.Net
             }
         }
 
-        private void LoadEmbeddedAndPersonal()
+        // Source: ServerCatalog.cs:RefreshRaw — preserve the public directory refresh intervals and TXT format.
+        private void RefreshDirectory()
         {
-            var hosts = new List<string>();
             try
             {
-                Assembly assembly = typeof(ServerCatalog).Assembly;
-                using Stream stream = assembly.GetManifestResourceStream(ContentResourceName);
-                if (stream != null)
-                {
-                    using var reader = new StreamReader(stream, Encoding.UTF8);
-                    hosts.AddRange(ParseHosts(reader.ReadToEnd()));
-                }
+                using var request = new HttpRequestMessage(HttpMethod.Get, DirectoryUrl);
+                request.Headers.CacheControl = new System.Net.Http.Headers.CacheControlHeaderValue { NoCache = true };
+                using HttpResponseMessage response = DirectoryClient.SendAsync(request).GetAwaiter().GetResult();
+                response.EnsureSuccessStatusCode();
+                byte[] data = response.Content.ReadAsByteArrayAsync().GetAwaiter().GetResult();
+                ApplyDirectoryHosts(ParseHosts(DirectoryEncoding.GetString(data)));
+                m_nextRefreshMs = Environment.TickCount64 + RefreshSuccessMs;
             }
             catch (Exception error)
             {
-                ModLog.Warn("[SuMP][catalog] Failed to read embedded ServerDns: " + error.Message);
+                m_nextRefreshMs = Environment.TickCount64 + RefreshFailureMs;
+                ModLog.Warn("[SuMP][catalog] Could not refresh R2 ServerDns: " + error.Message);
             }
-            ApplyDirectoryHosts(hosts, "embedded");
-            RefreshPersonal();
-        }
-
-        private void RefreshRaw()
-        {
-            m_nextRefreshMs = Environment.TickCount64 +
-                (m_refreshFailures > 0 ? RefreshFailureMs : RefreshSuccessMs);
-            var merged = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-            int succeeded = 0;
-            using var client = new HttpClient { Timeout = TimeSpan.FromSeconds(10) };
-            foreach (string url in RawUrls)
-            {
-                try
-                {
-                    byte[] data = client.GetByteArrayAsync(url).GetAwaiter().GetResult();
-                    if (data == null || data.Length == 0 || data.Length > MaxDirectoryBytes) continue;
-                    string text = Encoding.UTF8.GetString(data);
-                    foreach (string host in ParseHosts(text)) merged.Add(host);
-                    succeeded++;
-                }
-                catch (Exception error)
-                {
-                    ModLog.Info("[catalog] ServerDns source unavailable: " + url +
-                        " · " + error.Message);
-                }
-            }
-            m_refreshFailures = succeeded == 0 ? m_refreshFailures + 1 : 0;
-            if (merged.Count > 0)
-                ApplyDirectoryHosts(merged.ToList(), "raw×" + succeeded);
         }
 
         private void RefreshPersonal()
@@ -242,15 +210,18 @@ namespace SuMultiplayer.Net
             }
         }
 
-        private void ApplyDirectoryHosts(List<string> hosts, string source)
+        private void ApplyDirectoryHosts(IEnumerable<string> hosts)
         {
             var valid = new List<DirectoryEndpoint>();
             var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
             foreach (string raw in hosts)
             {
-                if (valid.Count >= MaxHosts) break;
-                if (!TrySplitAddress(raw, out string host, out int port, out int count)) continue;
-                if (!seen.Add("dir:" + host)) continue;
+                if (!TrySplitAddress(raw, out string host, out int port, out int count) ||
+                    Uri.CheckHostName(host) == UriHostNameType.Unknown)
+                    throw new InvalidDataException("ServerDns contains an invalid server address.");
+                if (!seen.Add(host)) continue;
+                if (valid.Count >= MaxHosts)
+                    throw new InvalidDataException("ServerDns exceeds " + MaxHosts + " hosts.");
                 // ServerDns 支持三种写法：host（默认端口段）/ host:P / host:P-N（P 起 N 个）。
                 int[] probePorts = count > 0
                     ? BuildPortRange(port, count)
@@ -269,11 +240,16 @@ namespace SuMultiplayer.Net
             }
             lock (m_gate)
             {
+                var currentKeys = new HashSet<string>(valid.Select(endpoint => endpoint.Key), StringComparer.Ordinal);
+                foreach (DirectoryEndpoint endpoint in m_endpoints)
+                {
+                    if (endpoint.Source == RoomSource.Directory && !currentKeys.Contains(endpoint.Key))
+                        m_nextProbe.Remove(endpoint.Key);
+                }
                 m_endpoints.RemoveAll(endpoint => endpoint.Source == RoomSource.Directory);
                 m_endpoints.AddRange(valid);
             }
-            ModLog.Info("[catalog] ServerDns merged (" + source +
-                "）：" + valid.Count + " 个服务地址");
+            ModLog.Info("[SuMP][catalog] Loaded " + valid.Count + " hosts from R2 ServerDns.");
         }
 
         private void Probe(DirectoryEndpoint endpoint)
