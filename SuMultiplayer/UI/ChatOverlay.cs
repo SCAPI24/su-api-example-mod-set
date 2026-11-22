@@ -7,6 +7,7 @@ using Engine.Input;
 using Engine.Media;
 using Game;
 using GameEntitySystem;
+using SuAPI;
 using SuAPICore;
 using SuMultiplayer.Modules;
 using SuMultiplayer.Net;
@@ -280,6 +281,7 @@ namespace SuMultiplayer.UI
         private string m_feedSignature = string.Empty;
         private bool m_inputOpen;
         private bool m_nativeKeyboardOpen;
+        private IDisposable m_textInputLease;
         private bool m_chatButtonConsumed;
         private bool m_sendButtonConsumed;
         private bool m_disposed;
@@ -685,6 +687,9 @@ namespace SuMultiplayer.UI
             m_nativeKeyboardOpen = false;
             m_inputRow.IsVisible = true;
             DrainPendingKeyboardInput();
+            // Source: Survivalcraft/Game/TextBoxWidget.cs:TextBoxWidget.HasFocus
+            if (!automation && OperatingSystem.IsWindows())
+                m_textInputLease = TextInputControl.Request();
             m_input.HasFocus = true;
             m_logInfo?.Invoke(automation
                 ? "[SuMP][chat-ui] 聊天输入已由自动化打开（HUD 内联输入，不弹软键盘）"
@@ -822,6 +827,12 @@ namespace SuMultiplayer.UI
             m_inputRow.IsVisible = false;
             m_input.HasFocus = false;
             m_nativeKeyboardOpen = false;
+            if (m_textInputLease != null)
+            {
+                m_textInputLease.Dispose();
+                m_textInputLease = null;
+                Keyboard.CancelImeComposition();
+            }
             if (clearText) m_input.Text = string.Empty;
             m_input.CaretPosition = 0;
             DrainPendingKeyboardInput();
