@@ -1,0 +1,214 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="下载 Windows、Android 和 Linux 版 Survivalcraft SuAPI，查看安装游戏与中文翻译 Mod 的实拍步骤。">
+  <meta name="theme-color" content="#6b4328">
+  <title>生存战争 SuAPI 游戏下载</title>
+  <link rel="canonical" href="https://dl.suceru.site/">
+  <link rel="alternate" hreflang="zh-CN" href="https://dl.suceru.site/">
+  <link rel="alternate" hreflang="en" href="https://dl.suceru.site/en/">
+  <link rel="alternate" hreflang="x-default" href="https://dl.suceru.site/">
+  <link rel="icon" href="assets/suapi.png">
+  <link rel="stylesheet" href="style.css">
+  <script src="guide.js" defer></script>
+</head>
+<body>
+  <a class="skip" href="#main">跳到正文</a>
+  <header class="topbar">
+    <div class="wrap bar-inner">
+      <a class="brand" href="#main"><img src="assets/suapi.png" width="34" height="34" alt=""><span>Survivalcraft <b>SuAPI</b></span></a>
+      <nav aria-label="页面导航">
+        <a href="#downloads">下载</a>
+        <a href="#install">安装</a>
+        <a href="#chinese">中文翻译</a>
+        <a class="language-switch" href="en/" lang="en" hreflang="en">English</a>
+      </nav>
+    </div>
+  </header>
+
+  <main id="main">
+    <section class="wrap hero" aria-labelledby="hero-title">
+      <div class="hero-copy">
+        <div class="version-share">
+          <button class="version" type="button" aria-controls="download-qr" aria-expanded="false"><span class="version-dot" aria-hidden="true"></span>SuAPI 0.2.1.2<span class="share-label">，下载页二维码</span></button>
+          <figure class="download-qr" id="download-qr" hidden>
+            <img src="assets/download-qr.png" alt="扫描二维码打开 SuAPI 下载站" width="330" height="330">
+            <figcaption>dl.suceru.site</figcaption>
+          </figure>
+        </div>
+        <h1 id="hero-title">生存战争<span>SuAPI 游戏下载</span></h1>
+        <p class="intro">选择你的设备下载安装包。首次启动是英文界面，按下方图解安装中文翻译即可切换。</p>
+        <div class="hero-actions">
+          <a class="button primary" href="#downloads">选择平台 <span aria-hidden="true">↓</span></a>
+          <a class="button secondary" href="#chinese">安装中文翻译</a>
+        </div>
+      </div>
+      <div class="hero-art" data-carousel role="region" aria-label="游戏界面展示" aria-roledescription="轮播">
+        <div class="hero-slides" id="feature-slides">
+          <figure class="feature-slide">
+            <a class="feature-image" href="assets/features/stock.webp" data-screenshot>
+              <img src="assets/features/stock.webp" alt="原版生存模式的森林和物品栏" fetchpriority="high" width="1600" height="900">
+            </a>
+            <figcaption><h2>原版体验</h2><p>不装任何 Mod 时，玩法与原版一致。</p></figcaption>
+          </figure>
+          <figure class="feature-slide" hidden>
+            <a class="feature-image" href="assets/guide/06-chinese-menu.webp" data-screenshot>
+              <img src="assets/guide/06-chinese-menu.webp" alt="安装中文翻译 Mod 后的中文主菜单" width="1600" height="900">
+            </a>
+            <figcaption><h2>中文翻译 Mod</h2><p>安装后，菜单和游戏内文字就会显示为中文。</p></figcaption>
+          </figure>
+          <figure class="feature-slide" hidden>
+            <a class="feature-image" href="assets/guide/04-chinese.webp" data-screenshot>
+              <img src="assets/guide/04-chinese.webp" alt="游戏内模组下载列表和 Download 按钮" width="1600" height="900">
+            </a>
+            <figcaption><h2>下载 Mod</h2><p>从「内容 → 社区 → MOD」打开列表，搜索并下载模组。</p></figcaption>
+          </figure>
+          <figure class="feature-slide" hidden>
+            <a class="feature-image" href="assets/features/manage-installed.webp" data-screenshot>
+              <img src="assets/features/manage-installed.webp" alt="在管理界面选中已安装的中文翻译，左下方显示卸载按钮" width="1600" height="900">
+            </a>
+            <figcaption><h2>管理 Mod</h2><p>在「内容 → 管理」选中模组，按当前状态选择安装或卸载。</p></figcaption>
+          </figure>
+          <figure class="feature-slide" hidden>
+            <a class="feature-image" href="assets/features/multiplayer.webp" data-screenshot>
+              <img src="assets/features/multiplayer.webp" alt="安装 SuMultiplayer 后的联机房间界面" width="1600" height="900">
+            </a>
+            <figcaption><h2>联机 Mod</h2><p>安装 SuMultiplayer 后，在选世界界面发现并加入联机房间。</p></figcaption>
+          </figure>
+        </div>
+        <div class="feature-indicators" role="group" aria-label="切换游戏截图" hidden>
+          <button type="button" aria-label="原版体验" aria-controls="feature-slides" aria-current="true"></button>
+          <button type="button" aria-label="中文翻译 Mod" aria-controls="feature-slides"></button>
+          <button type="button" aria-label="下载 Mod" aria-controls="feature-slides"></button>
+          <button type="button" aria-label="管理 Mod" aria-controls="feature-slides"></button>
+          <button type="button" aria-label="联机 Mod" aria-controls="feature-slides"></button>
+        </div>
+      </div>
+    </section>
+
+    <!-- 下载地址与版本来自 https://store.suceru.site/index/Appdns.xml。 -->
+    <section class="wrap section" id="downloads" aria-labelledby="downloads-title">
+      <div class="section-head">
+        <h2 id="downloads-title">选择下载平台</h2>
+        <span>SuAPI 0.2.1.2</span>
+      </div>
+      <div class="platforms">
+        <article class="platform">
+          <div class="card-head"><span class="platform-mark window-mark" aria-hidden="true"></span><div><h3>Windows</h3><p>64 位 · 免安装</p></div></div>
+          <div class="package"><span>ZIP · 61.1 MB</span><span>游戏 2.4.40.9</span></div>
+          <a class="button download" href="https://store.suceru.site/update/%5BSuAPI%5DSurvivalcraft-2.4.40.9-0.2.1.2.zip">下载 Windows 版 <span aria-hidden="true">↓</span></a>
+          <a class="install-link" href="#windows">查看安装步骤 <span aria-hidden="true">→</span></a>
+        </article>
+        <article class="platform">
+          <div class="card-head"><span class="platform-mark phone-mark" aria-hidden="true"></span><div><h3>Android</h3><p>ARM64 · 手机 / 平板</p></div></div>
+          <div class="package"><span>APK · 43.8 MB</span><span>游戏 2.4.10.9</span></div>
+          <a class="button download" href="https://store.suceru.site/update/%5BSuAPI%5DSurvivalcraft-2.4.10.9-0.2.1.2.Apk">下载 Android 版 <span aria-hidden="true">↓</span></a>
+          <a class="install-link" href="#android">查看安装步骤 <span aria-hidden="true">→</span></a>
+        </article>
+        <article class="platform">
+          <div class="card-head"><span class="platform-mark terminal-mark" aria-hidden="true">&gt;_</span><div><h3>Linux</h3><p>64 位 · 桌面版</p></div></div>
+          <div class="package"><span>TAR.GZ · 59.9 MB</span><span>游戏 2.4.40.9</span></div>
+          <a class="button download" href="https://store.suceru.site/update/%5BSuAPI%5DSurvivalcraft-2.4.40.9-0.2.1.2.tar.gz">下载 Linux 版 <span aria-hidden="true">↓</span></a>
+          <a class="install-link" href="#linux">查看安装步骤 <span aria-hidden="true">→</span></a>
+        </article>
+      </div>
+    </section>
+
+    <section class="wrap section" id="install" aria-labelledby="install-title">
+      <div class="section-head"><h2 id="install-title">安装并启动</h2></div>
+      <div class="installation">
+        <article class="install" id="windows">
+          <h3>Windows</h3>
+          <ol>
+            <li>右键下载的 <code>.zip</code>，选择「全部解压缩」。</li>
+            <li>打开解压出的 <code>[SuAPI]Survivalcraft</code> 文件夹，双击 <code>Survivalcraft.exe</code>。</li>
+          </ol>
+        </article>
+        <article class="install" id="android">
+          <h3>Android</h3>
+          <ol>
+            <li>在浏览器下载记录或文件管理器中打开 <code>.Apk</code>。</li>
+            <li>若系统提示需要授权，允许当前浏览器或文件管理器安装应用。完成安装后点「打开」。</li>
+          </ol>
+        </article>
+        <article class="install" id="linux">
+          <h3>Linux</h3>
+          <ol>
+            <li>解压 <code>.tar.gz</code> 到可写目录。</li>
+            <li>进入解压后的 <code>[SuAPI]Survivalcraft</code> 文件夹，在该目录打开终端并运行 <code>./Survivalcraft</code>。</li>
+          </ol>
+        </article>
+      </div>
+    </section>
+
+    <section class="wrap section guide-section" id="chinese" aria-labelledby="chinese-title">
+      <div class="section-head">
+        <h2 id="chinese-title">安装中文翻译</h2>
+        <span>短码 <code>su-zh</code></span>
+      </div>
+      <p class="section-intro">在游戏内安装即可。点击截图可放大查看。</p>
+      <ol class="guide">
+        <li>
+          <a class="shot" href="assets/guide/01-content.webp" data-screenshot aria-label="放大第 1 步截图">
+            <img src="assets/guide/01-content.webp" alt="英文主菜单里的 Content 按钮" loading="lazy" width="1600" height="900">
+            <span class="zoom" aria-hidden="true">⤢</span>
+          </a>
+          <div class="step-copy"><span class="step">1</span><div><h3>打开 Content</h3><p>在首次启动的英文主菜单点 <b>Content</b>。</p></div></div>
+        </li>
+        <li>
+          <a class="shot" href="assets/guide/02-community.webp" data-screenshot aria-label="放大第 2 步截图">
+            <img src="assets/guide/02-community.webp" alt="Content 页面里的 Community 按钮" loading="lazy" width="1600" height="900">
+            <span class="zoom" aria-hidden="true">⤢</span>
+          </a>
+          <div class="step-copy"><span class="step">2</span><div><h3>进入 Community</h3><p>在内容页面点 <b>Community</b> 打开社区选择框。</p></div></div>
+        </li>
+        <li>
+          <a class="shot" href="assets/guide/03-mod.webp" data-screenshot aria-label="放大第 3 步截图">
+            <img src="assets/guide/03-mod.webp" alt="社区选择框中的 MOD 选项和 OK 按钮" loading="lazy" width="1600" height="900">
+            <span class="zoom" aria-hidden="true">⤢</span>
+          </a>
+          <div class="step-copy"><span class="step">3</span><div><h3>选择 MOD</h3><p>选中 <b>MOD</b>，点 <b>OK</b> 进入模组列表。</p></div></div>
+        </li>
+        <li>
+          <a class="shot" href="assets/guide/04-chinese.webp" data-screenshot aria-label="放大第 4 步截图">
+            <img src="assets/guide/04-chinese.webp" alt="模组列表中选中的中文翻译和 Download 按钮" loading="lazy" width="1600" height="900">
+            <span class="zoom" aria-hidden="true">⤢</span>
+          </a>
+          <div class="step-copy"><span class="step">4</span><div><h3>下载「中文翻译」</h3><p>搜索 <code>su-zh</code>，选中「中文翻译」，点 <b>Download</b>。下载后会自动安装。</p><a class="sample-link" href="assets/guide/05-download.webp" data-screenshot>查看下载成功截图</a></div></div>
+        </li>
+        <li>
+          <a class="shot" href="assets/guide/05-restart.webp" data-screenshot aria-label="放大第 5 步截图">
+            <img src="assets/guide/05-restart.webp" alt="离开模组管理页面时出现的 Restart Required 提示" loading="lazy" width="1600" height="900">
+            <span class="zoom" aria-hidden="true">⤢</span>
+          </a>
+          <div class="step-copy"><span class="step">5</span><div><h3>确认重启</h3><p>看到 <b>Download Successful</b> 后点 <b>OK</b>。点击左上角箭头退出模组列表，再从管理页面返回。看到 <b>Restart Required</b> 后点 <b>OK</b>。</p></div></div>
+        </li>
+        <li>
+          <a class="shot" href="assets/guide/06-chinese-menu.webp" data-screenshot aria-label="放大第 6 步截图">
+            <img src="assets/guide/06-chinese-menu.webp" alt="中文翻译生效后的游戏主菜单" loading="lazy" width="1600" height="900">
+            <span class="zoom" aria-hidden="true">⤢</span>
+          </a>
+          <div class="step-copy"><span class="step">6</span><div><h3>打开中文主菜单</h3><p>重启后，内容界面的菜单已经是中文。点左上角箭头即可回到中文主菜单。</p></div></div>
+        </li>
+      </ol>
+      <aside class="shortcut">
+        <h3>用短码直接安装</h3>
+        <p>也可以从 <b>Content → From Link → Mod</b> 输入 <code>su-zh</code>，按提示下载并重启。</p>
+      </aside>
+    </section>
+  </main>
+
+  <footer class="footer"><div class="wrap footer-inner">
+    <span>Survivalcraft SuAPI</span>
+    <a href="https://store.suceru.site/index/Appdns.xml">安装包目录</a>
+    <a href="#main">返回顶部 ↑</a>
+  </div></footer>
+
+  <dialog id="preview" aria-labelledby="preview-caption">
+    <div class="preview-bar"><p id="preview-caption"></p><button type="button" aria-label="关闭截图预览">关闭 ×</button></div>
+    <img alt="">
+  </dialog>
+</body>
+</html>

@@ -185,7 +185,16 @@ SuEventBus/.vs/
 SuMultiplayer/bin/
 SuMultiplayer/obj/
 SuMultiplayer/.vs/
+## sync:site
+!site/
+!site/**
+site/bin/
+site/obj/
+site/.vs/
 ## ===== 生成区结束 =====
+
+# Wrangler 本地构建缓存
+/site/**/.wrangler/
 
 # ── 手动维护区（在生成区之外，脚本不会改动这里）──
 # 各 Mod 的特殊产物排除（不属于通用的 bin/obj/.vs）
