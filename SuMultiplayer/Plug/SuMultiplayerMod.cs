@@ -398,6 +398,8 @@ namespace SuMultiplayer
                 m_avatarModule.NoteAuthoritySpawnPointChanged(key);
             };
             m_vitalsModule = new PlayerVitalsModule(delegate { return Time.RealTime; });
+            // Source: PlayerVitalsModule.cs:IsLocalRespawnPositionSuspended
+            avatarSpawner.IsLocalRespawnPositionSuspended = m_vitalsModule.IsLocalRespawnPositionSuspended;
             // 角色动作 / 手持物 / 背包：引擎适配层只读写远端化身与角色背包，
             // 纯逻辑（动作边沿 / 动画状态 / 背包增量）在 Modules/PlayerActionModule.cs 与 Net/ 里，
             // 因此自检可以直接编译同一份逻辑。背包落盘写角色记录（SuMultiplayerPlayers.xml）。

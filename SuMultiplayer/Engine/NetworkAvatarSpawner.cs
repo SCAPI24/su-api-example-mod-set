@@ -41,6 +41,7 @@ namespace SuMultiplayer.Engine
         /// null = 不桥接（主机本机玩家走引擎原生 ComponentPlayer 桥，不需要它）。
         /// </summary>
         public TryGetRidingInputDelegate RidingInputResolver { get; set; }
+        internal Func<int, bool> IsLocalRespawnPositionSuspended { get; set; }
 
         public delegate bool TryGetRidingInputDelegate(int clientId, out float turn,
             out float forward, out bool jump);
@@ -1678,6 +1679,10 @@ namespace SuMultiplayer.Engine
             int count = 0;
             for (int slot = 0; slot < localPlayers.Count; slot++)
             {
+                // Source: PlayerVitalsModule.cs:SendRespawnRequest and TickLocalRespawnReplay
+                // The request and positions share the primary TCP queue. No old pose may
+                // be enqueued after the request and before the replacement body is ready.
+                if (IsLocalRespawnPositionSuspended?.Invoke(slot) == true) continue;
                 // 客户端 → 主机：带上"移动速度（碰撞前）"——主机 avatar 用它作为物理速度推动物
                 // （2026-10-26，客户端推不动动物修复；详见 PlayerPositionSnapshot.MoveVelocity 注释）。
                 if (!TryCapturePlayerPosition(localPlayers[slot], serverTick, true, false,
@@ -2454,6 +2459,9 @@ namespace SuMultiplayer.Engine
 
         /// <summary>丢掉某个联机角色的位置状态（旧 RemoveNetworkPlayer 里的 RemotePlayers.Remove）。</summary>
         private void ForgetRemotePosition(PlayerKey key) => m_remotePositions.Remove(key);
+
+        // Source: NetworkAvatarSpawner.cs:UpdateRemotePresentations
+        internal void ResetRemotePositionAfterRespawn(PlayerKey key) => ForgetRemotePosition(key);
 
         /// <summary>
         /// 客户端：收到**本机自己**那条位置快照 → 明确跳过（本机角色由本地模拟，

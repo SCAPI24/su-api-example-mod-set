@@ -1935,6 +1935,20 @@ namespace SuMultiplayer.Modules
                 window.DeathRevision + "）→ 已确认存活，死亡表现由端口清除");
         }
 
+        // Source: PlayerVitalsModule.cs:TickClientRespawn and TickLocalRespawnReplay
+        internal bool IsLocalRespawnPositionSuspended(int slot)
+        {
+            int clientId = m_transport?.LocalClientId ?? -1;
+            if (clientId <= 0) return false;
+            var key = new PlayerKey(clientId, slot);
+            // This remains true through an inconclusive timeout. The host may already have
+            // moved the avatar, and the existing result/replay path will settle the request.
+            return (m_respawnGate.TryGet(key, out PlayerRespawnPending pending) &&
+                    pending.RequestSent && !pending.Resolved) ||
+                (m_localRespawns.TryGetValue(key, out LocalRespawnState state) &&
+                    state.AcceptedAtMs != 0);
+        }
+
         private LocalRespawnState GetOrCreateLocalRespawn(PlayerKey key)
         {
             if (!m_localRespawns.TryGetValue(key, out LocalRespawnState state))

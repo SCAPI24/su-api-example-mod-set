@@ -3404,6 +3404,8 @@ namespace SuMultiplayer.Engine
                 var evt = new PlayerVitalEventSnapshot(key, 1, PlayerVitalEventKind.Respawn,
                     string.Empty, true, target);
                 ResetAfterRespawn(player, in evt);
+                // Source: NetworkAvatarSpawner.cs:UpdateRemotePresentations
+                m_spawner.ResetRemotePositionAfterRespawn(key);
                 // 落点锚点与客户端重放保持同一语义（PlayerData.cs:454 的搜索中心）。
                 playerData.SpawnPosition = target;
                 // 化身复活回到同一个 PlayerData：清掉"本次死亡已减半"标记；
