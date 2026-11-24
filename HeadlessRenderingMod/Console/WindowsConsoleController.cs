@@ -17,6 +17,8 @@ namespace HeadlessRenderingMod
     {
         private const uint AttachParentProcess = 0xFFFFFFFF;
         private const int MenuPageSize = 10;
+        private const int DynamicMenuRefreshMilliseconds = 1000;
+        private const int MenuInputPollMilliseconds = 50;
         private const int MaxPendingNotifications = 64;
         private static readonly JsonSerializerOptions s_jsonOptions =
             new JsonSerializerOptions { WriteIndented = true };
@@ -54,7 +56,7 @@ namespace HeadlessRenderingMod
         private volatile bool m_running;
         private volatile bool m_interactive;
         private bool m_ownsConsole;
-        private string m_multiplayerTelemetry;
+        private volatile string m_multiplayerTelemetry;
         private DataModificationFeed m_dataModificationFeed;
 
         // Server Status 流量采样：累计字节 + 上次采样时刻，用来算每秒速率。
@@ -402,7 +404,7 @@ namespace HeadlessRenderingMod
         /// 一级菜单：只放**入口**，具体操作都收在二级菜单里。
         ///
         /// 世界相关的 6 个操作（创建/加载/查看/列表/导出/删除）统一收进
-        /// `World-[世界名]` 这个动态项：世界名**每一次重绘都重新读**，
+        /// `World-[世界名]` 这个动态项：等待选择时会定期读取世界名，
         /// 加载完世界不用退出菜单再进来就能看到名字变了（旧实现是进菜单前算一次）。
         /// </summary>
         private void RunMainMenu()
@@ -455,7 +457,7 @@ namespace HeadlessRenderingMod
         }
 
         /// <summary>
-        /// 一级菜单文字。**每次重绘都会调用**，所以世界名是实时的。
+        /// 一级菜单文字：等待输入时定期读取。
         /// 没有加载世界时显示 `World-[]`。
         /// </summary>
         private string[] BuildMainMenuItems() => new[]
@@ -469,7 +471,7 @@ namespace HeadlessRenderingMod
         };
 
         /// <summary>
-        /// 一级菜单里 `Server Status` 的动态标签（每帧重新求值）。
+        /// 一级菜单里 `Server Status` 的动态标签（等待输入时定期采样）。
         ///
         /// 未开房：`Server Status-[Offline]`
         /// 已开房：`Server Status-[2 clients | 1.2 KB/s ↓ 0.4 KB/s ↑]`
@@ -2109,51 +2111,38 @@ namespace HeadlessRenderingMod
         private int? SelectMenuCore(string title, string[] items, int selected, string[] notes) =>
             SelectMenuCore(title, () => items, selected, notes);
 
-        /// <summary>
-        /// 菜单核心（**动态项版本**）。
-        ///
-        /// <paramref name="itemsFactory"/> 在**每一帧重绘前**重新求值 —— 这是"实时刷新"的关键：
-        /// 主菜单里的世界名、当前模式之类的标签会随游戏状态变化，而菜单可能一开就停在上面很久。
-        /// 旧实现只在**进入菜单之前**构建一次 items，于是世界名变了要退出再进才看得到
-        /// （实测：加载世界后停在菜单里，标题一直显示 &lt;none&gt;）。
-        /// </summary>
+        // Source: WindowsConsoleController.cs:SelectMenuCore — keep status current while waiting for keys.
         private int? SelectMenuCore(string title, Func<string[]> itemsFactory, int selected,
-            string[] notes)
+            string[] notes, bool refreshWhenIdle = false)
         {
-            string[] items = itemsFactory?.Invoke();
-            if (items == null || items.Length == 0)
-                return null;
-            selected = Math.Clamp(selected, 0, items.Length - 1);
+            string[] renderedItems = null;
+            string renderedScreen = null;
+            string renderedTelemetry = null;
+            int renderedSelection = -1;
             while (m_running)
             {
-                // 每帧重新求值：状态变了（加载了世界 / 切了模式）下一次重绘就反映出来。
-                items = itemsFactory?.Invoke() ?? items;
-                if (items.Length == 0)
+                string[] items = itemsFactory();
+                if (items == null || items.Length == 0)
                     return null;
                 selected = Math.Clamp(selected, 0, items.Length - 1);
 
-                BeginScreen();
-                int page = selected / MenuPageSize;
-                int first = page * MenuPageSize;
-                int last = Math.Min(first + MenuPageSize, items.Length);
-                Console.WriteLine(GetCurrentScreen() + "> " + title);
-                if (notes != null)
+                string currentScreen = GetCurrentScreen();
+                string currentTelemetry = m_multiplayerTelemetry;
+                if (!refreshWhenIdle || renderedItems == null || selected != renderedSelection ||
+                    !string.Equals(currentScreen, renderedScreen, StringComparison.Ordinal) ||
+                    !string.Equals(currentTelemetry, renderedTelemetry, StringComparison.Ordinal) ||
+                    !items.SequenceEqual(renderedItems, StringComparer.Ordinal))
                 {
-                    foreach (string note in notes)
-                        Console.WriteLine(note);
-                }
-                Console.WriteLine("Up/Down select  Left back  Right/Enter next  PageUp/PageDown page");
-                Console.WriteLine();
-                for (int i = first; i < last; i++)
-                    Console.WriteLine((i == selected ? "> " : "  ") + items[i]);
-                if (items.Length > MenuPageSize)
-                {
-                    int pageCount = (items.Length + MenuPageSize - 1) / MenuPageSize;
-                    Console.WriteLine();
-                    Console.WriteLine("Page " + (page + 1) + "/" + pageCount);
+                    RenderMenu(title, currentScreen, items, selected, notes);
+                    renderedItems = items;
+                    renderedScreen = currentScreen;
+                    renderedTelemetry = currentTelemetry;
+                    renderedSelection = selected;
                 }
 
-                ConsoleKey key = Console.ReadKey(true).Key;
+                ConsoleKey? key = refreshWhenIdle ? ReadKeyUntilMenuRefresh() : Console.ReadKey(true).Key;
+                if (!key.HasValue)
+                    continue;
                 if (key == ConsoleKey.UpArrow)
                     selected = selected > 0 ? selected - 1 : items.Length - 1;
                 else if (key == ConsoleKey.DownArrow)
@@ -2178,9 +2167,48 @@ namespace HeadlessRenderingMod
             return null;
         }
 
-        /// <summary>动态项菜单：每次重绘前调用 <paramref name="itemsFactory"/> 取最新标签。</summary>
+        private void RenderMenu(string title, string currentScreen, string[] items, int selected,
+            string[] notes)
+        {
+            BeginScreen();
+            int page = selected / MenuPageSize;
+            int first = page * MenuPageSize;
+            int last = Math.Min(first + MenuPageSize, items.Length);
+            Console.WriteLine(currentScreen + "> " + title);
+            if (notes != null)
+            {
+                foreach (string note in notes)
+                    Console.WriteLine(note);
+            }
+            Console.WriteLine("Up/Down select  Left back  Right/Enter next  PageUp/PageDown page");
+            Console.WriteLine();
+            for (int i = first; i < last; i++)
+                Console.WriteLine((i == selected ? "> " : "  ") + items[i]);
+            if (items.Length > MenuPageSize)
+            {
+                int pageCount = (items.Length + MenuPageSize - 1) / MenuPageSize;
+                Console.WriteLine();
+                Console.WriteLine("Page " + (page + 1) + "/" + pageCount);
+            }
+        }
+
+        private ConsoleKey? ReadKeyUntilMenuRefresh()
+        {
+            long refreshAt = Environment.TickCount64 + DynamicMenuRefreshMilliseconds;
+            while (m_running)
+            {
+                if (Console.KeyAvailable)
+                    return Console.ReadKey(true).Key;
+                if (Environment.TickCount64 >= refreshAt)
+                    break;
+                Thread.Sleep(MenuInputPollMilliseconds);
+            }
+            return null;
+        }
+
+        /// <summary>Refresh dynamic menu labels and the screen header even without keyboard input.</summary>
         private int? SelectDynamicMenu(string title, Func<string[]> itemsFactory, int selected) =>
-            Interactive(() => SelectMenuCore(title, itemsFactory, selected, null));
+            Interactive(() => SelectMenuCore(title, itemsFactory, selected, null, refreshWhenIdle: true));
 
         private string PromptChoice(string label, string[] choices, string defaultValue)
         {
