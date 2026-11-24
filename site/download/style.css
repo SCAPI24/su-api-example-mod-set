@@ -79,7 +79,8 @@ h1 span { display: block; margin-top: .22em; font-size: .6em; color: var(--wood-
 .hero-art { padding: 7px; border: 2px solid var(--wood-dark); box-shadow: 5px 5px var(--shadow); background: #fef6e2; }
 .hero-art img, .shot img { width: 100%; height: auto; aspect-ratio: 16/9; object-fit: contain; background: #1e291d; }
 .hero-art { align-self: center; }
-.feature-image { display: block; cursor: zoom-in; }
+.feature-image, .shot { display: block; width: 100%; padding: 0; border: 0; border-radius: 0; background: none; }
+[data-screenshot]:enabled { cursor: zoom-in; }
 .feature-image:focus-visible { outline-offset: -4px; }
 .hero-art figcaption { padding: 8px 6px 0; min-height: 4.3rem; color: var(--muted); font-size: .85rem; }
 .hero-art figcaption h2 { color: var(--wood-dark); font-size: 1rem; line-height: 1.25; }
@@ -117,15 +118,18 @@ h1 span { display: block; margin-top: .22em; font-size: .6em; color: var(--wood-
 .section-intro { margin: 0 0 16px; color: var(--muted); }
 .guide { list-style: none; padding: 0; margin-block: 0; }
 .guide li { overflow: hidden; }
-.shot { display: block; position: relative; border-bottom: 2px solid var(--line); }
+.shot { position: relative; border-bottom: 2px solid var(--line); }
 .shot:focus-visible { outline-offset: -4px; }
 .zoom { position: absolute; right: 9px; bottom: 9px; display: grid; place-items: center; width: 32px; height: 32px; border: 1px solid #eeead8; background: #24281ce8; color: white; font-size: 1.35rem; line-height: 1; }
-.shot:hover .zoom { background: var(--grass-dark); }
+.shot:disabled .zoom { display: none; }
+.shot:enabled:hover .zoom { background: var(--grass-dark); }
 .step-copy { display: flex; align-items: flex-start; gap: 11px; padding: 13px 13px 16px; }
 .step { display: grid; place-items: center; flex: 0 0 25px; height: 25px; background: #e7edda; border: 1px solid #adba97; color: var(--grass-dark); font: 750 .85rem Consolas, monospace; }
 .step-copy h3, .shortcut h3 { font-size: 1rem; font-weight: 800; }
 .step-copy p, .shortcut p { color: var(--muted); font-size: .9rem; margin-top: 3px; }
 .sample-link { color: var(--wood); font-size: .85rem; text-underline-offset: 3px; }
+button.sample-link { padding: 0; border: 0; background: none; font-family: inherit; line-height: inherit; text-align: start; text-decoration: underline; }
+button.sample-link:disabled { color: var(--muted); text-decoration: none; }
 .shortcut { background: #eaf0df; border: 1px solid #afbd99; border-left: 5px solid var(--grass); margin-top: 22px; padding: 13px 15px; }
 .multiplayer-guide + .multiplayer-guide { margin-top: 18px; }
 .multiplayer-guide h4 { margin: 15px 0 0; color: var(--wood-dark); }
@@ -139,12 +143,13 @@ h1 span { display: block; margin-top: .22em; font-size: .6em; color: var(--wood-
 .footer-inner span { font-weight: 800; margin-right: auto; }
 .footer a { text-decoration: none; }
 
-#preview { max-width: min(94vw, 1100px); max-height: 95dvh; padding: 8px; border: 2px solid var(--line); background: var(--card); color: var(--ink); box-shadow: 5px 5px #1b130c; }
+#preview { max-width: min(94vw, 1100px); max-height: 95vh; max-height: 95dvh; padding: 8px; border: 2px solid var(--line); background: var(--card); color: var(--ink); box-shadow: 5px 5px #1b130c; }
+#preview:not([open]) { display: none; }
 #preview::backdrop { background: #1d160fe0; }
-.preview-bar { display: flex; justify-content: space-between; align-items: center; gap: 12px; padding: 0 2px 8px; }
-.preview-bar p { font-size: .88rem; font-weight: 700; }
-.preview-bar button { padding: 5px 9px; border: 1px solid var(--line); background: #f4eddf; color: var(--ink); font: inherit; white-space: nowrap; cursor: pointer; }
-#preview img { max-height: 80dvh; object-fit: contain; margin-inline: auto; }
+.preview-bar { position: sticky; top: 0; display: flex; justify-content: space-between; align-items: center; gap: 12px; margin: 0; padding: 0 2px 8px; background: var(--card); }
+.preview-bar p { min-width: 0; overflow-wrap: anywhere; font-size: .88rem; font-weight: 700; }
+.preview-bar button { flex: 0 0 auto; min-height: 44px; padding: 5px 9px; border: 1px solid var(--line); background: #f4eddf; color: var(--ink); font: inherit; white-space: nowrap; cursor: pointer; }
+#preview img { max-height: 80vh; max-height: 80dvh; object-fit: contain; margin-inline: auto; }
 
 @media (min-width: 1440px) {
   .download-qr { inset: 0 calc(100% + 8px) auto auto; }

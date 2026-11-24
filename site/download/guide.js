@@ -1,23 +1,23 @@
 const preview = document.querySelector('#preview');
 const photo = preview.querySelector('img');
 const caption = preview.querySelector('#preview-caption');
-const closeButton = preview.querySelector('button');
 
-for (const link of document.querySelectorAll('[data-screenshot]')) {
-  link.addEventListener('click', (event) => {
-    if (event.ctrlKey || event.metaKey || event.shiftKey || event.altKey) return;
-    event.preventDefault();
-    const thumbnail = link.querySelector('img');
-    photo.src = link.href;
-    const description = thumbnail?.alt ?? link.textContent.trim();
-    photo.alt = description;
-    caption.textContent = description;
-    preview.showModal();
-    closeButton.focus();
-  });
+// Keep previews disabled until the in-page dialog is ready, even on a slow connection.
+if (typeof preview.showModal === 'function') {
+  for (const button of document.querySelectorAll('button[data-screenshot]')) {
+    button.addEventListener('click', () => {
+      if (preview.open) return;
+      const thumbnail = button.querySelector('img');
+      const description = thumbnail?.alt ?? button.textContent.trim();
+      photo.alt = description;
+      caption.textContent = description;
+      preview.showModal();
+      photo.src = button.dataset.screenshot;
+    });
+    button.disabled = false;
+  }
 }
 
-closeButton.addEventListener('click', () => preview.close());
 preview.addEventListener('click', (event) => {
   if (event.target === preview) preview.close();
 });
