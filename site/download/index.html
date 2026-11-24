@@ -23,6 +23,7 @@
         <a href="#downloads">下载</a>
         <a href="#install">安装</a>
         <a href="#chinese">中文翻译</a>
+        <a href="#multiplayer">联机</a>
         <a class="language-switch" href="en/" lang="en" hreflang="en">English</a>
       </nav>
     </div>
@@ -43,6 +44,9 @@
         <div class="hero-actions">
           <a class="button primary" href="#downloads">选择平台 <span aria-hidden="true">↓</span></a>
           <a class="button secondary" href="#chinese">安装中文翻译</a>
+        </div>
+        <div class="hero-multiplayer">
+          <a class="button secondary" href="#multiplayer">多人联机 <span aria-hidden="true">↓</span></a>
         </div>
       </div>
       <div class="hero-art" data-carousel role="region" aria-label="游戏界面展示" aria-roledescription="轮播">
@@ -75,7 +79,7 @@
             <a class="feature-image" href="assets/features/multiplayer.webp" data-screenshot>
               <img src="assets/features/multiplayer.webp" alt="安装 SuMultiplayer 后的联机房间界面" width="1600" height="900">
             </a>
-            <figcaption><h2>联机 Mod</h2><p>安装 SuMultiplayer 后，在选世界界面发现并加入联机房间。</p></figcaption>
+            <figcaption><h2>联机 Mod</h2><p>安装 SuMultiplayer 后，在选世界界面发现并加入联机房间。 <a class="sample-link" href="#multiplayer">查看联机指南</a></p></figcaption>
           </figure>
         </div>
         <div class="feature-indicators" role="group" aria-label="切换游戏截图" hidden>
@@ -197,6 +201,53 @@
         <h3>用短码直接安装</h3>
         <p>也可以从 <b>Content → From Link → Mod</b> 输入 <code>su-zh</code>，按提示下载并重启。</p>
       </aside>
+    </section>
+
+    <section class="wrap section" id="multiplayer" aria-labelledby="multiplayer-title">
+      <div class="section-head"><h2 id="multiplayer-title">联机 Mod</h2></div>
+      <p class="section-intro">主机和玩家都需要安装与游戏 API 版本匹配的 <b>SuMultiplayer</b>。在「内容 → 社区 → MOD」搜索 <code>su-mp</code>，下载后重启游戏。</p>
+
+      <article class="install multiplayer-guide" id="create-server" aria-labelledby="create-server-title">
+        <h3 id="create-server-title">创建服务器</h3>
+        <h4>在局域网创建房间</h4>
+        <ol>
+          <li>让主机和朋友接入同一个家庭网络。主机在游戏中创建或打开自己的世界，进入游玩界面后，展开右上角的更多按钮，再点 <b>CR</b>。</li>
+          <li>建房成功后，<b>CR</b> 会变成 <b>IF</b>。主机保持这个世界运行，朋友就能从选世界列表加入。收到加入申请时，由主机确认。</li>
+        </ol>
+        <h4>搭建无头服务器</h4>
+        <ol>
+          <li>在服务器解压上方的 Windows 或 Linux 64 位安装包。在游戏根目录创建 <code>Mods/</code>，放入对应 API 版本的 <a href="https://cnb.cool/suceru.cb/SC-SPM/SuAPIMod/-/releases/tag/0.2.1.2">HeadlessRenderingMod 和 SuMultiplayer</a> 两个 <code>.scmod</code> 包。HRM 只装在服务器上。</li>
+          <li>从游戏目录启动。Windows 运行 <code>Survivalcraft.exe</code>；Linux 可运行 <code>screen -S survivalcraft ./Survivalcraft</code>。Linux 在 Screen 中按 <kbd>Ctrl+A</kbd>，松开后按 <kbd>D</kbd> 返回命令行，之后用 <code>screen -r survivalcraft</code> 接回。</li>
+          <li>用控制台的 <b>World → Create World</b> 或 <b>Load World</b> 创建或载入世界。在 <b>Multiplayer Settings → RoomSetting</b> 打开 <b>Auto approve</b>，让没有画面的服务器自动接受入房申请。需要以后载入该世界时自动开房，也可以打开 <b>Auto host</b>。</li>
+          <li>选 <b>Multiplayer Settings → Host Room</b> 开房。再到 <b>RoomSetting → Host port</b> 输入 <code>51459</code>，房间会以此端口重新创建。回主菜单确认 <b>Server Status</b> 已显示连接人数。停服时用 <b>Shutdown</b> 保存并退出。</li>
+        </ol>
+        <aside class="multiplayer-note">
+          <h4>开放房间端口</h4>
+          <p>固定端口为 <code>51459</code> 时，在系统防火墙和云服务器安全组放行入站 <b>51459/TCP</b>（游戏连接）与 <b>51459/UDP</b>（房间发现）。家用路由器对公网开放时，把同号 TCP 和 UDP 都转发到主机。局域网联机只需要主机防火墙允许局域网访问，无须做公网端口转发。</p>
+          <p><b>Host port</b> 为 <code>0</code> 时，会从默认 <code>51459–51468</code> 选择空闲端口。建议公网服务器固定一个端口，按实际端口放行。<code>server.json</code> 中的 <code>port</code> 是 HRM 本机管理端口（通常从 <code>26741</code> 起），保留本机访问即可。使用 Cloudflare 域名时，游戏地址的 DNS 记录设为「仅 DNS」。</p>
+        </aside>
+      </article>
+
+      <article class="install multiplayer-guide" id="join-server" aria-labelledby="join-server-title">
+        <h3 id="join-server-title">加入服务器</h3>
+        <h4>加入局域网房间</h4>
+        <ol>
+          <li>和主机连接同一局域网，在主菜单点 <b>Play（开始游戏）</b>，在选世界列表等房间出现。</li>
+          <li>选中带有 <b>LAN</b> 和延迟的房间条目，再点 <b>Play</b>。等待主机同意和地图下载，按游戏提示进入。</li>
+        </ol>
+        <h4>通过地址加入无头服务器</h4>
+        <ol>
+          <li>如果房间已出现在选世界列表，直接选中并开始游戏。否则请向管理员获取域名或 IP，以及实际房间端口。</li>
+          <li>打开 <b>Content（内容）→ From Link（从链接）→ Net World（联机世界）</b>，在 <b>Link</b> 填 <code>server.example.com:51459</code> 这种格式的地址，在 <b>Name</b> 填便于辨认的名字并确认。局域网自动发现失败时，也可在这里填写主机的局域网地址和房间端口。</li>
+          <li>回到 <b>Play</b>，选中刚保存的服务器，再点 <b>Play</b>，等待加入和同步地图。</li>
+        </ol>
+        <aside class="multiplayer-note">
+          <h4>将服务器加入游戏内的扫描列表</h4>
+          <p>如果你希望玩家在选世界界面自动发现你的服务器，请联系 <a href="mailto:fidax@qq.com">Suceru（fidax@qq.com）</a>，提供可从公网连接的域名或 IP 和实际房间端口，申请加入游戏的公开服务器列表。</p>
+          <p><b>收录要求</b>　服务器需要配置守护进程（例如 Linux 上的 systemd），做到开机自启、退出后自动重启，并在每次启动时自动载入世界、开启房间，让玩家随时可以连接。Screen 可以让游戏在断开 SSH 后继续运行，自动重启由守护进程负责。</p>
+        </aside>
+        <a class="sample-link multiplayer-shot" href="assets/features/multiplayer.webp" data-screenshot>查看选世界列表截图</a>
+      </article>
     </section>
   </main>
 

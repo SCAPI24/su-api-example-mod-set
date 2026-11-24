@@ -23,6 +23,7 @@
         <a href="#downloads">Downloads</a>
         <a href="#install">Install</a>
         <a href="#chinese">Chinese translation</a>
+        <a href="#multiplayer">Multiplayer</a>
         <a class="language-switch" href="../" lang="zh-CN" hreflang="zh-CN" aria-label="Switch to Chinese">中文</a>
       </nav>
     </div>
@@ -43,6 +44,9 @@
         <div class="hero-actions">
           <a class="button primary" href="#downloads">Choose your platform <span aria-hidden="true">↓</span></a>
           <a class="button secondary" href="#chinese">Add Chinese translation</a>
+        </div>
+        <div class="hero-multiplayer">
+          <a class="button secondary" href="#multiplayer">Multiplayer <span aria-hidden="true">↓</span></a>
         </div>
       </div>
       <div class="hero-art" data-carousel role="region" aria-label="Game screenshots" aria-roledescription="carousel">
@@ -75,7 +79,7 @@
             <a class="feature-image" href="../assets/features/multiplayer.webp" data-screenshot>
               <img src="../assets/features/multiplayer.webp" alt="Multiplayer room list after installing SuMultiplayer" width="1600" height="900">
             </a>
-            <figcaption><h2>Multiplayer mod</h2><p>Install SuMultiplayer to find and join rooms from the world selection screen.</p></figcaption>
+            <figcaption><h2>Multiplayer mod</h2><p>Install SuMultiplayer to find and join rooms from the world selection screen. <a class="sample-link" href="#multiplayer">Open the multiplayer guides</a></p></figcaption>
           </figure>
         </div>
         <div class="feature-indicators" role="group" aria-label="Choose a game screenshot" hidden>
@@ -197,6 +201,53 @@
         <h3>Install with the short code</h3>
         <p>You can also open <b>Content → From Link → Mod</b>, enter <code>su-zh</code>, and follow the prompts to download and restart.</p>
       </aside>
+    </section>
+
+    <section class="wrap section" id="multiplayer" aria-labelledby="multiplayer-title">
+      <div class="section-head"><h2 id="multiplayer-title">Multiplayer mod</h2></div>
+      <p class="section-intro">Hosts and players need <b>SuMultiplayer</b> for their game's API version. Open Content → Community → MOD, search for <code>su-mp</code>, download it, and restart the game.</p>
+
+      <article class="install multiplayer-guide" id="create-server" aria-labelledby="create-server-title">
+        <h3 id="create-server-title">Create a server</h3>
+        <h4>Host on your local network</h4>
+        <ol>
+          <li>Connect the host and players to the same local network. Create or load your own world, then open the More controls in the upper right and select <b>CR</b>.</li>
+          <li><b>CR</b> changes to <b>IF</b> when the room is ready. Keep the world running so friends can join from their world list. Approve their join requests when prompted.</li>
+        </ol>
+        <h4>Set up a headless server</h4>
+        <ol>
+          <li>Extract the 64-bit Windows or Linux package from this page on the server. Create <code>Mods/</code> in the game directory and put the matching <a href="https://cnb.cool/suceru.cb/SC-SPM/SuAPIMod/-/releases/tag/0.2.1.2">HeadlessRenderingMod and SuMultiplayer</a> <code>.scmod</code> files in it. Install HRM on the server only.</li>
+          <li>Start from the game directory. On Windows, launch <code>Survivalcraft.exe</code>. On Linux, you can run <code>screen -S survivalcraft ./Survivalcraft</code>. Press <kbd>Ctrl+A</kbd>, release the keys, then press <kbd>D</kbd> to detach. Use <code>screen -r survivalcraft</code> to reconnect.</li>
+          <li>In the console, use <b>World → Create World</b> or <b>Load World</b>. In <b>Multiplayer Settings → RoomSetting</b>, enable <b>Auto approve</b> so the headless server can accept join requests. Enable <b>Auto host</b> to open a room the next time that world is loaded.</li>
+          <li>Select <b>Multiplayer Settings → Host Room</b>. Then set <b>RoomSetting → Host port</b> to <code>51459</code> to recreate the room on that port. Check that <b>Server Status</b> on the main console menu shows a connection count. Use <b>Shutdown</b> to save and exit.</li>
+        </ol>
+        <aside class="multiplayer-note">
+          <h4>Open the room port</h4>
+          <p>For a room on <code>51459</code>, allow inbound <b>51459/TCP</b> for the game connection and <b>51459/UDP</b> for room discovery in the server firewall and cloud security group. If hosting behind a home router for internet players, forward both protocols to the host. For local play, allow access from the local network through the host firewall.</p>
+          <p>A <b>Host port</b> of <code>0</code> selects an available port from the default range <code>51459–51468</code>. For a public server, set a fixed port and open that port. Keep the HRM admin <code>port</code> in <code>server.json</code> local (it usually starts at <code>26741</code>). If using a Cloudflare hostname for the game, set its record to DNS only.</p>
+        </aside>
+      </article>
+
+      <article class="install multiplayer-guide" id="join-server" aria-labelledby="join-server-title">
+        <h3 id="join-server-title">Join a server</h3>
+        <h4>Join a room on the local network</h4>
+        <ol>
+          <li>Connect to the same local network as the host. Select <b>Play</b> on the main menu and wait for the room to appear in the world list.</li>
+          <li>Select the room marked <b>LAN</b> with a ping value and press <b>Play</b>. Wait for approval and the world download, then follow the in-game prompts.</li>
+        </ol>
+        <h4>Join a headless server by address</h4>
+        <ol>
+          <li>If the room is already in the world list, select it and press <b>Play</b>. If you need to add it manually, ask the administrator for the hostname or IP address and room port.</li>
+          <li>Open <b>Content → From Link → Net World</b>. In <b>Link</b>, enter the address in a format such as <code>server.example.com:51459</code>. In <b>Name</b>, enter a name you will recognize, then confirm. You can also enter the host's local address and room port here if local discovery misses the room.</li>
+          <li>Return to <b>Play</b>, select the saved server, and press <b>Play</b> to join and download the world.</li>
+        </ol>
+        <aside class="multiplayer-note">
+          <h4>Add your server to in-game discovery</h4>
+          <p>To make your server discoverable in the world selection screen, contact <a href="mailto:fidax@qq.com">Suceru (fidax@qq.com)</a> with your public hostname or IP address and room port. Suceru can add the address to the public server list.</p>
+          <p><b>Listing requirement.</b> Use a service manager such as systemd on Linux to start the server at boot, restart it after an exit, and load and host the world on each start so players can connect at any time. Screen keeps the game running when you disconnect from SSH. The service manager handles restarts.</p>
+        </aside>
+        <a class="sample-link multiplayer-shot" href="../assets/features/multiplayer.webp" data-screenshot>View the world selection screen</a>
+      </article>
     </section>
   </main>
 

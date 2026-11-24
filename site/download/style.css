@@ -67,6 +67,7 @@ h1 { font-size: clamp(2.6rem, 6.2vw, 5.2rem); line-height: 1.06; font-weight: 90
 h1 span { display: block; margin-top: .22em; font-size: .6em; color: var(--wood-dark); text-shadow: none; letter-spacing: -.022em; }
 .intro { margin-top: 20px; max-width: 33ch; color: var(--muted); font-size: clamp(1rem, 1.6vw, 1.125rem); }
 .hero-actions { display: flex; flex-wrap: wrap; gap: 12px; margin-top: 24px; }
+.hero-multiplayer { margin-top: 16px; }
 .button { display: inline-flex; justify-content: center; align-items: center; gap: 1ch; min-height: 44px; padding: 7px 15px; border: 2px solid; box-shadow: 0 3px 0 var(--button-edge); border-radius: 3px; font-weight: 730; text-decoration: none; transition: background-color .15s, translate .15s; }
 .button:hover { translate: 0 -2px; }
 .button:active { translate: 0 2px; }
@@ -126,6 +127,13 @@ h1 span { display: block; margin-top: .22em; font-size: .6em; color: var(--wood-
 .step-copy p, .shortcut p { color: var(--muted); font-size: .9rem; margin-top: 3px; }
 .sample-link { color: var(--wood); font-size: .85rem; text-underline-offset: 3px; }
 .shortcut { background: #eaf0df; border: 1px solid #afbd99; border-left: 5px solid var(--grass); margin-top: 22px; padding: 13px 15px; }
+.multiplayer-guide + .multiplayer-guide { margin-top: 18px; }
+.multiplayer-guide h4 { margin: 15px 0 0; color: var(--wood-dark); }
+.multiplayer-guide a { text-underline-offset: 3px; }
+.multiplayer-note { margin-top: 16px; padding: 12px 14px; border-left: 4px solid var(--grass); background: #eaf0df; }
+.multiplayer-note h4 { margin-top: 0; }
+.multiplayer-note p { margin-top: 6px; color: var(--muted); font-size: .94rem; }
+.multiplayer-shot { display: inline-block; margin-top: 12px; }
 .footer { border-top: 2px solid var(--line); background: #efe8d9; color: var(--muted); font-size: .86rem; }
 .footer-inner { display: flex; align-items: center; flex-wrap: wrap; gap: 8px 22px; padding-block: 19px; }
 .footer-inner span { font-weight: 800; margin-right: auto; }
